@@ -262,7 +262,12 @@ def build():
     # ---- 首頁 ----
     (OUT / "index.html").write_text(render_home(pages, book, tpl), encoding="utf-8")
 
-    print(f"✓ 已產生 {len(pages) + 1} 頁 → {OUT}")
+    (OUT / ".nojekyll").touch()
+
+    try:
+        print(f"✓ 已產生 {len(pages) + 1} 頁 → {OUT}")
+    except UnicodeEncodeError:
+        print(f"[OK] 已產生 {len(pages) + 1} 頁 → {OUT}")
 
 
 def render_home(pages: list[Page], book: dict, tpl: str) -> str:
