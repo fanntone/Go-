@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5.6 網路輪詢器 netpoller — Go 底層原理筆記</title>
+<meta name="description" content="Go 如何把非阻塞 I/O 包裝成同步的程式碼、epoll/kqueue/IOCP 的統一抽象，以及為什麼檔案 I/O 不走這條路。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li class='active'><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>並行</p><h1><span class='h1num'>5.6</span>網路輪詢器 netpoller</h1><p class='lede'>Go 如何把非阻塞 I/O 包裝成同步的程式碼、epoll/kqueue/IOCP 的統一抽象，以及為什麼檔案 I/O 不走這條路。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="一個看似矛盾的需求">一個看似矛盾的需求<a class="headerlink" href="#一個看似矛盾的需求" title="Permanent link">#</a></h2>
+<p>寫網路程式時，同步的寫法最好讀：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">n</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">conn</span><span class="p">.</span><span class="nx">Read</span><span class="p">(</span><span class="nx">buf</span><span class="p">)</span><span class="w"> </span><span class="c1">// 讀不到就等，讀到就繼續</span>
+</code></pre></div>
+
+<p>但同步 I/O 的傳統實作會<strong>阻塞整條執行緒</strong>。一萬條連線就需要一萬條執行緒——記憶體吃光、切換成本爆炸。</p>
+<p>於是 C/C++ 世界發展出 <strong>事件驅動 + 回呼</strong>（epoll + callback、libuv、Netty）。效能好，但程式碼變成一團回呼地獄，錯誤處理與生命週期管理都很痛苦。</p>
+<p><strong>Go 兩者都要</strong>：程式碼寫起來像同步阻塞，底層跑的是非阻塞事件驅動。做到這件事的元件就是 <strong>netpoller</strong>。</p>
+<hr />
+<h2 id="核心機制">核心機制<a class="headerlink" href="#核心機制" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">n</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">conn</span><span class="p">.</span><span class="nx">Read</span><span class="p">(</span><span class="nx">buf</span><span class="p">)</span>
+</code></pre></div>
+
+<p>這一行實際發生的事：</p>
+<figure class="diagram"><svg viewBox="0 0 700 350" role="img" aria-label="netpoller 的運作流程"><rect class="d-box-a" x="15" y="14" width="670" height="44" rx="6"/><text class="d-t-b" x="30" y="36">① conn.Read(buf) → 對非阻塞 socket 發出 read() 系統呼叫</text><text class="d-t-s" x="30" y="52">socket 在建立時就被設成 O_NONBLOCK，所以 read 會立刻回來，不會卡住</text><path class="d-line" d="M350 58 L350 72" marker-end="url(#ar20)"/><rect class="d-box-o" x="15" y="74" width="325" height="60" rx="6"/><text class="d-t-b" x="30" y="96">② 有資料 → 直接回傳</text><text class="d-t-s" x="30" y="116">完全沒有排程開銷，這是熱路徑</text><rect class="d-box-w" x="360" y="74" width="325" height="60" rx="6"/><text class="d-t-b" x="375" y="96">② 沒資料 → 回傳 EAGAIN</text><text class="d-t-s" x="375" y="116">繼續往下走 ↓</text><path class="d-line-a" d="M522 134 L522 148" marker-end="url(#ar20a)"/><rect class="d-box-w" x="360" y="150" width="325" height="60" rx="6"/><text class="d-t-b" x="375" y="172">③ 把 fd 註冊到 netpoller，然後 gopark</text><text class="d-t-s" x="375" y="192">目前 goroutine 進入 _Gwaiting，M 立刻去跑別的 G</text><path class="d-line-a" d="M522 210 L522 224" marker-end="url(#ar20a)"/><rect class="d-box-w" x="360" y="226" width="325" height="60" rx="6"/><text class="d-t-b" x="375" y="248">④ 資料到了 → netpoll 回報這個 fd 就緒</text><text class="d-t-s" x="375" y="268">把對應的 G 設回 _Grunnable，放進執行佇列</text><path class="d-line-a" d="M360 256 L200 256 L200 300" marker-end="url(#ar20a)"/><rect class="d-box-o" x="15" y="302" width="325" height="44" rx="6"/><text class="d-t-b" x="30" y="324">⑤ G 恢復執行，重試 read → 成功</text><text class="d-t-s" x="30" y="340">從呼叫者的角度，Read 只是「花了一點時間才回來」</text><defs><marker id="ar20" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--line-strong)"/></marker><marker id="ar20a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--accent)"/></marker></defs></svg><figcaption><b>阻塞的是 goroutine，不是執行緒。</b>關鍵在步驟 ③：goroutine 睡了，但承載它的 M 立刻被釋放去跑別的工作。對使用者程式碼而言，這一切完全透明。</figcaption></figure>
+
+<p><strong>一句話總結：netpoller 把「阻塞執行緒」換成了「阻塞 goroutine」。</strong> 而 goroutine 阻塞幾乎免費。</p>
+<hr />
+<h2 id="平台抽象">平台抽象<a class="headerlink" href="#平台抽象" title="Permanent link">#</a></h2>
+<p>netpoller 對不同作業系統的 I/O 多工機制做了統一封裝。所有平台都實作同一組介面（<code>runtime/netpoll.go</code>）：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">netpollinit</span><span class="p">()</span><span class="w">                                    </span><span class="c1">// 初始化</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">netpollopen</span><span class="p">(</span><span class="nx">fd</span><span class="w"> </span><span class="kt">uintptr</span><span class="p">,</span><span class="w"> </span><span class="nx">pd</span><span class="w"> </span><span class="o">*</span><span class="nx">pollDesc</span><span class="p">)</span><span class="w"> </span><span class="kt">int32</span><span class="w">      </span><span class="c1">// 註冊 fd</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">netpollclose</span><span class="p">(</span><span class="nx">fd</span><span class="w"> </span><span class="kt">uintptr</span><span class="p">)</span><span class="w"> </span><span class="kt">int32</span><span class="w">                   </span><span class="c1">// 移除 fd</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">netpoll</span><span class="p">(</span><span class="nx">delay</span><span class="w"> </span><span class="kt">int64</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="nx">gList</span><span class="p">,</span><span class="w"> </span><span class="kt">int32</span><span class="p">)</span><span class="w">              </span><span class="c1">// 取得就緒的 G</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">netpollBreak</span><span class="p">()</span><span class="w">                                   </span><span class="c1">// 喚醒阻塞中的 netpoll</span>
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>平台</th>
+<th>實作檔案</th>
+<th>底層機制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Linux</td>
+<td><code>netpoll_epoll.go</code></td>
+<td><code>epoll</code>（邊緣觸發 ET）</td>
+</tr>
+<tr>
+<td>macOS / BSD</td>
+<td><code>netpoll_kqueue.go</code></td>
+<td><code>kqueue</code></td>
+</tr>
+<tr>
+<td>Windows</td>
+<td><code>netpoll_windows.go</code></td>
+<td><strong>IOCP</strong>（I/O Completion Ports）</td>
+</tr>
+<tr>
+<td>Solaris</td>
+<td><code>netpoll_solaris.go</code></td>
+<td>event ports</td>
+</tr>
+<tr>
+<td>AIX</td>
+<td><code>netpoll_aix.go</code></td>
+<td><code>poll</code></td>
+</tr>
+<tr>
+<td>WASM</td>
+<td><code>netpoll_fake.go</code></td>
+<td>假實作（單執行緒環境）</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Windows 的模型不太一樣</p>
+<p>epoll 與 kqueue 是<strong>就緒通知（readiness notification）</strong>：「這個 fd 現在可以讀了，你自己去讀」。</p>
+<p>IOCP 是<strong>完成通知（completion notification）</strong>：「你要的讀取操作已經完成，資料在這裡」。</p>
+<p>runtime 在 Windows 上做了額外的轉換工作，讓上層看到一致的行為。這也是為什麼 Windows 上的 Go 網路程式碼路徑跟 Unix 稍有不同，但你完全感覺不到。</p>
+</div>
+<hr />
+<h2 id="誰在呼叫-netpoll">誰在呼叫 netpoll<a class="headerlink" href="#誰在呼叫-netpoll" title="Permanent link">#</a></h2>
+<p>netpoller <strong>沒有專屬的執行緒</strong>。檢查就緒事件的工作分散在三個地方：</p>
+<ol>
+<li><strong>排程器的 <code>findRunnable()</code></strong> —— 找不到 G 的時候，順便呼叫 <code>netpoll(0)</code>（非阻塞）看有沒有 I/O 完成。</li>
+<li><strong><code>sysmon</code> 監控執行緒</strong> —— 每次巡邏時呼叫 <code>netpoll(0)</code>。</li>
+<li><strong>M 準備休眠前</strong> —— 如果沒有其他 P 在做這件事，這個 M 會呼叫 <code>netpoll(阻塞)</code>，直到有 I/O 事件或計時器到期才醒來。</li>
+</ol>
+<p>第 3 點很重要：<strong>它讓 Go 程式在完全閒置時不會空轉燒 CPU</strong>。至少會有一個 M 阻塞在 <code>epoll_wait</code> 上，其餘的都在睡覺。</p>
+<hr />
+<h2 id="實際驗證">實際驗證<a class="headerlink" href="#實際驗證" title="Permanent link">#</a></h2>
+<p>看看一萬條連線用了多少執行緒：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;io&quot;</span>
+<span class="w">    </span><span class="s">&quot;net&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime&quot;</span>
+<span class="w">    </span><span class="s">&quot;sync&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ln</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">net</span><span class="p">.</span><span class="nx">Listen</span><span class="p">(</span><span class="s">&quot;tcp&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;127.0.0.1:0&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nb">panic</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">ln</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span>
+
+<span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">5000</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">wg</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+
+<span class="w">    </span><span class="c1">// 伺服器：每條連線一個 goroutine</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">c</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">ln</span><span class="p">.</span><span class="nx">Accept</span><span class="p">()</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="k">return</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">            </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="nx">net</span><span class="p">.</span><span class="nx">Conn</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span>
+<span class="w">                </span><span class="nx">io</span><span class="p">.</span><span class="nx">Copy</span><span class="p">(</span><span class="nx">io</span><span class="p">.</span><span class="nx">Discard</span><span class="p">,</span><span class="w"> </span><span class="nx">c</span><span class="p">)</span><span class="w"> </span><span class="c1">// 阻塞在讀取，直到對方關閉</span>
+<span class="w">            </span><span class="p">}(</span><span class="nx">c</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}()</span>
+
+<span class="w">    </span><span class="c1">// 客戶端：建立 n 條連線但不送資料</span>
+<span class="w">    </span><span class="nx">conns</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="nx">net</span><span class="p">.</span><span class="nx">Conn</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nx">n</span><span class="p">)</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">c</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">net</span><span class="p">.</span><span class="nx">Dial</span><span class="p">(</span><span class="s">&quot;tcp&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">ln</span><span class="p">.</span><span class="nx">Addr</span><span class="p">().</span><span class="nx">String</span><span class="p">())</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">break</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">conns</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">conns</span><span class="p">,</span><span class="w"> </span><span class="nx">c</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="mi">500</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;連線數:      %d\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">conns</span><span class="p">))</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;goroutine 數: %d\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">NumGoroutine</span><span class="p">())</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;GOMAXPROCS:  %d\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GOMAXPROCS</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">c</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">conns</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">c</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>典型輸出：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>連線數:      5000
+goroutine 數: 10003
+GOMAXPROCS:  8
+</code></pre></div>
+
+<p><strong>一萬個 goroutine 阻塞在讀取，但作業系統執行緒只有十幾條。</strong> 每個 goroutine 佔 2 KB 起跳的堆疊，總共約 20 MB——換成一萬條執行緒的話，光是堆疊虛擬位址空間就要 8–80 GB。</p>
+<hr />
+<h2 id="逾時是怎麼實作的">逾時是怎麼實作的<a class="headerlink" href="#逾時是怎麼實作的" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">conn</span><span class="p">.</span><span class="nx">SetReadDeadline</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Now</span><span class="p">().</span><span class="nx">Add</span><span class="p">(</span><span class="mi">5</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">))</span>
+<span class="nx">n</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">conn</span><span class="p">.</span><span class="nx">Read</span><span class="p">(</span><span class="nx">buf</span><span class="p">)</span>
+</code></pre></div>
+
+<p>逾時<strong>不是</strong>用另一個 goroutine 監控。實作是：</p>
+<ol>
+<li><code>SetReadDeadline</code> 在 <code>pollDesc</code> 上設定一個計時器（走 <a href="timer.html">計時器</a> 那套 P 本地堆積）。</li>
+<li>計時器到期時，把等待中的 G 喚醒，並在 <code>pollDesc</code> 上標記逾時。</li>
+<li>G 醒來發現是逾時而非資料就緒，回傳 <code>os.ErrDeadlineExceeded</code>。</li>
+</ol>
+<p>所以逾時幾乎是零成本的——沒有額外的 goroutine，沒有額外的執行緒。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;errors&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;net&quot;</span>
+<span class="w">    </span><span class="s">&quot;os&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ln</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">net</span><span class="p">.</span><span class="nx">Listen</span><span class="p">(</span><span class="s">&quot;tcp&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;127.0.0.1:0&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">ln</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span>
+
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">c</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">ln</span><span class="p">.</span><span class="nx">Accept</span><span class="p">()</span>
+<span class="w">        </span><span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span>
+<span class="w">        </span><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span><span class="w"> </span><span class="c1">// 故意不送資料</span>
+<span class="w">    </span><span class="p">}()</span>
+
+<span class="w">    </span><span class="nx">c</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">net</span><span class="p">.</span><span class="nx">Dial</span><span class="p">(</span><span class="s">&quot;tcp&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">ln</span><span class="p">.</span><span class="nx">Addr</span><span class="p">().</span><span class="nx">String</span><span class="p">())</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span>
+
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">SetReadDeadline</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Now</span><span class="p">().</span><span class="nx">Add</span><span class="p">(</span><span class="mi">100</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">))</span>
+
+<span class="w">    </span><span class="nx">buf</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="mi">16</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">start</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Now</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">Read</span><span class="p">(</span><span class="nx">buf</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;耗時 %v\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Since</span><span class="p">(</span><span class="nx">start</span><span class="p">).</span><span class="nx">Round</span><span class="p">(</span><span class="mi">10</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">))</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;是逾時嗎:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">Is</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">ErrDeadlineExceeded</span><span class="p">))</span>
+
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">ne</span><span class="w"> </span><span class="nx">net</span><span class="p">.</span><span class="nx">Error</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">As</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">ne</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;net.Error.Timeout():&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">ne</span><span class="p">.</span><span class="nx">Timeout</span><span class="p">())</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>耗時 100ms
+是逾時嗎: true
+net.Error.Timeout(): true
+</code></pre></div>
+
+<div class="admonition tip">
+<p class="admonition-title">Deadline 是絕對時間，不是持續時間</p>
+<p><code>SetReadDeadline(t)</code> 設定的是「到 <code>t</code> 這個時刻為止」，不是「從現在起 N 秒」。在迴圈裡讀取時，每一輪都要重新設定：</p>
+<p><code>go
+for {
+    conn.SetReadDeadline(time.Now().Add(30 * time.Second)) // 每輪更新
+    n, err := conn.Read(buf)
+    // ...
+}</code></p>
+<p>設 <code>time.Time{}</code>（零值）表示取消逾時。</p>
+</div>
+<hr />
+<h2 id="為什麼檔案-io-不走-netpoller">為什麼檔案 I/O 不走 netpoller<a class="headerlink" href="#為什麼檔案-io-不走-netpoller" title="Permanent link">#</a></h2>
+<p>這是實務上很重要的一個限制。</p>
+<p><strong>在 Linux 上，一般檔案（regular file）不能用 epoll 做非阻塞 I/O。</strong> epoll 對常規檔案永遠回報「就緒」，因為從核心的角度，檔案「總是可以讀」——只是可能要等磁碟。</p>
+<p>所以 <code>os.File</code> 的 <code>Read</code>／<code>Write</code> 會<strong>真的阻塞 M</strong>。排程器會偵測到（<code>sysmon</code> 發現系統呼叫超過 20 微秒），把 P 交接給別的 M，但<strong>那條 M 就是被佔住了</strong>。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// 這 1000 個 goroutine 會造成大量執行緒建立</span>
+<span class="k">for</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="mi">1000</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">data</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">ReadFile</span><span class="p">(</span><span class="s">&quot;/some/large/file&quot;</span><span class="p">)</span>
+<span class="w">        </span><span class="nx">process</span><span class="p">(</span><span class="nx">data</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}()</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="影響與對策">影響與對策<a class="headerlink" href="#影響與對策" title="Permanent link">#</a></h3>
+<p><strong>觀察執行緒數量：</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime/pprof&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// ... 你的工作 ...</span>
+
+<span class="w">    </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">pprof</span><span class="p">.</span><span class="nx">Lookup</span><span class="p">(</span><span class="s">&quot;threadcreate&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;建立過的執行緒數:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="p">.</span><span class="nx">Count</span><span class="p">())</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;goroutine 數:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">NumGoroutine</span><span class="p">())</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>或用 <code>GODEBUG=schedtrace=1000</code> 看 <code>threads=</code> 那個欄位。</p>
+<p><strong>對策一：限制並行度。</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">sem</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kd">struct</span><span class="p">{},</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="c1">// 最多 32 個並行檔案操作</span>
+
+<span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">path</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">paths</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">sem</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="kd">struct</span><span class="p">{}{}</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">p</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">sem</span><span class="w"> </span><span class="p">}()</span>
+<span class="w">        </span><span class="nx">processFile</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}(</span><span class="nx">path</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>對策二：設定執行緒上限。</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">runtime</span><span class="p">.</span><span class="nx">SetMaxThreads</span><span class="p">(</span><span class="mi">1000</span><span class="p">)</span><span class="w"> </span><span class="c1">// 預設 10000</span>
+</code></pre></div>
+
+<p>注意這是<strong>硬性上限，超過會直接 crash</strong>。設它的目的是「早點爆炸」而不是「防止爆炸」——讓你在測試環境就發現問題，而不是在正式環境慢慢耗盡系統資源。</p>
+<p><strong>對策三：管線與非阻塞 fd 例外。</strong></p>
+<p>有趣的是，<strong>pipe、FIFO、terminal、socket</strong> 這些「字元裝置」是可以用 epoll 的。所以 <code>os/exec</code> 的 stdout/stderr 管線、<code>net.Conn</code> 都走 netpoller。只有常規檔案不行。</p>
+<hr />
+<h2 id="常見誤解">常見誤解<a class="headerlink" href="#常見誤解" title="Permanent link">#</a></h2>
+<p><strong>「netpoller 是一個獨立的執行緒。」</strong> 不是。它沒有專屬執行緒，檢查工作搭排程器與 sysmon 的便車。</p>
+<p><strong>「Go 的網路 I/O 是非同步的。」</strong> 從程式碼的角度是同步的（<code>Read</code> 會等到有資料）。非同步的是<strong>底層機制</strong>，不是 API。這正是 Go 的設計價值——同步的心智模型，非同步的效能。</p>
+<p><strong>「用了 goroutine 就不用管連線數。」</strong> 每條連線至少一個 goroutine（2 KB 堆疊）加上讀寫緩衝區（通常各 4 KB）。十萬條連線大約需要 1 GB 記憶體。仍然需要限流與資源規劃。</p>
+<p><strong>「檔案讀寫也是非阻塞的。」</strong> 不是。見上一節。</p>
+<hr />
+<h2 id="相關的實務建議">相關的實務建議<a class="headerlink" href="#相關的實務建議" title="Permanent link">#</a></h2>
+<h3 id="一定要設逾時">一定要設逾時<a class="headerlink" href="#一定要設逾時" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 沒有任何逾時的伺服器，一個慢客戶端就能耗住資源</span>
+<span class="nx">srv</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Server</span><span class="p">{</span><span class="nx">Addr</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;:8080&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">Handler</span><span class="p">:</span><span class="w"> </span><span class="nx">mux</span><span class="p">}</span>
+
+<span class="c1">// ✓</span>
+<span class="nx">srv</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Server</span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Addr</span><span class="p">:</span><span class="w">              </span><span class="s">&quot;:8080&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nx">Handler</span><span class="p">:</span><span class="w">           </span><span class="nx">mux</span><span class="p">,</span>
+<span class="w">    </span><span class="nx">ReadHeaderTimeout</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span><span class="w">   </span><span class="c1">// 防 Slowloris 攻擊</span>
+<span class="w">    </span><span class="nx">ReadTimeout</span><span class="p">:</span><span class="w">       </span><span class="mi">30</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+<span class="w">    </span><span class="nx">WriteTimeout</span><span class="p">:</span><span class="w">      </span><span class="mi">30</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+<span class="w">    </span><span class="nx">IdleTimeout</span><span class="p">:</span><span class="w">       </span><span class="mi">120</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><code>ReadHeaderTimeout</code> 特別重要——沒有它，攻擊者可以用極慢的速度送標頭，長期佔住連線與 goroutine。</p>
+<h3 id="客戶端要重用連線">客戶端要重用連線<a class="headerlink" href="#客戶端要重用連線" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 每次都建新的 Transport → 連線無法重用，還可能耗盡 port</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">badRequest</span><span class="p">(</span><span class="nx">url</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span>
+<span class="w">    </span><span class="nx">client</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Client</span><span class="p">{}</span>
+<span class="w">    </span><span class="nx">client</span><span class="p">.</span><span class="nx">Get</span><span class="p">(</span><span class="nx">url</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ 共用一個 Client</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">client</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Client</span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Timeout</span><span class="p">:</span><span class="w"> </span><span class="mi">10</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+<span class="w">    </span><span class="nx">Transport</span><span class="p">:</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Transport</span><span class="p">{</span>
+<span class="w">        </span><span class="nx">MaxIdleConns</span><span class="p">:</span><span class="w">        </span><span class="mi">100</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">MaxIdleConnsPerHost</span><span class="p">:</span><span class="w"> </span><span class="mi">10</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">IdleConnTimeout</span><span class="p">:</span><span class="w">     </span><span class="mi">90</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="admonition danger">
+<p class="admonition-title">務必讀完並關閉 response body</p>
+<p>```go
+resp, err := client.Get(url)
+if err != nil {
+    return err
+}
+defer resp.Body.Close()</p>
+<p>// ✓ 即使不需要內容，也要讀完，否則連線無法回到連線池
+io.Copy(io.Discard, resp.Body)
+```</p>
+<p>只 <code>Close</code> 而不讀完，連線會被直接丟棄而非重用。在高頻呼叫下，這會導致大量 TIME_WAIT 連線並可能耗盡本地 port。</p>
+</div>
+<hr />
+<p>下一節是 Part 5 的最後一節：sysmon，那條在背景默默巡邏的執行緒。</p></article><nav class='pager'><a class='prev' href='scheduler.html'><span>上一節</span><strong>5.5 GMP 排程器</strong></a><a class='next' href='sysmon.html'><span>下一節</span><strong>5.7 系統監控 sysmon</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#一個看似矛盾的需求'>一個看似矛盾的需求</a></li><li><a href='#核心機制'>核心機制</a></li><li><a href='#平台抽象'>平台抽象</a></li><li><a href='#誰在呼叫-netpoll'>誰在呼叫 netpoll</a></li><li><a href='#實際驗證'>實際驗證</a></li><li><a href='#逾時是怎麼實作的'>逾時是怎麼實作的</a></li><li><a href='#為什麼檔案-io-不走-netpoller'>為什麼檔案 I/O 不走 netpoller</a><ul><li><a href='#影響與對策'>影響與對策</a></li></ul></li><li><a href='#常見誤解'>常見誤解</a></li><li><a href='#相關的實務建議'>相關的實務建議</a><ul><li><a href='#一定要設逾時'>一定要設逾時</a></li><li><a href='#客戶端要重用連線'>客戶端要重用連線</a></li></ul></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

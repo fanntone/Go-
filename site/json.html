@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7.1 encoding/json — Go 底層原理筆記</title>
+<meta name="description" content="反射驅動的編解碼與型別快取、struct tag 的完整語意、串流處理，以及實驗中的 json/v2。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li class='active'><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>標準函式庫與進階主題</p><h1><span class='h1num'>7.1</span>encoding/json</h1><p class='lede'>反射驅動的編解碼與型別快取、struct tag 的完整語意、串流處理，以及實驗中的 json/v2。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="編解碼的兩條路徑">編解碼的兩條路徑<a class="headerlink" href="#編解碼的兩條路徑" title="Permanent link">#</a></h2>
+<p><code>encoding/json</code> 的核心是<strong>反射 + 型別快取</strong>。</p>
+<h3 id="編碼">編碼<a class="headerlink" href="#編碼" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="text"><pre><span></span><code>json.Marshal(v):
+    ① 取得 v 的 reflect.Type
+    ② 查快取：這個型別的「編碼器函式」建好了嗎？
+       沒有 → 走訪所有欄位、解析 tag、產生一個編碼器閉包、存進快取
+    ③ 執行編碼器，把結果寫進一個從 sync.Pool 取來的 buffer
+    ④ 複製一份回傳（因為 buffer 要還給 pool）
+</code></pre></div>
+
+<p><strong>型別分析只做一次</strong>。第一次編碼某個型別比較慢，之後就快得多。這是所有反射型函式庫的標準做法（見 <a href="reflect.html#怎麼降低成本">反射</a>）。</p>
+<h3 id="解碼">解碼<a class="headerlink" href="#解碼" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="text"><pre><span></span><code>json.Unmarshal(data, &amp;v):
+    ① 掃描 JSON 語法，驗證格式
+    ② 依 v 的型別逐欄位填入
+    ③ 欄位名稱比對：先試精確比對，再試「忽略大小寫」比對
+</code></pre></div>
+
+<div class="admonition warning">
+<p class="admonition-title">欄位比對會忽略大小寫</p>
+<p><code>``go
+type User struct {
+    Name string</code>json:"name"`
+}</p>
+<p>// 這三個都會填進 Name
+json.Unmarshal([]byte(<code>{"name":"a"}</code>), &amp;u)
+json.Unmarshal([]byte(<code>{"Name":"b"}</code>), &amp;u)
+json.Unmarshal([]byte(<code>{"NAME":"c"}</code>), &amp;u)
+```</p>
+<p>這是 v1 的既定行為，為了相容性不能改。如果你需要嚴格比對，只能自己寫 <code>UnmarshalJSON</code>，或改用 v2（見文末）。</p>
+</div>
+<hr />
+<h2 id="struct-tag-完整語意">struct tag 完整語意<a class="headerlink" href="#struct-tag-完整語意" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Product</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ID</span><span class="w">       </span><span class="kt">int</span><span class="w">      </span><span class="s">`json:&quot;id&quot;`</span><span class="w">                 </span><span class="c1">// 改名</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w">     </span><span class="kt">string</span><span class="w">   </span><span class="s">`json:&quot;name&quot;`</span><span class="w">               </span><span class="c1">//</span>
+<span class="w">    </span><span class="nx">Desc</span><span class="w">     </span><span class="kt">string</span><span class="w">   </span><span class="s">`json:&quot;desc,omitempty&quot;`</span><span class="w">     </span><span class="c1">// 零值時省略</span>
+<span class="w">    </span><span class="nx">Price</span><span class="w">    </span><span class="kt">float64</span><span class="w">  </span><span class="s">`json:&quot;price,string&quot;`</span><span class="w">       </span><span class="c1">// 編碼成字串</span>
+<span class="w">    </span><span class="nx">Internal</span><span class="w"> </span><span class="kt">string</span><span class="w">   </span><span class="s">`json:&quot;-&quot;`</span><span class="w">                  </span><span class="c1">// 完全忽略</span>
+<span class="w">    </span><span class="nx">Dash</span><span class="w">     </span><span class="kt">string</span><span class="w">   </span><span class="s">`json:&quot;-,&quot;`</span><span class="w">                 </span><span class="c1">// 欄位名真的叫 &quot;-&quot;</span>
+<span class="w">    </span><span class="nx">Tags</span><span class="w">     </span><span class="p">[]</span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;tags,omitempty&quot;`</span><span class="w">     </span><span class="c1">//</span>
+<span class="w">    </span><span class="nx">Meta</span><span class="w">     </span><span class="kt">any</span><span class="w">      </span><span class="s">`json:&quot;meta,omitempty&quot;`</span><span class="w">     </span><span class="c1">//</span>
+<span class="w">    </span><span class="nx">Legacy</span><span class="w">   </span><span class="kt">string</span><span class="w">   </span><span class="c1">//  沒有 tag → 用欄位名 &quot;Legacy&quot;</span>
+<span class="w">    </span><span class="nx">hidden</span><span class="w">   </span><span class="kt">string</span><span class="w">   </span><span class="c1">//  未匯出 → 永遠被忽略</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">Product</span><span class="p">{</span>
+<span class="w">        </span><span class="nx">ID</span><span class="p">:</span><span class="w">       </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">Name</span><span class="p">:</span><span class="w">     </span><span class="s">&quot;咖啡豆&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">Price</span><span class="p">:</span><span class="w">    </span><span class="mf">450.5</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">Internal</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;不會出現&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">Dash</span><span class="p">:</span><span class="w">     </span><span class="s">&quot;破折號欄位&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">hidden</span><span class="p">:</span><span class="w">   </span><span class="s">&quot;看不到&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">b</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">MarshalIndent</span><span class="p">(</span><span class="nx">p</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;  &quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">))</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>{
+  &quot;id&quot;: 1,
+  &quot;name&quot;: &quot;咖啡豆&quot;,
+  &quot;price&quot;: &quot;450.5&quot;,
+  &quot;-&quot;: &quot;破折號欄位&quot;,
+  &quot;Legacy&quot;: &quot;&quot;
+}
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>tag</th>
+<th>效果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>json:"name"</code></td>
+<td>使用 <code>name</code> 當 JSON 鍵</td>
+</tr>
+<tr>
+<td><code>json:"name,omitempty"</code></td>
+<td>值為零值時整個欄位省略</td>
+</tr>
+<tr>
+<td><code>json:"name,string"</code></td>
+<td>數字／布林編碼成 JSON 字串</td>
+</tr>
+<tr>
+<td><code>json:"-"</code></td>
+<td>完全忽略此欄位</td>
+</tr>
+<tr>
+<td><code>json:"-,"</code></td>
+<td>鍵名就是 <code>"-"</code>（注意結尾的逗號）</td>
+</tr>
+<tr>
+<td><code>json:",omitempty"</code></td>
+<td>保留欄位名，但套用 omitempty</td>
+</tr>
+</tbody>
+</table>
+<h3 id="omitempty-的陷阱"><code>omitempty</code> 的陷阱<a class="headerlink" href="#omitempty-的陷阱" title="Permanent link">#</a></h3>
+<p><strong><code>omitempty</code> 判斷的是 Go 的「零值」，不是「語意上的空」。</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Settings</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Enabled</span><span class="w"> </span><span class="kt">bool</span><span class="w">    </span><span class="s">`json:&quot;enabled,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Count</span><span class="w">   </span><span class="kt">int</span><span class="w">     </span><span class="s">`json:&quot;count,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Ratio</span><span class="w">   </span><span class="kt">float64</span><span class="w"> </span><span class="s">`json:&quot;ratio,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w">    </span><span class="kt">string</span><span class="w">  </span><span class="s">`json:&quot;name,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Items</span><span class="w">   </span><span class="p">[]</span><span class="kt">int</span><span class="w">   </span><span class="s">`json:&quot;items,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Nested</span><span class="w">  </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">X</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="s">`json:&quot;nested,omitempty&quot;`</span><span class="w"> </span><span class="c1">// ✗ struct 沒有 omitempty 效果</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">b</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Marshal</span><span class="p">(</span><span class="nx">Settings</span><span class="p">{})</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">))</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>{&quot;nested&quot;:{&quot;X&quot;:0}}
+</code></pre></div>
+
+<p><code>false</code>、<code>0</code>、<code>""</code>、<code>nil</code> slice 全部被省略——<strong>即使你是刻意要傳 <code>false</code></strong>。而空 struct 反而不會被省略（<code>omitempty</code> 對 struct 無效）。</p>
+<p><strong>解法：用指標區分「未設定」與「設定為零值」。</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Settings</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Enabled</span><span class="w"> </span><span class="o">*</span><span class="kt">bool</span><span class="w"> </span><span class="s">`json:&quot;enabled,omitempty&quot;`</span>
+<span class="w">    </span><span class="nx">Count</span><span class="w">   </span><span class="o">*</span><span class="kt">int</span><span class="w">  </span><span class="s">`json:&quot;count,omitempty&quot;`</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">f</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kc">false</span>
+<span class="w">    </span><span class="nx">n</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span>
+
+<span class="w">    </span><span class="c1">// 明確設定為 false / 0</span>
+<span class="w">    </span><span class="nx">b</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Marshal</span><span class="p">(</span><span class="nx">Settings</span><span class="p">{</span><span class="nx">Enabled</span><span class="p">:</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">f</span><span class="p">,</span><span class="w"> </span><span class="nx">Count</span><span class="p">:</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">n</span><span class="p">})</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">))</span><span class="w"> </span><span class="c1">// {&quot;enabled&quot;:false,&quot;count&quot;:0}</span>
+
+<span class="w">    </span><span class="c1">// 未設定</span>
+<span class="w">    </span><span class="nx">b2</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Marshal</span><span class="p">(</span><span class="nx">Settings</span><span class="p">{})</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">string</span><span class="p">(</span><span class="nx">b2</span><span class="p">))</span><span class="w"> </span><span class="c1">// {}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="admonition version">
+<p class="admonition-title">Go 1.24：<code>omitzero</code></p>
+<p>Go 1.24 加入 <code>omitzero</code>，語意更清楚：<strong>只在值等於該型別的零值時省略</strong>，而且對 struct 有效、對 <code>time.Time</code> 這種有 <code>IsZero()</code> 方法的型別會呼叫它。</p>
+<p><code>go
+type Event struct {
+    Name string    `json:"name"`
+    At   time.Time `json:"at,omitzero"`   // 零時間會被省略
+    Meta Metadata  `json:"meta,omitzero"` // 零值 struct 會被省略
+}</code></p>
+<p><code>omitempty</code> 對 <code>time.Time</code> 完全無效（<code>time.Time</code> 是 struct，永遠不是「empty」），所以以前必須用 <code>*time.Time</code>。<code>omitzero</code> 解決了這個長年的痛點。</p>
+</div>
+<hr />
+<h2 id="型別對應">型別對應<a class="headerlink" href="#型別對應" title="Permanent link">#</a></h2>
+<h3 id="預設對應">預設對應<a class="headerlink" href="#預設對應" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>JSON</th>
+<th>Go（解碼到 <code>any</code> 時）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>null</code></td>
+<td><code>nil</code></td>
+</tr>
+<tr>
+<td><code>true</code> / <code>false</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td>數字</td>
+<td><strong><code>float64</code></strong></td>
+</tr>
+<tr>
+<td>字串</td>
+<td><code>string</code></td>
+</tr>
+<tr>
+<td>陣列</td>
+<td><code>[]any</code></td>
+</tr>
+<tr>
+<td>物件</td>
+<td><code>map[string]any</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition danger">
+<p class="admonition-title">數字一律變成 float64</p>
+<p><code>go
+var v any
+json.Unmarshal([]byte(`{"id": 9007199254740993}`), &amp;v)
+m := v.(map[string]any)
+fmt.Printf("%.0f\n", m["id"]) // 9007199254740992 ← 精度掉了！</code></p>
+<p><code>float64</code> 只能精確表示 2⁵³ 以內的整數。超過的大整數（例如雪花演算法產生的 ID、某些資料庫的 bigint）會被靜默截斷。</p>
+<p><strong>解法一：解碼到具體型別。</strong></p>
+<p><code>go
+type Resp struct{ ID int64 `json:"id"` }</code></p>
+<p><strong>解法二：用 <code>Decoder.UseNumber()</code>。</strong></p>
+<p>```go
+package main</p>
+<p>import (
+    "encoding/json"
+    "fmt"
+    "strings"
+)</p>
+<p>func main() {
+    dec := json.NewDecoder(strings.NewReader(<code>{"id": 9007199254740993}</code>))
+    dec.UseNumber()</p>
+<div class="hl" data-lang="go"><pre><span></span><code>var v map[string]any
+dec.Decode(&amp;v)
+
+n := v[&quot;id&quot;].(json.Number)
+i, _ := n.Int64()
+fmt.Println(i) // 9007199254740993 ← 精確
+</code></pre></div>
+
+<p>}
+```</p>
+</div>
+<hr />
+<h2 id="自訂編解碼">自訂編解碼<a class="headerlink" href="#自訂編解碼" title="Permanent link">#</a></h2>
+<p>實作 <code>json.Marshaler</code> 與 <code>json.Unmarshaler</code> 介面：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;strings&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Status</span><span class="w"> </span><span class="kt">int</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="nx">StatusPending</span><span class="w"> </span><span class="nx">Status</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">iota</span>
+<span class="w">    </span><span class="nx">StatusActive</span>
+<span class="w">    </span><span class="nx">StatusClosed</span>
+<span class="p">)</span>
+
+<span class="kd">var</span><span class="w"> </span><span class="nx">statusNames</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="nx">Status</span><span class="p">]</span><span class="kt">string</span><span class="p">{</span>
+<span class="w">    </span><span class="nx">StatusPending</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;pending&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nx">StatusActive</span><span class="p">:</span><span class="w">  </span><span class="s">&quot;active&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nx">StatusClosed</span><span class="p">:</span><span class="w">  </span><span class="s">&quot;closed&quot;</span><span class="p">,</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="nx">Status</span><span class="p">)</span><span class="w"> </span><span class="nx">MarshalJSON</span><span class="p">()</span><span class="w"> </span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">name</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">statusNames</span><span class="p">[</span><span class="nx">s</span><span class="p">]</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;未知狀態: %d&quot;</span><span class="p">,</span><span class="w"> </span><span class="nb">int</span><span class="p">(</span><span class="nx">s</span><span class="p">))</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Marshal</span><span class="p">(</span><span class="nx">name</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="o">*</span><span class="nx">Status</span><span class="p">)</span><span class="w"> </span><span class="nx">UnmarshalJSON</span><span class="p">(</span><span class="nx">data</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">name</span><span class="w"> </span><span class="kt">string</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Unmarshal</span><span class="p">(</span><span class="nx">data</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">name</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">k</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">statusNames</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">EqualFold</span><span class="p">(</span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">name</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="o">*</span><span class="nx">s</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">k</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;未知狀態: %q&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">name</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Task</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Title</span><span class="w">  </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;title&quot;`</span>
+<span class="w">    </span><span class="nx">Status</span><span class="w"> </span><span class="nx">Status</span><span class="w"> </span><span class="s">`json:&quot;status&quot;`</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">b</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Marshal</span><span class="p">(</span><span class="nx">Task</span><span class="p">{</span><span class="nx">Title</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;寫文件&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">Status</span><span class="p">:</span><span class="w"> </span><span class="nx">StatusActive</span><span class="p">})</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">))</span><span class="w"> </span><span class="c1">// {&quot;title&quot;:&quot;寫文件&quot;,&quot;status&quot;:&quot;active&quot;}</span>
+
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">t</span><span class="w"> </span><span class="nx">Task</span>
+<span class="w">    </span><span class="nx">json</span><span class="p">.</span><span class="nx">Unmarshal</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="s">`{&quot;title&quot;:&quot;審核&quot;,&quot;status&quot;:&quot;closed&quot;}`</span><span class="p">),</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">t</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%+v\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">t</span><span class="p">)</span><span class="w"> </span><span class="c1">// {Title:審核 Status:2}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="admonition warning">
+<p class="admonition-title"><code>MarshalJSON</code> 用值接收者、<code>UnmarshalJSON</code> 用指標接收者</p>
+<p>這不對稱是必要的：</p>
+<ul>
+<li><code>MarshalJSON</code> 用<strong>值</strong>接收者，這樣 <code>Status</code> 與 <code>*Status</code> 都能編碼（見<a href="typecheck.html#介面滿足結構化型別">方法集規則</a>）。</li>
+<li><code>UnmarshalJSON</code> 必須用<strong>指標</strong>接收者，因為它要修改接收者。</li>
+</ul>
+<p>如果 <code>MarshalJSON</code> 用了指標接收者，把 <code>Status</code> 值放進 struct 欄位時就不會被呼叫——這是很難察覺的 bug。</p>
+</div>
+<h3 id="避免無窮遞迴">避免無窮遞迴<a class="headerlink" href="#避免無窮遞迴" title="Permanent link">#</a></h3>
+<p>在自訂方法裡直接 <code>json.Marshal(自己)</code> 會無窮遞迴。用型別別名切斷：</p>
+<div class="hl" data-lang="text"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Event</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w"> </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;name&quot;`</span>
+<span class="w">    </span><span class="nx">At</span><span class="w">   </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="w"> </span><span class="s">`json:&quot;at&quot;`</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">e</span><span class="w"> </span><span class="nx">Event</span><span class="p">)</span><span class="w"> </span><span class="nx">MarshalJSON</span><span class="p">()</span><span class="w"> </span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">type</span><span class="w"> </span><span class="nx">alias</span><span class="w"> </span><span class="nx">Event</span><span class="w"> </span><span class="c1">// ✓ alias 沒有 MarshalJSON 方法，不會遞迴</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Marshal</span><span class="p">(</span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">alias</span>
+<span class="w">        </span><span class="nx">AtUnix</span><span class="w"> </span><span class="kt">int64</span><span class="w"> </span><span class="s">`json:&quot;at_unix&quot;`</span><span class="w"> </span><span class="c1">// 加一個衍生欄位</span>
+<span class="w">    </span><span class="p">}{</span>
+<span class="w">        </span><span class="nx">alias</span><span class="p">:</span><span class="w">  </span><span class="nx">alias</span><span class="p">(</span><span class="nx">e</span><span class="p">),</span>
+<span class="w">        </span><span class="nx">AtUnix</span><span class="p">:</span><span class="w"> </span><span class="nx">e</span><span class="p">.</span><span class="nx">At</span><span class="p">.</span><span class="nx">Unix</span><span class="p">(),</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">b</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Marshal</span><span class="p">(</span><span class="nx">Event</span><span class="p">{</span><span class="nx">Name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;deploy&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">At</span><span class="p">:</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Unix</span><span class="p">(</span><span class="mi">1700000000</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">).</span><span class="nx">UTC</span><span class="p">()})</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">))</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="go"><pre><span></span><code>{&quot;name&quot;:&quot;deploy&quot;,&quot;at&quot;:&quot;2023-11-14T22:13:20Z&quot;,&quot;at_unix&quot;:1700000000}
+</code></pre></div>
+
+<p><code>type alias Event</code> 建立一個新的具名型別，它繼承欄位但<strong>不繼承方法</strong>——這正是我們要的。</p>
+<hr />
+<h2 id="串流處理">串流處理<a class="headerlink" href="#串流處理" title="Permanent link">#</a></h2>
+<p><code>Marshal</code>／<code>Unmarshal</code> 會把整份資料放在記憶體裡。處理大檔案或網路串流時用 <code>Encoder</code>／<code>Decoder</code>。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;io&quot;</span>
+<span class="w">    </span><span class="s">&quot;strings&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Record</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ID</span><span class="w">   </span><span class="kt">int</span><span class="w">    </span><span class="s">`json:&quot;id&quot;`</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;name&quot;`</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// JSON Lines：每行一個物件</span>
+<span class="w">    </span><span class="nx">input</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">`{&quot;id&quot;:1,&quot;name&quot;:&quot;a&quot;}</span>
+<span class="s">{&quot;id&quot;:2,&quot;name&quot;:&quot;b&quot;}</span>
+<span class="s">{&quot;id&quot;:3,&quot;name&quot;:&quot;c&quot;}`</span>
+
+<span class="w">    </span><span class="nx">dec</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">NewDecoder</span><span class="p">(</span><span class="nx">strings</span><span class="p">.</span><span class="nx">NewReader</span><span class="p">(</span><span class="nx">input</span><span class="p">))</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kd">var</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="nx">Record</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">dec</span><span class="p">.</span><span class="nx">Decode</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">r</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nx">io</span><span class="p">.</span><span class="nx">EOF</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">break</span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;錯誤:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span>
+<span class="w">            </span><span class="k">break</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%+v\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="逐項處理大型陣列">逐項處理大型陣列<a class="headerlink" href="#逐項處理大型陣列" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;strings&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">input</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">`[{&quot;id&quot;:1},{&quot;id&quot;:2},{&quot;id&quot;:3}]`</span>
+<span class="w">    </span><span class="nx">dec</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">NewDecoder</span><span class="p">(</span><span class="nx">strings</span><span class="p">.</span><span class="nx">NewReader</span><span class="p">(</span><span class="nx">input</span><span class="p">))</span>
+
+<span class="w">    </span><span class="c1">// 讀掉開頭的 &#39;[&#39;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">dec</span><span class="p">.</span><span class="nx">Token</span><span class="p">();</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nb">panic</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">dec</span><span class="p">.</span><span class="nx">More</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kd">var</span><span class="w"> </span><span class="nx">item</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">ID</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">dec</span><span class="p">.</span><span class="nx">Decode</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">item</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nb">panic</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;處理&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">item</span><span class="p">.</span><span class="nx">ID</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 讀掉結尾的 &#39;]&#39;</span>
+<span class="w">    </span><span class="nx">dec</span><span class="p">.</span><span class="nx">Token</span><span class="p">()</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>即使陣列有一百萬個元素，記憶體用量也只跟單一元素的大小相關。</p>
+<h3 id="嚴格模式">嚴格模式<a class="headerlink" href="#嚴格模式" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">dec</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">NewDecoder</span><span class="p">(</span><span class="nx">r</span><span class="p">)</span>
+<span class="nx">dec</span><span class="p">.</span><span class="nx">DisallowUnknownFields</span><span class="p">()</span><span class="w"> </span><span class="c1">// 遇到未知欄位就報錯</span>
+</code></pre></div>
+
+<p>處理設定檔時很有用——使用者打錯欄位名時會得到明確的錯誤，而不是被靜默忽略。</p>
+<hr />
+<h2 id="效能">效能<a class="headerlink" href="#效能" title="Permanent link">#</a></h2>
+<h3 id="基準對照">基準對照<a class="headerlink" href="#基準對照" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;testing&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Item</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ID</span><span class="w">    </span><span class="kt">int</span><span class="w">     </span><span class="s">`json:&quot;id&quot;`</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w">  </span><span class="kt">string</span><span class="w">  </span><span class="s">`json:&quot;name&quot;`</span>
+<span class="w">    </span><span class="nx">Price</span><span class="w"> </span><span class="kt">float64</span><span class="w"> </span><span class="s">`json:&quot;price&quot;`</span>
+<span class="w">    </span><span class="nx">Tags</span><span class="w">  </span><span class="p">[]</span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;tags&quot;`</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">items</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="nx">Item</span><span class="p">,</span><span class="w"> </span><span class="mi">1000</span><span class="p">)</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">items</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">items</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">Item</span><span class="p">{</span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;item&quot;</span><span class="p">,</span><span class="w"> </span><span class="mf">9.99</span><span class="p">,</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="p">{</span><span class="s">&quot;a&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;b&quot;</span><span class="p">}}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">data</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Marshal</span><span class="p">(</span><span class="nx">items</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">r1</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">testing</span><span class="p">.</span><span class="nx">Benchmark</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">b</span><span class="p">.</span><span class="nx">ReportAllocs</span><span class="p">()</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">b</span><span class="p">.</span><span class="nx">N</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Marshal</span><span class="p">(</span><span class="nx">items</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="w">    </span><span class="nx">r2</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">testing</span><span class="p">.</span><span class="nx">Benchmark</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">b</span><span class="p">.</span><span class="nx">ReportAllocs</span><span class="p">()</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">b</span><span class="p">.</span><span class="nx">N</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="kd">var</span><span class="w"> </span><span class="nx">out</span><span class="w"> </span><span class="p">[]</span><span class="nx">Item</span>
+<span class="w">            </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Unmarshal</span><span class="p">(</span><span class="nx">data</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">out</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">})</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;Marshal:  &quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r1</span><span class="p">,</span><span class="w"> </span><span class="nx">r1</span><span class="p">.</span><span class="nx">MemString</span><span class="p">())</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;Unmarshal:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r2</span><span class="p">,</span><span class="w"> </span><span class="nx">r2</span><span class="p">.</span><span class="nx">MemString</span><span class="p">())</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="優化技巧">優化技巧<a class="headerlink" href="#優化技巧" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>技巧</th>
+<th>效果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>用具體 struct 而非 <code>map[string]any</code></td>
+<td>快 2–5 倍，配置大幅減少</td>
+</tr>
+<tr>
+<td>用 <code>Encoder</code> 直接寫進 <code>io.Writer</code></td>
+<td>省掉中間的 <code>[]byte</code></td>
+</tr>
+<tr>
+<td><code>sync.Pool</code> 重用 buffer</td>
+<td>減少 GC 壓力</td>
+</tr>
+<tr>
+<td>欄位少一點、巢狀淺一點</td>
+<td>反射走訪成本降低</td>
+</tr>
+<tr>
+<td>程式碼生成（<code>easyjson</code> 等）</td>
+<td>快 3–10 倍，但增加建置複雜度</td>
+</tr>
+</tbody>
+</table>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 多一次完整的複製</span>
+<span class="nx">b</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Marshal</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
+<span class="nx">w</span><span class="p">.</span><span class="nx">Write</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span>
+
+<span class="c1">// ✓ 直接寫出</span>
+<span class="nx">json</span><span class="p">.</span><span class="nx">NewEncoder</span><span class="p">(</span><span class="nx">w</span><span class="p">).</span><span class="nx">Encode</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
+</code></pre></div>
+
+<div class="admonition tip">
+<p class="admonition-title">HTTP handler 的正確寫法</p>
+<p>```go
+func handler(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")</p>
+<div class="hl" data-lang=""><pre><span></span><code>if err := json.NewEncoder(w).Encode(resp); err != nil {
+    // 注意：此時 header 已經送出，無法再改 status code
+    slog.Error(&quot;encode failed&quot;, &quot;err&quot;, err)
+}
+</code></pre></div>
+
+<p>}
+```</p>
+<p><code>Encode</code> 會自動在結尾加上換行符號，這是它跟 <code>Marshal</code> 的一個小差異。</p>
+</div>
+<hr />
+<h2 id="jsonv2">json/v2<a class="headerlink" href="#jsonv2" title="Permanent link">#</a></h2>
+<div class="admonition version">
+<p class="admonition-title">Go 1.25 實驗性引入，Go 1.26 仍需 GOEXPERIMENT</p>
+<p>v1 的 <code>encoding/json</code> 有一些無法在相容性承諾下修正的設計問題。Go 團隊在 Go 1.25 引入了實驗性的 <code>encoding/json/v2</code> 與底層的 <code>encoding/json/jsontext</code>。</p>
+<p><strong>Go 1.26 的狀態</strong>：仍然需要明確啟用：</p>
+<p><code>bash
+GOEXPERIMENT=jsonv2 go build ./...</code></p>
+<p>啟用後，<code>encoding/json</code>（v1）會改由 v2 實作，但保持 v1 的行為語意；同時 <code>encoding/json/v2</code> 可以直接 import。</p>
+<p><strong>預計 Go 1.27 成為預設</strong>，屆時改用 <code>GOEXPERIMENT=nojsonv2</code> 才能切回舊實作。</p>
+<p>因為它還在演進中，<strong>正式環境暫時不建議使用</strong>。以下只列出設計方向。</p>
+</div>
+<p>v2 想解決的幾個 v1 問題：</p>
+<table>
+<thead>
+<tr>
+<th>v1 的問題</th>
+<th>v2 的作法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>欄位比對忽略大小寫（無法關閉）</td>
+<td>預設精確比對，可選擇忽略大小寫</td>
+</tr>
+<tr>
+<td>錯誤訊息不夠明確（不知道錯在哪個欄位）</td>
+<td>錯誤帶有 JSON 指標路徑</td>
+</tr>
+<tr>
+<td>沒有真正的串流 API</td>
+<td><code>jsontext</code> 提供低階的 token 串流</td>
+</tr>
+<tr>
+<td><code>omitempty</code> 語意混亂</td>
+<td>選項系統更清晰</td>
+</tr>
+<tr>
+<td>選項只能透過 struct tag</td>
+<td>支援呼叫時傳入選項</td>
+</tr>
+<tr>
+<td><code>nil</code> slice 編碼成 <code>null</code></td>
+<td>可設定成 <code>[]</code></td>
+</tr>
+<tr>
+<td>重複的 JSON 鍵被靜默接受</td>
+<td>預設拒絕</td>
+</tr>
+<tr>
+<td>效能（尤其是解碼）</td>
+<td>顯著改善</td>
+</tr>
+</tbody>
+</table>
+<div class="hl" data-lang=""><pre><span></span><code><span class="c1">// v2 的選項式 API 概念（實驗中，API 可能改變）</span>
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;encoding/json/v2&quot;</span>
+<span class="w">    </span><span class="s">&quot;encoding/json/jsontext&quot;</span>
+<span class="p">)</span>
+
+<span class="nx">data</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Marshal</span><span class="p">(</span><span class="nx">v</span><span class="p">,</span>
+<span class="w">    </span><span class="nx">jsontext</span><span class="p">.</span><span class="nx">WithIndent</span><span class="p">(</span><span class="s">&quot;  &quot;</span><span class="p">),</span>
+<span class="w">    </span><span class="nx">json</span><span class="p">.</span><span class="nx">FormatNilSliceAsEmpty</span><span class="p">(</span><span class="kc">true</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<p><strong>現階段的建議</strong>：知道它的存在，追蹤它的進展，但正式專案繼續用 v1。等它成為預設（Go 1.27）而且生態成熟後再遷移。</p>
+<hr />
+<h2 id="常見錯誤總覽">常見錯誤總覽<a class="headerlink" href="#常見錯誤總覽" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>症狀</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>欄位沒有被編碼</td>
+<td>欄位未匯出（小寫開頭）</td>
+</tr>
+<tr>
+<td>解碼後欄位是零值</td>
+<td>傳的不是指標，或欄位未匯出</td>
+</tr>
+<tr>
+<td><code>json: unsupported type: chan int</code></td>
+<td>channel、func、complex 無法編碼</td>
+</tr>
+<tr>
+<td><code>json: unsupported value: +Inf</code></td>
+<td><code>NaN</code>、<code>Inf</code> 無法表示成 JSON</td>
+</tr>
+<tr>
+<td>大整數精度遺失</td>
+<td>解碼到 <code>any</code> 變成 <code>float64</code>，用 <code>UseNumber()</code></td>
+</tr>
+<tr>
+<td>時間格式不對</td>
+<td><code>time.Time</code> 預設用 RFC 3339，要別的格式得自訂</td>
+</tr>
+<tr>
+<td><code>omitempty</code> 對 <code>time.Time</code> 沒用</td>
+<td>用 <code>omitzero</code>（1.24+）或 <code>*time.Time</code></td>
+</tr>
+<tr>
+<td>無窮遞迴 / 堆疊溢位</td>
+<td>自訂 <code>MarshalJSON</code> 裡呼叫了 <code>json.Marshal(自己)</code></td>
+</tr>
+<tr>
+<td>循環參照造成 stack overflow</td>
+<td>JSON 沒有參照概念，要自己切斷循環</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<p>下一節談 <code>net/http</code>：伺服器與客戶端的內部設計。</p></article><nav class='pager'><a class='prev' href='stack.html'><span>上一節</span><strong>6.3 堆疊記憶體管理</strong></a><a class='next' href='http.html'><span>下一節</span><strong>7.2 net/http</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#編解碼的兩條路徑'>編解碼的兩條路徑</a><ul><li><a href='#編碼'>編碼</a></li><li><a href='#解碼'>解碼</a></li></ul></li><li><a href='#struct-tag-完整語意'>struct tag 完整語意</a><ul><li><a href='#omitempty-的陷阱'>omitempty 的陷阱</a></li></ul></li><li><a href='#型別對應'>型別對應</a><ul><li><a href='#預設對應'>預設對應</a></li></ul></li><li><a href='#自訂編解碼'>自訂編解碼</a><ul><li><a href='#避免無窮遞迴'>避免無窮遞迴</a></li></ul></li><li><a href='#串流處理'>串流處理</a><ul><li><a href='#逐項處理大型陣列'>逐項處理大型陣列</a></li><li><a href='#嚴格模式'>嚴格模式</a></li></ul></li><li><a href='#效能'>效能</a><ul><li><a href='#基準對照'>基準對照</a></li><li><a href='#優化技巧'>優化技巧</a></li></ul></li><li><a href='#jsonv2'>json/v2</a></li><li><a href='#常見錯誤總覽'>常見錯誤總覽</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

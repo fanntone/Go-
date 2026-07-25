@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>6.1 記憶體配置器 — Go 底層原理筆記</title>
+<meta name="description" content="mcache / mcentral / mheap 三層結構、size class 分級、tiny allocator，以及 sync.Pool 的正確用法。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li class='active'><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>記憶體管理</p><h1><span class='h1num'>6.1</span>記憶體配置器</h1><p class='lede'>mcache / mcentral / mheap 三層結構、size class 分級、tiny allocator，以及 sync.Pool 的正確用法。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="為什麼不直接用-malloc">為什麼不直接用 malloc<a class="headerlink" href="#為什麼不直接用-malloc" title="Permanent link">#</a></h2>
+<p>Go 自己實作了一套記憶體配置器（設計上源自 TCMalloc），而不是呼叫 C 的 <code>malloc</code>。理由有三個：</p>
+<ol>
+<li><strong>鎖競爭。</strong> 通用的 <code>malloc</code> 需要全域鎖或複雜的執行緒快取。Go 有現成的 P 抽象，可以把快取掛在 P 上做到<strong>完全無鎖</strong>。</li>
+<li><strong>GC 需要中繼資料。</strong> 垃圾回收器必須知道「這塊記憶體裡哪些位置是指標」。這些資訊要跟配置器整合。</li>
+<li><strong>cgo 的成本。</strong> 每次呼叫 C 函式都要切換到系統堆疊，在熱路徑上不可接受。</li>
+</ol>
+<hr />
+<h2 id="三層結構">三層結構<a class="headerlink" href="#三層結構" title="Permanent link">#</a></h2>
+<figure class="diagram"><svg viewBox="0 0 700 420" role="img" aria-label="Go 記憶體配置器的三層結構"><rect class="d-box-o" x="15" y="14" width="670" height="92" rx="7"/><text class="d-t-b" x="30" y="36">① mcache —— 每個 P 一份，完全無鎖</text><text class="d-t-s" x="30" y="56">內含約 68×2 個 mspan（每個 size class 有「含指標」與「不含指標」兩種）</text><text class="d-t-s" x="30" y="74">配置時：算出 size class → 取對應的 mspan → 從中拿一個空閒物件。沒有任何原子操作，就是幾道指令。</text><text class="d-t-a" x="30" y="96">→ 絕大多數配置在這一層完成。這是 Go 配置速度快的主因。</text><path class="d-line" d="M350 106 L350 124" marker-end="url(#ar21)"/><text class="d-t-s" x="360" y="120">mcache 的那個 span 用完了 ↓</text><rect class="d-box-w" x="15" y="126" width="670" height="84" rx="7"/><text class="d-t-b" x="30" y="148">② mcentral —— 每個 size class 一個，全域共用（有鎖）</text><text class="d-t-s" x="30" y="168">維護兩個 span 列表：partial（還有空位）與 full（滿了）</text><text class="d-t-s" x="30" y="186">mcache 來要 span 時，先從 partial 拿；沒有就去 mheap 要新的</text><text class="d-t-s" x="30" y="204">鎖的粒度是「每個 size class 一把」，所以不同大小的配置不會互相競爭</text><path class="d-line" d="M350 210 L350 228" marker-end="url(#ar21)"/><text class="d-t-s" x="360" y="224">mcentral 也沒 span 了 ↓</text><rect class="d-box-a" x="15" y="230" width="670" height="92" rx="7"/><text class="d-t-b" x="30" y="252">③ mheap —— 全域唯一，管理所有記憶體</text><text class="d-t-s" x="30" y="272">以 8 KB 的 page 為單位管理；用基數樹（radix tree）追蹤哪些頁是空閒的</text><text class="d-t-s" x="30" y="290">切出對應大小的 mspan 給 mcentral</text><text class="d-t-s" x="30" y="308">記憶體不夠 → 向作業系統要（Linux: mmap，Windows: VirtualAlloc），一次至少 4 MB（一個 heap arena 是 64 MB）</text><rect class="d-box" x="15" y="342" width="670" height="62" rx="7"/><text class="d-t-b" x="30" y="364">大物件的捷徑</text><text class="d-t-s" x="30" y="384">超過 32 KB 的物件跳過 mcache 與 mcentral，直接向 mheap 要連續的頁 —— 這種配置叫 large object，</text><text class="d-t-s" x="30" y="400">每次都要拿 mheap 的鎖。所以「盡量避免大物件配置」在熱路徑上是有意義的建議。</text><defs><marker id="ar21" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--line-strong)"/></marker></defs></svg><figcaption><b>快取分層。</b>跟 CPU 的 L1/L2/L3 快取是同樣的思路：把最頻繁的操作放在最近、最快、無競爭的一層。<code>mcache</code> 掛在 P 上，而 P 的數量等於 <code>GOMAXPROCS</code>，所以既無鎖又不會浪費太多記憶體。</figcaption></figure>
+
+<hr />
+<h2 id="size-class">size class<a class="headerlink" href="#size-class" title="Permanent link">#</a></h2>
+<p>Go 不會「你要幾個位元組就給幾個位元組」，而是把配置歸類到約 <strong>68 個預定義的大小等級</strong>。</p>
+<p>節錄前幾級與後幾級：</p>
+<table>
+<thead>
+<tr>
+<th>class</th>
+<th>物件大小</th>
+<th>每個 span 的頁數</th>
+<th>每個 span 可放幾個</th>
+<th>浪費率</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>8 B</td>
+<td>1</td>
+<td>1024</td>
+<td>0%</td>
+</tr>
+<tr>
+<td>2</td>
+<td>16 B</td>
+<td>1</td>
+<td>512</td>
+<td>0%</td>
+</tr>
+<tr>
+<td>3</td>
+<td>24 B</td>
+<td>1</td>
+<td>341</td>
+<td>0.92%</td>
+</tr>
+<tr>
+<td>4</td>
+<td>32 B</td>
+<td>1</td>
+<td>256</td>
+<td>0%</td>
+</tr>
+<tr>
+<td>5</td>
+<td>48 B</td>
+<td>1</td>
+<td>170</td>
+<td>0.78%</td>
+</tr>
+<tr>
+<td>…</td>
+<td>…</td>
+<td>…</td>
+<td>…</td>
+<td>…</td>
+</tr>
+<tr>
+<td>40</td>
+<td>3072 B</td>
+<td>3</td>
+<td>8</td>
+<td>0.25%</td>
+</tr>
+<tr>
+<td>…</td>
+<td>…</td>
+<td>…</td>
+<td>…</td>
+<td>…</td>
+</tr>
+<tr>
+<td>67</td>
+<td>32768 B</td>
+<td>4</td>
+<td>1</td>
+<td>0%</td>
+</tr>
+</tbody>
+</table>
+<p><strong>為什麼要分級？</strong></p>
+<ul>
+<li><strong>消除外部碎片。</strong> 同一個 span 裡所有物件大小相同，釋放後的空位一定能被下一次同大小的配置用上。</li>
+<li><strong>配置變成 O(1)。</strong> 不需要搜尋合適的空閒區塊，直接從 span 的空閒位元圖找下一個 0。</li>
+<li><strong>釋放也是 O(1)。</strong> 從物件位址就能算出它屬於哪個 span、第幾個位置。</li>
+</ul>
+<p><strong>代價是內部碎片。</strong> 你要 33 位元組，實際拿到 48 位元組（class 5），浪費 15 位元組。Go 的 size class 表經過調校，最大浪費率控制在約 12.5% 以內。</p>
+<h3 id="觀察-size-class-的影響">觀察 size class 的影響<a class="headerlink" href="#觀察-size-class-的影響" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">allocSize</span><span class="p">(</span><span class="nx">n</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">uint64</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">before</span><span class="p">,</span><span class="w"> </span><span class="nx">after</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">MemStats</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GC</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">ReadMemStats</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">before</span><span class="p">)</span>
+
+<span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">iterations</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">100000</span>
+<span class="w">    </span><span class="nx">sink</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([][]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="nx">iterations</span><span class="p">)</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">sink</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">sink</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="nx">n</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">ReadMemStats</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">after</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">KeepAlive</span><span class="p">(</span><span class="nx">sink</span><span class="p">)</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="p">(</span><span class="nx">after</span><span class="p">.</span><span class="nx">TotalAlloc</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="nx">before</span><span class="p">.</span><span class="nx">TotalAlloc</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="nx">iterations</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span><span class="w"> </span><span class="mi">9</span><span class="p">,</span><span class="w"> </span><span class="mi">16</span><span class="p">,</span><span class="w"> </span><span class="mi">17</span><span class="p">,</span><span class="w"> </span><span class="mi">32</span><span class="p">,</span><span class="w"> </span><span class="mi">33</span><span class="p">,</span><span class="w"> </span><span class="mi">48</span><span class="p">,</span><span class="w"> </span><span class="mi">49</span><span class="p">,</span><span class="w"> </span><span class="mi">64</span><span class="p">,</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="mi">128</span><span class="p">,</span><span class="w"> </span><span class="mi">129</span><span class="p">}</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;要求 %3d 位元組 → 實際約 %3d 位元組\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">n</span><span class="p">,</span><span class="w"> </span><span class="nx">allocSize</span><span class="p">(</span><span class="nx">n</span><span class="p">))</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>輸出會顯示明顯的階梯：要求 9、要求 16 都拿到 16；要求 17 到 24 都拿到 24。</p>
+<p><strong>實務意義</strong>：設計熱路徑上的 struct 時，讓它剛好落在 size class 邊界內可以避免浪費。例如一個 40 位元組的 struct 會拿到 48 位元組的空間，加一個 8 位元組欄位「免費」。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;unsafe&quot;</span>
+<span class="p">)</span>
+
+<span class="c1">// 欄位順序影響大小（對齊填充）</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">Bad</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">a</span><span class="w"> </span><span class="kt">bool</span><span class="w">   </span><span class="c1">// 1 + 7 padding</span>
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="kt">int64</span><span class="w">  </span><span class="c1">// 8</span>
+<span class="w">    </span><span class="nx">c</span><span class="w"> </span><span class="kt">bool</span><span class="w">   </span><span class="c1">// 1 + 7 padding</span>
+<span class="p">}</span><span class="w"> </span><span class="c1">// 24 位元組</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Good</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="kt">int64</span><span class="w"> </span><span class="c1">// 8</span>
+<span class="w">    </span><span class="nx">a</span><span class="w"> </span><span class="kt">bool</span><span class="w">  </span><span class="c1">// 1</span>
+<span class="w">    </span><span class="nx">c</span><span class="w"> </span><span class="kt">bool</span><span class="w">  </span><span class="c1">// 1 + 6 padding</span>
+<span class="p">}</span><span class="w"> </span><span class="c1">// 16 位元組</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Sizeof</span><span class="p">(</span><span class="nx">Bad</span><span class="p">{}))</span><span class="w">  </span><span class="c1">// 24</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Sizeof</span><span class="p">(</span><span class="nx">Good</span><span class="p">{}))</span><span class="w"> </span><span class="c1">// 16</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>把大欄位放前面、小欄位放後面</strong>，可以減少對齊填充。工具 <code>fieldalignment</code>（<code>golang.org/x/tools/go/analysis/passes/fieldalignment</code>）能自動檢查：</p>
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>run<span class="w"> </span>golang.org/x/tools/go/analysis/passes/fieldalignment/cmd/fieldalignment@latest<span class="w"> </span>./...
+</code></pre></div>
+
+<div class="admonition warning">
+<p class="admonition-title">不要為了這個犧牲可讀性</p>
+<p>欄位重排的收益只在「這個 struct 會被配置數百萬次」時才顯著。一般的設定 struct、請求 struct 不值得為此打亂邏輯分組。</p>
+</div>
+<hr />
+<h2 id="tiny-allocator">tiny allocator<a class="headerlink" href="#tiny-allocator" title="Permanent link">#</a></h2>
+<p><strong>小於 16 位元組且不含指標</strong>的物件走一條特別的路：它們會被<strong>合併</strong>到同一個 16 位元組的區塊裡。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">before</span><span class="p">,</span><span class="w"> </span><span class="nx">after</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">MemStats</span>
+
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GC</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">ReadMemStats</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">before</span><span class="p">)</span>
+
+<span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">100000</span>
+<span class="w">    </span><span class="nx">sink</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="o">*</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="nx">n</span><span class="p">)</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">sink</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">byte</span><span class="p">(</span><span class="nx">i</span><span class="p">)</span>
+<span class="w">        </span><span class="nx">sink</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">b</span><span class="w"> </span><span class="c1">// 1 位元組、無指標 → tiny allocator</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">ReadMemStats</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">after</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">KeepAlive</span><span class="p">(</span><span class="nx">sink</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;100000 個 1 位元組物件，總配置 %d 位元組\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">after</span><span class="p">.</span><span class="nx">TotalAlloc</span><span class="o">-</span><span class="nx">before</span><span class="p">.</span><span class="nx">TotalAlloc</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;平均每個 %.1f 位元組\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nb">float64</span><span class="p">(</span><span class="nx">after</span><span class="p">.</span><span class="nx">TotalAlloc</span><span class="o">-</span><span class="nx">before</span><span class="p">.</span><span class="nx">TotalAlloc</span><span class="p">)</span><span class="o">/</span><span class="nx">n</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>如果沒有 tiny allocator，每個 1 位元組物件都會佔用一個完整的 8 位元組 class-1 slot。有了它，最多 16 個小物件可以擠在同一個 16 位元組區塊裡。</p>
+<p><strong>為什麼要求「不含指標」？</strong> 因為 GC 需要能精確判斷「這個區塊還有沒有人參照」。如果混雜了指標，只要其中一個小物件還活著，整塊都不能釋放——含指標時風險太高。</p>
+<p>常見受益者：<code>bool</code>、<code>byte</code>、小型整數的裝箱、<code>struct{}{}</code>。</p>
+<hr />
+<h2 id="配置的完整流程">配置的完整流程<a class="headerlink" href="#配置的完整流程" title="Permanent link">#</a></h2>
+<p><code>runtime.mallocgc(size, typ, needzero)</code> 的決策樹：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>mallocgc(size, typ, needzero):
+
+    if size &lt;= 32 KB:                       // 小物件
+        if size &lt; 16 B &amp;&amp; typ 不含指標:
+            → tiny allocator：試著擠進目前的 tiny 區塊
+        else:
+            sizeclass = size_to_class[size]
+            span = mcache.alloc[sizeclass]
+            if span 有空位:
+                → 直接取用（無鎖，最快路徑）
+            else:
+                → 向 mcentral 要一個新的 span（有鎖）
+                   → mcentral 沒有 → 向 mheap 要（有鎖）
+                      → mheap 沒有 → 向 OS 要（mmap / VirtualAlloc）
+    else:                                   // 大物件
+        → 直接向 mheap 要連續的頁
+
+    if 需要觸發 GC（配置量達到門檻）:
+        → gcStart() 或協助標記（mutator assist）
+
+    return 指標
+</code></pre></div>
+
+<p>注意最後那個 <strong>GC 協助（mutator assist）</strong>：配置得越快，你的 goroutine 就要幫忙做越多標記工作。這是 GC 的節流機制，見下一節。</p>
+<hr />
+<h2 id="觀察配置行為">觀察配置行為<a class="headerlink" href="#觀察配置行為" title="Permanent link">#</a></h2>
+<h3 id="基準測試的-benchmem">基準測試的 <code>-benchmem</code><a class="headerlink" href="#基準測試的-benchmem" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;strings&quot;</span>
+<span class="w">    </span><span class="s">&quot;testing&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">concat</span><span class="p">(</span><span class="nx">parts</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">s</span><span class="w"> </span><span class="kt">string</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">parts</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">s</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="nx">p</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">s</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">build</span><span class="p">(</span><span class="nx">parts</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">sb</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">Builder</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">parts</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">sb</span><span class="p">.</span><span class="nx">WriteString</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">sb</span><span class="p">.</span><span class="nx">String</span><span class="p">()</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">parts</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="mi">100</span><span class="p">)</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">parts</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">parts</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;xxxxxxxx&quot;</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">name</span><span class="p">,</span><span class="w"> </span><span class="nx">fn</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kd">func</span><span class="p">([]</span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="p">{</span><span class="s">&quot;concat&quot;</span><span class="p">:</span><span class="w"> </span><span class="nx">concat</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;build&quot;</span><span class="p">:</span><span class="w"> </span><span class="nx">build</span><span class="p">}</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">r</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">testing</span><span class="p">.</span><span class="nx">Benchmark</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">b</span><span class="p">.</span><span class="nx">ReportAllocs</span><span class="p">()</span>
+<span class="w">            </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">b</span><span class="p">.</span><span class="nx">N</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">fn</span><span class="p">(</span><span class="nx">parts</span><span class="p">)</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">})</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%-8s %s  %s\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">name</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">MemString</span><span class="p">())</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong><code>allocs/op</code> 比 <code>ns/op</code> 更值得盯。</strong> 配置次數直接決定 GC 壓力，而 GC 壓力會以難以預測的方式影響整體延遲。把 <code>allocs/op</code> 降下來，通常 <code>ns/op</code> 也會跟著降。</p>
+<h3 id="堆積剖析">堆積剖析<a class="headerlink" href="#堆積剖析" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-bench<span class="o">=</span>.<span class="w"> </span>-memprofile<span class="o">=</span>mem.out
+go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </span>-http<span class="o">=</span>:8081<span class="w"> </span>mem.out
+</code></pre></div>
+
+<p>兩種檢視：</p>
+<table>
+<thead>
+<tr>
+<th>檢視</th>
+<th>指令</th>
+<th>回答什麼</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>inuse_space</code></td>
+<td>預設</td>
+<td>現在還活著的物件由誰配置（找洩漏）</td>
+</tr>
+<tr>
+<td><code>alloc_space</code></td>
+<td><code>-sample_index=alloc_space</code></td>
+<td>從啟動到現在總共配置了多少（找 GC 壓力來源）</td>
+</tr>
+<tr>
+<td><code>alloc_objects</code></td>
+<td><code>-sample_index=alloc_objects</code></td>
+<td>配置<strong>次數</strong>（找頻繁的小配置）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>找 GC 壓力用 <code>alloc_space</code> 或 <code>alloc_objects</code>，找記憶體洩漏用 <code>inuse_space</code>。</strong> 這兩者常常指向完全不同的地方。</p>
+<h3 id="執行期統計">執行期統計<a class="headerlink" href="#執行期統計" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">printStats</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">MemStats</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">ReadMemStats</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">m</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;HeapAlloc    %6d KB  (存活物件)\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapAlloc</span><span class="o">/</span><span class="mi">1024</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;HeapSys      %6d KB  (向 OS 取得的總量)\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapSys</span><span class="o">/</span><span class="mi">1024</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;HeapIdle     %6d KB  (取得但閒置)\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapIdle</span><span class="o">/</span><span class="mi">1024</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;HeapReleased %6d KB  (已歸還 OS)\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapReleased</span><span class="o">/</span><span class="mi">1024</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;HeapObjects  %6d     (物件數量)\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapObjects</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;Mallocs      %6d     (累計配置次數)\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">Mallocs</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;Frees        %6d     (累計釋放次數)\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">Frees</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;NumGC        %6d     (GC 次數)\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">NumGC</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;GCCPUFraction  %.4f  (GC 佔用的 CPU 比例)\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">GCCPUFraction</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">printStats</span><span class="p">()</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+
+<div class="admonition warning">
+<p class="admonition-title"><code>ReadMemStats</code> 會 STW</p>
+<p>它需要停止整個世界來取得一致的快照。<strong>不要在高頻迴圈裡呼叫。</strong> 每幾秒一次做監控是可以的。</p>
+<p>Go 1.16 起有更輕量的 <code>runtime/metrics</code> 套件，提供不需要 STW 的取樣式指標，適合高頻收集：</p>
+<p>```go
+import "runtime/metrics"</p>
+<p>samples := []metrics.Sample{
+    {Name: "/gc/heap/allocs:bytes"},
+    {Name: "/sched/goroutines:goroutines"},
+}
+metrics.Read(samples)
+```</p>
+</div>
+<hr />
+<h2 id="syncpool"><code>sync.Pool</code><a class="headerlink" href="#syncpool" title="Permanent link">#</a></h2>
+<p>物件重用池，用來降低高頻配置的 GC 壓力。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;bytes&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;sync&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">var</span><span class="w"> </span><span class="nx">bufPool</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">Pool</span><span class="p">{</span>
+<span class="w">    </span><span class="nx">New</span><span class="p">:</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="kt">any</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nb">new</span><span class="p">(</span><span class="nx">bytes</span><span class="p">.</span><span class="nx">Buffer</span><span class="p">)</span><span class="w"> </span><span class="c1">// 池空時呼叫</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">render</span><span class="p">(</span><span class="nx">name</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">buf</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">bufPool</span><span class="p">.</span><span class="nx">Get</span><span class="p">().(</span><span class="o">*</span><span class="nx">bytes</span><span class="p">.</span><span class="nx">Buffer</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">buf</span><span class="p">.</span><span class="nx">Reset</span><span class="p">()</span><span class="w">        </span><span class="c1">// ✓ 一定要重置狀態</span>
+<span class="w">        </span><span class="nx">bufPool</span><span class="p">.</span><span class="nx">Put</span><span class="p">(</span><span class="nx">buf</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}()</span>
+
+<span class="w">    </span><span class="nx">buf</span><span class="p">.</span><span class="nx">WriteString</span><span class="p">(</span><span class="s">&quot;Hello, &quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">buf</span><span class="p">.</span><span class="nx">WriteString</span><span class="p">(</span><span class="nx">name</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">buf</span><span class="p">.</span><span class="nx">WriteString</span><span class="p">(</span><span class="s">&quot;!&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">buf</span><span class="p">.</span><span class="nx">String</span><span class="p">()</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">wg</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="mi">100</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">        </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">defer</span><span class="w"> </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Done</span><span class="p">()</span>
+<span class="w">            </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">render</span><span class="p">(</span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Sprint</span><span class="p">(</span><span class="nx">i</span><span class="p">))</span>
+<span class="w">        </span><span class="p">}()</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">render</span><span class="p">(</span><span class="s">&quot;world&quot;</span><span class="p">))</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="內部結構">內部結構<a class="headerlink" href="#內部結構" title="Permanent link">#</a></h3>
+<p><code>sync.Pool</code> 為每個 P 維護一個私有槽加一個共享佇列：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>每個 P:
+    private  一個物件，只有這個 P 能存取（無鎖、最快）
+    shared   雙端佇列
+             ├─ 本 P 從「頭部」推入與取出（LIFO，快取熱）
+             └─ 其他 P 從「尾部」竊取（避免衝突）
+</code></pre></div>
+
+<p><code>Get()</code> 的順序：私有槽 → 本 P 的 shared 頭部 → 竊取其他 P 的 shared 尾部 → victim cache → 呼叫 <code>New</code>。</p>
+<h3 id="gc-會清空-pool">GC 會清空 Pool<a class="headerlink" href="#gc-會清空-pool" title="Permanent link">#</a></h3>
+<p><strong>每次 GC 都會清理 <code>sync.Pool</code>。</strong> 這是刻意的——否則 Pool 會變成記憶體洩漏。</p>
+<p>Go 1.13 起加入 <strong>victim cache</strong> 機制：GC 時不直接丟棄，而是先把目前的池搬到「受害者區」，下一次 GC 才真的釋放。這讓物件至少能撐過一個 GC 週期，避免每次 GC 後的效能斷崖。</p>
+<h3 id="什麼時候該用">什麼時候該用<a class="headerlink" href="#什麼時候該用" title="Permanent link">#</a></h3>
+<p><strong>✓ 適合：</strong></p>
+<ul>
+<li>高頻建立與丟棄<strong>同一種</strong>大型物件（buffer、序列化器、加解密上下文）</li>
+<li>物件的初始化成本高</li>
+<li>已經量測確認配置是瓶頸</li>
+</ul>
+<p><strong>✗ 不適合：</strong></p>
+<ul>
+<li>小物件（配置本身就很便宜，Pool 的簿記成本可能更高）</li>
+<li>生命週期長的物件（Pool 是為短命物件設計的）</li>
+<li>需要保證物件一定被重用（Pool 隨時可能清空）</li>
+<li>大小差異很大的物件（會導致記憶體浪費，見下方警告）</li>
+</ul>
+<div class="admonition danger">
+<p class="admonition-title">Pool 裡的物件大小要一致</p>
+<p>```go
+// ✗ 危險：偶爾一個超大 buffer 會永遠佔著記憶體
+buf := bufPool.Get().(*bytes.Buffer)
+buf.Write(hugePayload) // 長到 100 MB
+buf.Reset()            // Reset 只把 len 設 0，cap 還是 100 MB
+bufPool.Put(buf)       // 這個 100 MB 的 buffer 進了池子</p>
+<p>// ✓ 加上大小上限
+const maxBufSize = 64 &lt;&lt; 10
+if buf.Cap() &lt;= maxBufSize {
+    buf.Reset()
+    bufPool.Put(buf)
+}
+// 太大的就讓 GC 收走
+```</p>
+<p>這是 <code>sync.Pool</code> 最常見的誤用。標準庫的 <code>fmt</code> 套件內部就有這個上限檢查。</p>
+</div>
+<div class="admonition danger">
+<p class="admonition-title">務必重置狀態</p>
+<p><code>go
+// ✗ 上一次的資料留在裡面 → 資料外洩！
+buf := bufPool.Get().(*bytes.Buffer)
+// 忘記 buf.Reset()
+buf.WriteString(newData)  // 舊資料還在前面</code></p>
+<p>在處理不同使用者請求的服務裡，這種 bug 可能造成<strong>跨使用者的資料外洩</strong>，是嚴重的安全問題。</p>
+<p>保險做法是包一層：</p>
+<p><code>go
+func getBuf() *bytes.Buffer {
+    b := bufPool.Get().(*bytes.Buffer)
+    b.Reset()  // Get 的時候就重置，不依賴 Put 的人記得
+    return b
+}</code></p>
+</div>
+<h3 id="泛型版本">泛型版本<a class="headerlink" href="#泛型版本" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;sync&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Pool</span><span class="p">[</span><span class="nx">T</span><span class="w"> </span><span class="kt">any</span><span class="p">]</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">p</span><span class="w">     </span><span class="nx">sync</span><span class="p">.</span><span class="nx">Pool</span>
+<span class="w">    </span><span class="nx">reset</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="o">*</span><span class="nx">T</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">NewPool</span><span class="p">[</span><span class="nx">T</span><span class="w"> </span><span class="kt">any</span><span class="p">](</span><span class="nx">newFn</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="nx">T</span><span class="p">,</span><span class="w"> </span><span class="nx">reset</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="o">*</span><span class="nx">T</span><span class="p">))</span><span class="w"> </span><span class="o">*</span><span class="nx">Pool</span><span class="p">[</span><span class="nx">T</span><span class="p">]</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Pool</span><span class="p">[</span><span class="nx">T</span><span class="p">]{</span>
+<span class="w">        </span><span class="nx">p</span><span class="p">:</span><span class="w">     </span><span class="nx">sync</span><span class="p">.</span><span class="nx">Pool</span><span class="p">{</span><span class="nx">New</span><span class="p">:</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="kt">any</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nx">newFn</span><span class="p">()</span><span class="w"> </span><span class="p">}},</span>
+<span class="w">        </span><span class="nx">reset</span><span class="p">:</span><span class="w"> </span><span class="nx">reset</span><span class="p">,</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">p</span><span class="w"> </span><span class="o">*</span><span class="nx">Pool</span><span class="p">[</span><span class="nx">T</span><span class="p">])</span><span class="w"> </span><span class="nx">Get</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="nx">T</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">p</span><span class="p">.</span><span class="nx">p</span><span class="p">.</span><span class="nx">Get</span><span class="p">().(</span><span class="o">*</span><span class="nx">T</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">p</span><span class="p">.</span><span class="nx">reset</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">p</span><span class="p">.</span><span class="nx">reset</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">v</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">p</span><span class="w"> </span><span class="o">*</span><span class="nx">Pool</span><span class="p">[</span><span class="nx">T</span><span class="p">])</span><span class="w"> </span><span class="nx">Put</span><span class="p">(</span><span class="nx">v</span><span class="w"> </span><span class="o">*</span><span class="nx">T</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">p</span><span class="p">.</span><span class="nx">p</span><span class="p">.</span><span class="nx">Put</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Request</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ID</span><span class="w">   </span><span class="kt">string</span>
+<span class="w">    </span><span class="nx">Body</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">pool</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">NewPool</span><span class="p">(</span>
+<span class="w">        </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="nx">Request</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Request</span><span class="p">{</span><span class="nx">Body</span><span class="p">:</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">1024</span><span class="p">)}</span><span class="w"> </span><span class="p">},</span>
+<span class="w">        </span><span class="kd">func</span><span class="p">(</span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">ID</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="p">;</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">Body</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">Body</span><span class="p">[:</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">r</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">pool</span><span class="p">.</span><span class="nx">Get</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">r</span><span class="p">.</span><span class="nx">ID</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;req-1&quot;</span>
+<span class="w">    </span><span class="nx">r</span><span class="p">.</span><span class="nx">Body</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">r</span><span class="p">.</span><span class="nx">Body</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;hello&quot;</span><span class="o">...</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">r</span><span class="p">.</span><span class="nx">ID</span><span class="p">,</span><span class="w"> </span><span class="nb">string</span><span class="p">(</span><span class="nx">r</span><span class="p">.</span><span class="nx">Body</span><span class="p">))</span>
+<span class="w">    </span><span class="nx">pool</span><span class="p">.</span><span class="nx">Put</span><span class="p">(</span><span class="nx">r</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">r2</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">pool</span><span class="p">.</span><span class="nx">Get</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;重用後: ID=%q len=%d\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r2</span><span class="p">.</span><span class="nx">ID</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">r2</span><span class="p">.</span><span class="nx">Body</span><span class="p">))</span><span class="w"> </span><span class="c1">// ID=&quot;&quot; len=0</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>型別安全，而且把 <code>Reset</code> 的責任移到 <code>Get</code> 這一側，不會忘記。</p>
+<hr />
+<h2 id="減少配置的實用清單">減少配置的實用清單<a class="headerlink" href="#減少配置的實用清單" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>技巧</th>
+<th>例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>預先配置容量</td>
+<td><code>make([]T, 0, n)</code>、<code>make(map[K]V, n)</code></td>
+</tr>
+<tr>
+<td>重用 buffer</td>
+<td><code>sync.Pool</code>、呼叫端提供的 <code>dst []byte</code></td>
+</tr>
+<tr>
+<td>用 <code>strings.Builder</code> 取代 <code>+=</code></td>
+<td>見 <a href="string.html#字串拼接的成本">字串</a></td>
+</tr>
+<tr>
+<td>傳指標而非大值</td>
+<td>大於幾個字組的 struct</td>
+</tr>
+<tr>
+<td>避免不必要的介面裝箱</td>
+<td>熱路徑上少用 <code>any</code>、少呼叫 <code>fmt</code></td>
+</tr>
+<tr>
+<td>用值型別的 slice 而非指標 slice</td>
+<td><code>[]Item</code> 比 <code>[]*Item</code> 少 N 次配置且快取友善</td>
+</tr>
+<tr>
+<td><code>append</code> 系列取代 <code>Sprintf</code></td>
+<td><code>strconv.AppendInt(dst, n, 10)</code></td>
+</tr>
+<tr>
+<td>用陣列取代小 slice</td>
+<td>見 <a href="array.html#一個實用範例無配置的小型集合">陣列</a></td>
+</tr>
+<tr>
+<td>讓變數不逃逸</td>
+<td>見 <a href="escape-inline.html">逃逸分析</a></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<p>下一節談垃圾回收器：這些配置出去的記憶體，最後是怎麼被找回來的。</p></article><nav class='pager'><a class='prev' href='sysmon.html'><span>上一節</span><strong>5.7 系統監控 sysmon</strong></a><a class='next' href='gc.html'><span>下一節</span><strong>6.2 垃圾回收器</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#為什麼不直接用-malloc'>為什麼不直接用 malloc</a></li><li><a href='#三層結構'>三層結構</a></li><li><a href='#size-class'>size class</a><ul><li><a href='#觀察-size-class-的影響'>觀察 size class 的影響</a></li></ul></li><li><a href='#tiny-allocator'>tiny allocator</a></li><li><a href='#配置的完整流程'>配置的完整流程</a></li><li><a href='#觀察配置行為'>觀察配置行為</a><ul><li><a href='#基準測試的-benchmem'>基準測試的 -benchmem</a></li><li><a href='#堆積剖析'>堆積剖析</a></li><li><a href='#執行期統計'>執行期統計</a></li></ul></li><li><a href='#syncpool'>sync.Pool</a><ul><li><a href='#內部結構'>內部結構</a></li><li><a href='#gc-會清空-pool'>GC 會清空 Pool</a></li><li><a href='#什麼時候該用'>什麼時候該用</a></li><li><a href='#泛型版本'>泛型版本</a></li></ul></li><li><a href='#減少配置的實用清單'>減少配置的實用清單</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

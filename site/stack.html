@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>6.3 堆疊記憶體管理 — Go 底層原理筆記</title>
+<meta name="description" content="goroutine 堆疊如何從 2 KB 開始自動成長、morestack 的機制、堆疊複製與指標調整，以及堆疊溢位的成因。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li class='active'><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>記憶體管理</p><h1><span class='h1num'>6.3</span>堆疊記憶體管理</h1><p class='lede'>goroutine 堆疊如何從 2 KB 開始自動成長、morestack 的機制、堆疊複製與指標調整，以及堆疊溢位的成因。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="為什麼-goroutine-可以有百萬個">為什麼 goroutine 可以有百萬個<a class="headerlink" href="#為什麼-goroutine-可以有百萬個" title="Permanent link">#</a></h2>
+<p>答案是<strong>小而可變的堆疊</strong>。</p>
+<p>一條 OS 執行緒的堆疊通常是固定的 1–8 MB（在 Linux 上預設 8 MB 虛擬位址空間）。就算實際只用到幾 KB，位址空間還是被預留了。一萬條執行緒 = 80 GB 虛擬位址空間。</p>
+<p>goroutine 的堆疊從 <strong>2 KB</strong> 開始，需要時自動長大，用不到時自動縮小。一百萬個 goroutine 的初始堆疊總共只要 2 GB，而且大部分永遠不會長大。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime&quot;</span>
+<span class="w">    </span><span class="s">&quot;sync&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">MemStats</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">wg</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">ReadMemStats</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">m</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;啟動時堆疊總量: %d KB\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">StackSys</span><span class="o">/</span><span class="mi">1024</span><span class="p">)</span>
+
+<span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">100000</span>
+<span class="w">    </span><span class="nx">block</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kd">struct</span><span class="p">{})</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">        </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">defer</span><span class="w"> </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Done</span><span class="p">();</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">block</span><span class="w"> </span><span class="p">}()</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">ReadMemStats</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">m</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%d 個 goroutine 後: %d KB（平均每個 %.1f KB）\n&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">n</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">StackSys</span><span class="o">/</span><span class="mi">1024</span><span class="p">,</span><span class="w"> </span><span class="nb">float64</span><span class="p">(</span><span class="nx">m</span><span class="p">.</span><span class="nx">StackSys</span><span class="p">)</span><span class="o">/</span><span class="nx">n</span><span class="o">/</span><span class="mi">1024</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nb">close</span><span class="p">(</span><span class="nx">block</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>啟動時堆疊總量: 288 KB
+100000 個 goroutine 後: 331776 KB（平均每個 3.3 KB）
+</code></pre></div>
+
+<p>十萬個 goroutine 只用了約 320 MB 堆疊。換成執行緒需要 800 GB。</p>
+<hr />
+<h2 id="堆疊成長的機制">堆疊成長的機制<a class="headerlink" href="#堆疊成長的機制" title="Permanent link">#</a></h2>
+<figure class="diagram"><svg viewBox="0 0 700 380" role="img" aria-label="堆疊成長的完整流程"><rect class="d-box-a" x="15" y="14" width="670" height="58" rx="6"/><text class="d-t-b" x="30" y="36">① 函式序言的檢查（編譯器自動插入）</text><text class="d-t-m" x="30" y="58">MOVQ (R14), CX　·　CMPQ SP, 16(CX)　·　JLS morestack　　← R14 固定存著目前的 g</text><path class="d-line" d="M350 72 L350 88" marker-end="url(#ar22)"/><rect class="d-box-w" x="15" y="90" width="670" height="58" rx="6"/><text class="d-t-b" x="30" y="112">② SP 低於 stackguard0 → 呼叫 runtime.morestack</text><text class="d-t-s" x="30" y="132">切換到 g0 系統堆疊執行（因為現在這個 g 的堆疊不夠用了，不能在上面做事）</text><path class="d-line" d="M350 148 L350 164" marker-end="url(#ar22)"/><rect class="d-box-w" x="15" y="166" width="670" height="58" rx="6"/><text class="d-t-b" x="30" y="188">③ newstack：配置一塊「兩倍大」的新堆疊</text><text class="d-t-s" x="30" y="208">2 KB → 4 KB → 8 KB → 16 KB …　從 stackpool（小堆疊快取）或 mheap 取得</text><path class="d-line" d="M350 224 L350 240" marker-end="url(#ar22)"/><rect class="d-box-d" x="15" y="242" width="670" height="74" rx="6"/><text class="d-t-b" x="30" y="264">④ copystack：把舊堆疊整份複製過去，並「調整所有指向堆疊的指標」</text><text class="d-t-s" x="30" y="286">堆疊搬到新位址了，任何指向舊堆疊的指標都會失效 → 必須逐一修正</text><text class="d-t-s" x="30" y="306">靠編譯器產生的 stack map（funcdata/pcdata）精確知道哪些位置是指標 → 每個都加上位移量</text><path class="d-line" d="M350 316 L350 332" marker-end="url(#ar22)"/><rect class="d-box-o" x="15" y="334" width="670" height="40" rx="6"/><text class="d-t-b" x="30" y="358">⑤ 釋放舊堆疊，跳回原本的函式重新執行序言 —— 這次檢查會通過</text><defs><marker id="ar22" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--line-strong)"/></marker></defs></svg><figcaption><b>連續堆疊（contiguous stack）。</b>Go 1.4 起採用這個方案：堆疊永遠是一塊連續記憶體，成長時整份搬家。第 ④ 步的指標調整是關鍵，也是 Go 的 GC 必須是「精確式」的原因之一——不知道哪些是指標就沒辦法搬。</figcaption></figure>
+
+<div class="admonition version">
+<p class="admonition-title">Go 1.3 之前：分段堆疊與「熱分裂」問題</p>
+<p>早期的 Go 用<strong>分段堆疊（segmented stack）</strong>：空間不夠時另外配置一塊，用鏈結串起來。優點是不用複製。</p>
+<p>但它有個致命問題叫 <strong>hot split（熱分裂）</strong>：如果一個迴圈剛好跨在堆疊邊界上，每次迭代都要配置新段、回傳時又釋放——效能斷崖式下降，而且難以預測。</p>
+<p><code>go
+for i := 0; i &lt; 1000000; i++ {
+    someFunc() // 剛好觸發分段 → 每次迭代都配置+釋放一個堆疊段
+}</code></p>
+<p>Go 1.3–1.4 改成連續堆疊：成長時整份複製到兩倍大的新空間。複製有成本，但因為是<strong>倍增</strong>，總複製成本是攤提 O(1)，而且不會有熱分裂。</p>
+</div>
+<h3 id="堆疊縮小">堆疊縮小<a class="headerlink" href="#堆疊縮小" title="Permanent link">#</a></h3>
+<p>GC 時會檢查每個 goroutine 的堆疊使用量。<strong>如果實際使用不到目前容量的 1/4，就縮小成一半。</strong></p>
+<p>這讓「偶爾需要深遞迴」的 goroutine 不會永久佔著大堆疊。</p>
+<h3 id="大小限制">大小限制<a class="headerlink" href="#大小限制" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>平台</th>
+<th>預設最大堆疊</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>64 位元</td>
+<td><strong>1 GB</strong></td>
+</tr>
+<tr>
+<td>32 位元</td>
+<td>250 MB</td>
+</tr>
+</tbody>
+</table>
+<p>超過就是 <code>fatal error: stack overflow</code>，而且<strong>無法 recover</strong>。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="s">&quot;runtime/debug&quot;</span>
+
+<span class="nx">debug</span><span class="p">.</span><span class="nx">SetMaxStack</span><span class="p">(</span><span class="mi">2</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">30</span><span class="p">)</span><span class="w"> </span><span class="c1">// 調成 2 GB</span>
+</code></pre></div>
+
+<p>調大它通常是治標。真正的問題幾乎都是無窮遞迴。</p>
+<hr />
+<h2 id="堆疊溢位">堆疊溢位<a class="headerlink" href="#堆疊溢位" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Node</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Val</span><span class="w">      </span><span class="kt">int</span>
+<span class="w">    </span><span class="nx">Children</span><span class="w"> </span><span class="p">[]</span><span class="o">*</span><span class="nx">Node</span>
+<span class="p">}</span>
+
+<span class="c1">// ✗ 有環的圖會無窮遞迴</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">sum</span><span class="p">(</span><span class="nx">n</span><span class="w"> </span><span class="o">*</span><span class="nx">Node</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">total</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">n</span><span class="p">.</span><span class="nx">Val</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">c</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">n</span><span class="p">.</span><span class="nx">Children</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">total</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="nx">sum</span><span class="p">(</span><span class="nx">c</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">total</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Node</span><span class="p">{</span><span class="nx">Val</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Node</span><span class="p">{</span><span class="nx">Val</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">a</span><span class="p">.</span><span class="nx">Children</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[]</span><span class="o">*</span><span class="nx">Node</span><span class="p">{</span><span class="nx">b</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">b</span><span class="p">.</span><span class="nx">Children</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[]</span><span class="o">*</span><span class="nx">Node</span><span class="p">{</span><span class="nx">a</span><span class="p">}</span><span class="w"> </span><span class="c1">// 環！</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">sum</span><span class="p">(</span><span class="nx">a</span><span class="p">))</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>runtime: goroutine stack exceeds 1000000000-byte limit
+runtime: sp=0xc0200e0398 stack=[0xc0200e0000, 0xc0400e0000]
+fatal error: stack overflow
+
+goroutine 1 [running]:
+main.sum(...)
+    /tmp/main.go:13
+main.sum(...)
+    /tmp/main.go:13
+...（重複數萬次）
+</code></pre></div>
+
+<div class="admonition danger">
+<p class="admonition-title">堆疊溢位是 fatal error，recover 攔不住</p>
+<p><code>go
+defer func() {
+    recover() // ✗ 完全沒用
+}()
+infiniteRecursion()</code></p>
+<p>原因很直接：<code>recover</code> 需要執行 <code>defer</code> 函式，而執行函式需要堆疊空間——但堆疊已經滿了。runtime 只能直接終止。</p>
+<p>這表示<strong>任何遞迴深度取決於外部輸入的程式碼都是潛在的 DoS 漏洞</strong>。解析使用者提供的 JSON、XML、正規表示式時要特別小心。</p>
+</div>
+<h3 id="三種對策">三種對策<a class="headerlink" href="#三種對策" title="Permanent link">#</a></h3>
+<p><strong>① 加深度限制</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;errors&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="nx">maxDepth</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">1000</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Node</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Val</span><span class="w">      </span><span class="kt">int</span>
+<span class="w">    </span><span class="nx">Children</span><span class="w"> </span><span class="p">[]</span><span class="o">*</span><span class="nx">Node</span>
+<span class="p">}</span>
+
+<span class="kd">var</span><span class="w"> </span><span class="nx">ErrTooDeep</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;結構過深&quot;</span><span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">sum</span><span class="p">(</span><span class="nx">n</span><span class="w"> </span><span class="o">*</span><span class="nx">Node</span><span class="p">,</span><span class="w"> </span><span class="nx">depth</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">depth</span><span class="w"> </span><span class="p">&gt;</span><span class="w"> </span><span class="nx">maxDepth</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nx">ErrTooDeep</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">total</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">n</span><span class="p">.</span><span class="nx">Val</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">c</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">n</span><span class="p">.</span><span class="nx">Children</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">sum</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span><span class="w"> </span><span class="nx">depth</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">total</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="nx">s</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">total</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Node</span><span class="p">{</span><span class="nx">Val</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Node</span><span class="p">{</span><span class="nx">Val</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">a</span><span class="p">.</span><span class="nx">Children</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[]</span><span class="o">*</span><span class="nx">Node</span><span class="p">{</span><span class="nx">b</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">b</span><span class="p">.</span><span class="nx">Children</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[]</span><span class="o">*</span><span class="nx">Node</span><span class="p">{</span><span class="nx">a</span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">sum</span><span class="p">(</span><span class="nx">a</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span><span class="w"> </span><span class="c1">// 結構過深</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>② 記錄已走訪過的節點</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">sum</span><span class="p">(</span><span class="nx">n</span><span class="w"> </span><span class="o">*</span><span class="nx">Node</span><span class="p">,</span><span class="w"> </span><span class="nx">seen</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="o">*</span><span class="nx">Node</span><span class="p">]</span><span class="kt">bool</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">seen</span><span class="p">[</span><span class="nx">n</span><span class="p">]</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="c1">// 已經走過，不再遞迴</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">seen</span><span class="p">[</span><span class="nx">n</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span>
+
+<span class="w">    </span><span class="nx">total</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">n</span><span class="p">.</span><span class="nx">Val</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">c</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">n</span><span class="p">.</span><span class="nx">Children</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">total</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="nx">sum</span><span class="p">(</span><span class="nx">c</span><span class="p">,</span><span class="w"> </span><span class="nx">seen</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">total</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>③ 改成迭代 + 明確的堆疊</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Node</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Val</span><span class="w">      </span><span class="kt">int</span>
+<span class="w">    </span><span class="nx">Children</span><span class="w"> </span><span class="p">[]</span><span class="o">*</span><span class="nx">Node</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">sumIterative</span><span class="p">(</span><span class="nx">root</span><span class="w"> </span><span class="o">*</span><span class="nx">Node</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">total</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span>
+<span class="w">    </span><span class="nx">stack</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="o">*</span><span class="nx">Node</span><span class="p">{</span><span class="nx">root</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">seen</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="o">*</span><span class="nx">Node</span><span class="p">]</span><span class="kt">bool</span><span class="p">{}</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">stack</span><span class="p">)</span><span class="w"> </span><span class="p">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">n</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">stack</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="nx">stack</span><span class="p">)</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+<span class="w">        </span><span class="nx">stack</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">stack</span><span class="p">[:</span><span class="nb">len</span><span class="p">(</span><span class="nx">stack</span><span class="p">)</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">seen</span><span class="p">[</span><span class="nx">n</span><span class="p">]</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">continue</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">seen</span><span class="p">[</span><span class="nx">n</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span>
+
+<span class="w">        </span><span class="nx">total</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="nx">n</span><span class="p">.</span><span class="nx">Val</span>
+<span class="w">        </span><span class="nx">stack</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">stack</span><span class="p">,</span><span class="w"> </span><span class="nx">n</span><span class="p">.</span><span class="nx">Children</span><span class="o">...</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">total</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Node</span><span class="p">{</span><span class="nx">Val</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Node</span><span class="p">{</span><span class="nx">Val</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">a</span><span class="p">.</span><span class="nx">Children</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[]</span><span class="o">*</span><span class="nx">Node</span><span class="p">{</span><span class="nx">b</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">b</span><span class="p">.</span><span class="nx">Children</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[]</span><span class="o">*</span><span class="nx">Node</span><span class="p">{</span><span class="nx">a</span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">sumIterative</span><span class="p">(</span><span class="nx">a</span><span class="p">))</span><span class="w"> </span><span class="c1">// 3</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>方法 ③ 最穩健</strong>——堆疊在堆積上，可以長到記憶體上限，而且深度可以明確檢查。處理不受信任的輸入時，這是唯一安全的選擇。</p>
+<hr />
+<h2 id="gonosplit"><code>//go:nosplit</code><a class="headerlink" href="#gonosplit" title="Permanent link">#</a></h2>
+<p>有些函式不能有堆疊成長檢查——例如<strong>堆疊成長本身的實作</strong>（否則會無窮遞迴）。這些函式標記 <code>//go:nosplit</code>：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">//go:nosplit</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">getg</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="nx">g</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// ...</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>編譯器不會為它插入序言檢查，但要求它（連同它呼叫的所有 nosplit 函式）的堆疊用量不超過 <strong>red zone</strong>（<code>amd64</code> 上約 800 位元組）。超過會編譯失敗：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>nosplit stack over 792 byte limit
+</code></pre></div>
+
+<p><strong>應用程式碼幾乎永遠不需要這個指示詞。</strong> 它是 runtime 內部用的。</p>
+<hr />
+<h2 id="堆疊-vs-堆積實務影響">堆疊 vs 堆積：實務影響<a class="headerlink" href="#堆疊-vs-堆積實務影響" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>堆疊（stack）</th>
+<th>堆積（heap）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>配置成本</td>
+<td>移動 SP，幾乎免費</td>
+<td>走 <code>mallocgc</code>，數十奈秒</td>
+</tr>
+<tr>
+<td>釋放成本</td>
+<td>函式回傳自動釋放</td>
+<td>靠 GC，成本攤提但不可預測</td>
+</tr>
+<tr>
+<td>誰決定</td>
+<td>編譯器的<a href="escape-inline.html">逃逸分析</a></td>
+<td>同左</td>
+</tr>
+<tr>
+<td>GC 影響</td>
+<td>需要被掃描（找根物件），但不需要回收</td>
+<td>完整的標記與清除</td>
+</tr>
+<tr>
+<td>快取友善度</td>
+<td>極高（連續、熱）</td>
+<td>較低（分散）</td>
+</tr>
+<tr>
+<td>大小限制</td>
+<td>1 GB（64 位元）</td>
+<td>可用記憶體</td>
+</tr>
+</tbody>
+</table>
+<p><strong>優化的方向永遠是：把配置從堆積移到堆疊。</strong> 具體技巧見 <a href="escape-inline.html">逃逸分析、內聯與 PGO</a>。</p>
+<h3 id="一個容易忽略的成本">一個容易忽略的成本<a class="headerlink" href="#一個容易忽略的成本" title="Permanent link">#</a></h3>
+<p>大量 goroutine 會讓 <strong>GC 的根掃描變慢</strong>——每個 goroutine 的堆疊都要被掃描。</p>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">gctrace</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>./app
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>gc 5 @1.2s 2%: 0.03+8.1+0.01 ms clock, ..., 82-&gt;84-&gt;41 MB, 84 MB goal, 156 MB stacks, ...
+</code></pre></div>
+
+<p>注意 <code>156 MB stacks</code> 那一項。如果這個數字很大（幾百 MB 以上），代表：</p>
+<ol>
+<li>goroutine 數量過多（可能有洩漏）</li>
+<li>有些 goroutine 的堆疊長得很大（深遞迴）</li>
+</ol>
+<p>兩者都會拉長 GC 的標記時間。</p>
+<hr />
+<h2 id="觀察堆疊">觀察堆疊<a class="headerlink" href="#觀察堆疊" title="Permanent link">#</a></h2>
+<h3 id="目前-goroutine-的堆疊追蹤">目前 goroutine 的堆疊追蹤<a class="headerlink" href="#目前-goroutine-的堆疊追蹤" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime/debug&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">level3</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">string</span><span class="p">(</span><span class="nx">debug</span><span class="p">.</span><span class="nx">Stack</span><span class="p">()))</span><span class="w"> </span><span class="p">}</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">level2</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">level3</span><span class="p">()</span><span class="w"> </span><span class="p">}</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">level1</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">level2</span><span class="p">()</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">level1</span><span class="p">()</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>goroutine 1 [running]:
+runtime/debug.Stack()
+    .../runtime/debug/stack.go:26 +0x5e
+main.level3(...)
+    /tmp/main.go:8
+main.level2(...)
+    /tmp/main.go:9
+main.level1(...)
+    /tmp/main.go:10
+main.main()
+    /tmp/main.go:12 +0x13
+</code></pre></div>
+
+<h3 id="所有-goroutine-的堆疊">所有 goroutine 的堆疊<a class="headerlink" href="#所有-goroutine-的堆疊" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">buf</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="o">&lt;&lt;</span><span class="mi">20</span><span class="p">)</span>
+<span class="nx">n</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">Stack</span><span class="p">(</span><span class="nx">buf</span><span class="p">,</span><span class="w"> </span><span class="kc">true</span><span class="p">)</span><span class="w"> </span><span class="c1">// true = 所有 goroutine</span>
+<span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">string</span><span class="p">(</span><span class="nx">buf</span><span class="p">[:</span><span class="nx">n</span><span class="p">]))</span>
+</code></pre></div>
+
+<p>或用 pprof：</p>
+<div class="hl" data-lang="bash"><pre><span></span><code>curl<span class="w"> </span><span class="s2">&quot;http://localhost:6060/debug/pprof/goroutine?debug=2&quot;</span>
+</code></pre></div>
+
+<h3 id="統計堆疊用量">統計堆疊用量<a class="headerlink" href="#統計堆疊用量" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">report</span><span class="p">(</span><span class="nx">label</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">MemStats</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">ReadMemStats</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">m</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%-10s StackInuse=%5d KB  StackSys=%5d KB  goroutines=%d\n&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">label</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">StackInuse</span><span class="o">/</span><span class="mi">1024</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">StackSys</span><span class="o">/</span><span class="mi">1024</span><span class="p">,</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">NumGoroutine</span><span class="p">())</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">deep</span><span class="p">(</span><span class="nx">n</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">pad</span><span class="w"> </span><span class="p">[</span><span class="mi">1024</span><span class="p">]</span><span class="kt">byte</span><span class="w"> </span><span class="c1">// 每層佔 1 KB</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">pad</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="p">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">deep</span><span class="p">(</span><span class="nx">n</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">report</span><span class="p">(</span><span class="s">&quot;啟動&quot;</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">done</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kd">struct</span><span class="p">{})</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">deep</span><span class="p">(</span><span class="mi">2000</span><span class="p">)</span><span class="w"> </span><span class="c1">// 遞迴 2000 層 → 堆疊長到約 2 MB</span>
+<span class="w">        </span><span class="nx">report</span><span class="p">(</span><span class="s">&quot;深遞迴中&quot;</span><span class="p">)</span>
+<span class="w">        </span><span class="nb">close</span><span class="p">(</span><span class="nx">done</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}()</span>
+<span class="w">    </span><span class="o">&lt;-</span><span class="nx">done</span>
+
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GC</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">report</span><span class="p">(</span><span class="s">&quot;GC 後&quot;</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<ul>
+<li><strong><code>StackInuse</code></strong> —— 目前正在使用的堆疊空間</li>
+<li><strong><code>StackSys</code></strong> —— 向作業系統取得的堆疊記憶體總量</li>
+</ul>
+<hr />
+<h2 id="實務建議">實務建議<a class="headerlink" href="#實務建議" title="Permanent link">#</a></h2>
+<h3 id="1-遞迴深度要有上界">① 遞迴深度要有上界<a class="headerlink" href="#1-遞迴深度要有上界" title="Permanent link">#</a></h3>
+<p>處理外部輸入（JSON、XML、使用者上傳的資料結構）時，一定要限制遞迴深度或改用迭代。這是安全問題，不只是穩定性問題。</p>
+<h3 id="2-大型區域變數會逃逸">② 大型區域變數會逃逸<a class="headerlink" href="#2-大型區域變數會逃逸" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">f</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">buf</span><span class="w"> </span><span class="p">[</span><span class="mi">10</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">20</span><span class="p">]</span><span class="kt">byte</span><span class="w"> </span><span class="c1">// 10 MB，超過 maxStackVarSize → 移到堆積</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">buf</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>超過約 10 MB 的區域變數（或 64 KB 的隱式配置）會被移到堆積。想在堆疊上放大 buffer 是行不通的。</p>
+<h3 id="3-控制-goroutine-數量">③ 控制 goroutine 數量<a class="headerlink" href="#3-控制-goroutine-數量" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 每個請求無限制地開 goroutine</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">item</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">millionItems</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="nx">process</span><span class="p">(</span><span class="nx">item</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ 用工作池限制</span>
+<span class="nx">sem</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kd">struct</span><span class="p">{},</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GOMAXPROCS</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">*</span><span class="mi">4</span><span class="p">)</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">wg</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">item</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">millionItems</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">sem</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="kd">struct</span><span class="p">{}{}</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">it</span><span class="w"> </span><span class="nx">Item</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">defer</span><span class="w"> </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Done</span><span class="p">()</span>
+<span class="w">        </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">sem</span><span class="w"> </span><span class="p">}()</span>
+<span class="w">        </span><span class="nx">process</span><span class="p">(</span><span class="nx">it</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}(</span><span class="nx">item</span><span class="p">)</span>
+<span class="p">}</span>
+<span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
+</code></pre></div>
+
+<p>除了記憶體，goroutine 數量也直接影響 GC 的根掃描時間。</p>
+<h3 id="4-深呼叫鏈的隱藏成本">④ 深呼叫鏈的隱藏成本<a class="headerlink" href="#4-深呼叫鏈的隱藏成本" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// 這條鏈每一層都要做堆疊檢查，而且可能觸發成長</span>
+<span class="nx">handler</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="nx">middleware1</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="nx">middleware2</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="o">...</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="nx">middleware10</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="nx">service</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="nx">repo</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="nx">db</span>
+</code></pre></div>
+
+<p>一般情況下這不是問題（檢查只有三道指令）。但如果是每秒數十萬次呼叫的熱路徑，減少抽象層次確實有可量測的收益。<strong>先量測再優化。</strong></p>
+<hr />
+<p>Part 6 結束。你現在知道記憶體從哪來（配置器）、怎麼回收（GC）、以及堆疊如何動態調整。</p>
+<p>最後的 Part 7 回到應用層：標準函式庫的幾個重要套件是怎麼設計的，以及 cgo 與程式碼生成。</p></article><nav class='pager'><a class='prev' href='gc.html'><span>上一節</span><strong>6.2 垃圾回收器</strong></a><a class='next' href='json.html'><span>下一節</span><strong>7.1 encoding/json</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#為什麼-goroutine-可以有百萬個'>為什麼 goroutine 可以有百萬個</a></li><li><a href='#堆疊成長的機制'>堆疊成長的機制</a><ul><li><a href='#堆疊縮小'>堆疊縮小</a></li><li><a href='#大小限制'>大小限制</a></li></ul></li><li><a href='#堆疊溢位'>堆疊溢位</a><ul><li><a href='#三種對策'>三種對策</a></li></ul></li><li><a href='#gonosplit'>//go:nosplit</a></li><li><a href='#堆疊-vs-堆積實務影響'>堆疊 vs 堆積：實務影響</a><ul><li><a href='#一個容易忽略的成本'>一個容易忽略的成本</a></li></ul></li><li><a href='#觀察堆疊'>觀察堆疊</a><ul><li><a href='#目前-goroutine-的堆疊追蹤'>目前 goroutine 的堆疊追蹤</a></li><li><a href='#所有-goroutine-的堆疊'>所有 goroutine 的堆疊</a></li><li><a href='#統計堆疊用量'>統計堆疊用量</a></li></ul></li><li><a href='#實務建議'>實務建議</a><ul><li><a href='#1-遞迴深度要有上界'>① 遞迴深度要有上界</a></li><li><a href='#2-大型區域變數會逃逸'>② 大型區域變數會逃逸</a></li><li><a href='#3-控制-goroutine-數量'>③ 控制 goroutine 數量</a></li><li><a href='#4-深呼叫鏈的隱藏成本'>④ 深呼叫鏈的隱藏成本</a></li></ul></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

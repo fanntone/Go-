@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7.4 cgo — Go 底層原理筆記</title>
+<meta name="description" content="cgo 呼叫的堆疊切換與成本、指標傳遞規則、對交叉編譯與 GC 的影響，以及什麼時候該避開它。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li class='active'><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>標準函式庫與進階主題</p><h1><span class='h1num'>7.4</span>cgo</h1><p class='lede'>cgo 呼叫的堆疊切換與成本、指標傳遞規則、對交叉編譯與 GC 的影響，以及什麼時候該避開它。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="cgo-是什麼">cgo 是什麼<a class="headerlink" href="#cgo-是什麼" title="Permanent link">#</a></h2>
+<p>cgo 讓 Go 呼叫 C 函式（也讓 C 呼叫 Go）。它不是函式庫，而是<strong>編譯工具鏈的一部分</strong>：<code>go build</code> 看到 <code>import "C"</code> 就會啟動 cgo，產生膠水程式碼、呼叫系統的 C 編譯器、再把結果連結進來。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="cm">/*</span>
+<span class="cm">#include &lt;stdio.h&gt;</span>
+<span class="cm">#include &lt;stdlib.h&gt;</span>
+
+<span class="cm">int add(int a, int b) {</span>
+<span class="cm">    return a + b;</span>
+<span class="cm">}</span>
+<span class="cm">*/</span>
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;C&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">C</span><span class="p">.</span><span class="nx">add</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">))</span><span class="w"> </span><span class="c1">// 7</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>注意兩個語法細節：</p>
+<ol>
+<li><strong>C 程式碼寫在 <code>import "C"</code> </strong>正上方<strong>的註解裡</strong>，中間不能有空行。</li>
+<li><strong><code>import "C"</code> 必須單獨一行</strong>，不能跟其他 import 放在同一個 group。</li>
+</ol>
+<hr />
+<h2 id="呼叫的代價">呼叫的代價<a class="headerlink" href="#呼叫的代價" title="Permanent link">#</a></h2>
+<p>Go 呼叫 C 不是普通的函式呼叫。中間發生了不少事：</p>
+<figure class="diagram"><svg viewBox="0 0 700 300" role="img" aria-label="cgo 呼叫的完整流程"><rect class="d-box-a" x="15" y="14" width="670" height="42" rx="6"/><text class="d-t-b" x="30" y="36">① Go 程式碼呼叫 C.add(3, 4)　→　實際上是呼叫 cgo 產生的膠水函式</text><path class="d-line" d="M350 56 L350 70" marker-end="url(#ar24)"/><rect class="d-box-w" x="15" y="72" width="670" height="56" rx="6"/><text class="d-t-b" x="30" y="94">② runtime.cgocall：從 goroutine 堆疊切換到 M 的系統堆疊（g0）</text><text class="d-t-s" x="30" y="114">因為 C 程式碼不知道 Go 的可成長堆疊，它會假設有一大塊連續空間可用</text><path class="d-line" d="M350 128 L350 142" marker-end="url(#ar24)"/><rect class="d-box-w" x="15" y="144" width="670" height="56" rx="6"/><text class="d-t-b" x="30" y="166">③ entersyscall：告訴排程器「這條 M 要離開 Go 的世界了」</text><text class="d-t-s" x="30" y="186">P 標記為 _Psyscall。若 C 呼叫超過 20 微秒，sysmon 會把 P 交給別的 M（見「系統監控」）</text><path class="d-line" d="M350 200 L350 214" marker-end="url(#ar24)"/><rect class="d-box-o" x="15" y="216" width="670" height="42" rx="6"/><text class="d-t-b" x="30" y="238">④ 執行 C 函式　→　⑤ exitsyscall 拿回 P　→　⑥ 切回 goroutine 堆疊，回傳結果</text><defs><marker id="ar24" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--line-strong)"/></marker></defs><text class="d-t-s" x="15" y="286">總開銷約 30–50 奈秒（Go 1.26 已比先前版本降低約 30%）。相比之下，一般 Go 函式呼叫約 1 奈秒。</text></svg><figcaption><b>兩個世界之間的邊界。</b>C 程式碼不能在可成長的 goroutine 堆疊上執行，也不能被 Go 排程器搶佔——所以每次呼叫都要做堆疊切換與排程狀態轉換。</figcaption></figure>
+
+<div class="admonition version">
+<p class="admonition-title">Go 1.26：cgo 開銷降低約 30%</p>
+<p>Go 1.26 最佳化了 cgo 呼叫的基礎路徑。對於大量呼叫 C 函式的程式（影像處理、加密、資料庫驅動），這是可觀的改善。</p>
+<p>但<strong>數量級沒有改變</strong>：cgo 呼叫仍然比 Go 函式呼叫貴 30 倍以上。</p>
+</div>
+<h3 id="實測">實測<a class="headerlink" href="#實測" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="cm">/*</span>
+<span class="cm">static int c_add(int a, int b) { return a + b; }</span>
+<span class="cm">*/</span>
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;C&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;testing&quot;</span>
+<span class="p">)</span>
+
+<span class="c1">//go:noinline</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">goAdd</span><span class="p">(</span><span class="nx">a</span><span class="p">,</span><span class="w"> </span><span class="nx">b</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nx">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nx">b</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">r1</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">testing</span><span class="p">.</span><span class="nx">Benchmark</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">b</span><span class="p">.</span><span class="nx">N</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">goAdd</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="w">    </span><span class="nx">r2</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">testing</span><span class="p">.</span><span class="nx">Benchmark</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">b</span><span class="p">.</span><span class="nx">N</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">c_add</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;Go :&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r1</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;cgo:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r2</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>典型結果：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>Go : 1000000000          1.8 ns/op
+cgo:  35000000          33.4 ns/op
+</code></pre></div>
+
+<p><strong>實務結論：把工作批次化。</strong> 與其呼叫 C 函式一百萬次處理一個元素，不如呼叫一次處理一百萬個元素。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 一百萬次 cgo 呼叫，光是開銷就 33 毫秒</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">data</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">out</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">process_one</span><span class="p">(</span><span class="nx">C</span><span class="p">.</span><span class="nb">int</span><span class="p">(</span><span class="nx">data</span><span class="p">[</span><span class="nx">i</span><span class="p">]))</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ 一次呼叫</span>
+<span class="nx">C</span><span class="p">.</span><span class="nx">process_batch</span><span class="p">(</span>
+<span class="w">    </span><span class="p">(</span><span class="o">*</span><span class="nx">C</span><span class="p">.</span><span class="kt">int</span><span class="p">)(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">data</span><span class="p">[</span><span class="mi">0</span><span class="p">])),</span>
+<span class="w">    </span><span class="p">(</span><span class="o">*</span><span class="nx">C</span><span class="p">.</span><span class="kt">int</span><span class="p">)(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">out</span><span class="p">[</span><span class="mi">0</span><span class="p">])),</span>
+<span class="w">    </span><span class="nx">C</span><span class="p">.</span><span class="nb">int</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">data</span><span class="p">)),</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<hr />
+<h2 id="指標傳遞規則">指標傳遞規則<a class="headerlink" href="#指標傳遞規則" title="Permanent link">#</a></h2>
+<p>這是 cgo 最容易出錯的地方。Go 的 GC 會移動堆疊、會回收沒有參照的物件，而 C 對此一無所知。</p>
+<h3 id="官方規則">官方規則<a class="headerlink" href="#官方規則" title="Permanent link">#</a></h3>
+<p><strong>規則一：Go 可以傳指標給 C，但 C 不能在呼叫返回後繼續持有它。</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✓ C 函式在執行期間使用這個指標，返回後不再持有</span>
+<span class="nx">C</span><span class="p">.</span><span class="nx">process</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">goSlice</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nb">int</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">goSlice</span><span class="p">)))</span>
+
+<span class="c1">// ✗ C 把指標存起來留著以後用 —— 未定義行為</span>
+<span class="nx">C</span><span class="p">.</span><span class="nx">register_callback_data</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">goStruct</span><span class="p">))</span>
+</code></pre></div>
+
+<p><strong>規則二：傳給 C 的 Go 記憶體，本身不能包含指向 Go 記憶體的指標。</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 這個 struct 內含指向 Go 記憶體的指標</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">Bad</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w"> </span><span class="o">*</span><span class="kt">string</span><span class="w">  </span><span class="c1">// ← 指向 Go 堆積</span>
+<span class="w">    </span><span class="nx">Data</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="w">   </span><span class="c1">// ← slice 標頭裡有指標</span>
+<span class="p">}</span>
+<span class="nx">C</span><span class="p">.</span><span class="nx">use</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">Bad</span><span class="p">{}))</span>
+
+<span class="c1">// ✓ 只有值型別</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">Good</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ID</span><span class="w">    </span><span class="nx">C</span><span class="p">.</span><span class="kt">int</span>
+<span class="w">    </span><span class="nx">Value</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">double</span>
+<span class="w">    </span><span class="nx">Buf</span><span class="w">   </span><span class="p">[</span><span class="mi">64</span><span class="p">]</span><span class="nx">C</span><span class="p">.</span><span class="nx">char</span>
+<span class="p">}</span>
+<span class="nx">C</span><span class="p">.</span><span class="nx">use</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">Good</span><span class="p">{}))</span>
+</code></pre></div>
+
+<h3 id="檢查器">檢查器<a class="headerlink" href="#檢查器" title="Permanent link">#</a></h3>
+<p>Go 在執行期有一個 cgo 指標檢查器，預設開啟：</p>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">cgocheck</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go<span class="w">   </span><span class="c1"># 預設，基本檢查</span>
+<span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">cgocheck</span><span class="o">=</span><span class="m">2</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go<span class="w">   </span><span class="c1"># 更嚴格但更慢</span>
+</code></pre></div>
+
+<p>違規時會直接 panic：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>panic: runtime error: cgo argument has Go pointer to unpinned Go pointer
+</code></pre></div>
+
+<div class="admonition version">
+<p class="admonition-title">Go 1.21：<code>runtime.Pinner</code></p>
+<p>有時候你<strong>確實需要</strong>讓 C 持有 Go 指標一段時間（例如非同步回呼）。Go 1.21 提供了官方支援：</p>
+<p>```go
+package main</p>
+<p>import "runtime"</p>
+<p>func withPinned(data []byte, fn func(unsafe.Pointer)) {
+    var pinner runtime.Pinner
+    defer pinner.Unpin()</p>
+<div class="hl" data-lang="go"><pre><span></span><code>pinner.Pin(&amp;data[0]) // 固定住，GC 不會移動它
+fn(unsafe.Pointer(&amp;data[0]))
+</code></pre></div>
+
+<p>}
+```</p>
+<p>被 pin 住的物件在 <code>Unpin</code> 之前不會被移動或回收。這比以前那些 <code>cgo.Handle</code> 加全域 map 的變通做法安全得多。</p>
+<p>注意 pin 住的物件仍然會被 GC <strong>掃描</strong>，只是不會被移動；而且 pin 太多物件會影響 GC 效率。</p>
+</div>
+<h3 id="cgohandle傳遞-go-物件給-c-的正確方式"><code>cgo.Handle</code>：傳遞 Go 物件給 C 的正確方式<a class="headerlink" href="#cgohandle傳遞-go-物件給-c-的正確方式" title="Permanent link">#</a></h3>
+<p>如果 C 需要一個「代表某個 Go 物件」的東西（典型場景是 callback 的使用者資料），用 <code>cgo.Handle</code>：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="cm">/*</span>
+<span class="cm">typedef void (*callback_t)(unsigned long long handle);</span>
+<span class="cm">static void invoke(callback_t cb, unsigned long long h) { cb(h); }</span>
+<span class="cm">*/</span>
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;C&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime/cgo&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Context</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">Name</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">//export goCallback</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">goCallback</span><span class="p">(</span><span class="nx">h</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">ulonglong</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ctx</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">cgo</span><span class="p">.</span><span class="nx">Handle</span><span class="p">(</span><span class="nx">h</span><span class="p">).</span><span class="nx">Value</span><span class="p">().(</span><span class="o">*</span><span class="nx">Context</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;回呼中，context:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">ctx</span><span class="p">.</span><span class="nx">Name</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ctx</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Context</span><span class="p">{</span><span class="nx">Name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;my-context&quot;</span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">h</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">cgo</span><span class="p">.</span><span class="nx">NewHandle</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">h</span><span class="p">.</span><span class="nx">Delete</span><span class="p">()</span><span class="w"> </span><span class="c1">// ✓ 一定要刪除，否則洩漏</span>
+
+<span class="w">    </span><span class="nx">C</span><span class="p">.</span><span class="nx">invoke</span><span class="p">(</span><span class="nx">C</span><span class="p">.</span><span class="nx">callback_t</span><span class="p">(</span><span class="nx">C</span><span class="p">.</span><span class="nx">goCallback</span><span class="p">),</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">ulonglong</span><span class="p">(</span><span class="nx">h</span><span class="p">))</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><code>cgo.Handle</code> 是一個<strong>不透明的整數</strong>，內部對應到一張全域表。C 只看到一個數字，Go 這邊可以安全地把它換回原本的物件。<strong>Go 指標從來沒有離開 Go 的世界。</strong></p>
+<hr />
+<h2 id="字串與記憶體管理">字串與記憶體管理<a class="headerlink" href="#字串與記憶體管理" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="cm">/*</span>
+<span class="cm">#include &lt;stdlib.h&gt;</span>
+<span class="cm">#include &lt;string.h&gt;</span>
+
+<span class="cm">static char* make_greeting(const char* name) {</span>
+<span class="cm">    size_t n = strlen(name) + 8;</span>
+<span class="cm">    char* out = malloc(n);</span>
+<span class="cm">    snprintf(out, n, &quot;Hello, %s&quot;, name);</span>
+<span class="cm">    return out;</span>
+<span class="cm">}</span>
+<span class="cm">*/</span>
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;C&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;unsafe&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">greet</span><span class="p">(</span><span class="nx">name</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// Go string → C string（會 malloc 並複製）</span>
+<span class="w">    </span><span class="nx">cName</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">CString</span><span class="p">(</span><span class="nx">name</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">free</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="nx">cName</span><span class="p">))</span><span class="w"> </span><span class="c1">// ✓ 必須手動釋放</span>
+
+<span class="w">    </span><span class="nx">cOut</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">make_greeting</span><span class="p">(</span><span class="nx">cName</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">free</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="nx">cOut</span><span class="p">))</span><span class="w"> </span><span class="c1">// ✓ C 端 malloc 的也要釋放</span>
+
+<span class="w">    </span><span class="c1">// C string → Go string（會複製）</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">GoString</span><span class="p">(</span><span class="nx">cOut</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">greet</span><span class="p">(</span><span class="s">&quot;Go&quot;</span><span class="p">))</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="轉換函式對照">轉換函式對照<a class="headerlink" href="#轉換函式對照" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>函式</th>
+<th>方向</th>
+<th>是否配置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>C.CString(s)</code></td>
+<td>Go string → <code>*C.char</code></td>
+<td><strong>malloc</strong>，必須 <code>C.free</code></td>
+</tr>
+<tr>
+<td><code>C.CBytes(b)</code></td>
+<td>Go <code>[]byte</code> → <code>unsafe.Pointer</code></td>
+<td><strong>malloc</strong>，必須 <code>C.free</code></td>
+</tr>
+<tr>
+<td><code>C.GoString(p)</code></td>
+<td><code>*C.char</code> → Go string</td>
+<td>Go 堆積，GC 管理</td>
+</tr>
+<tr>
+<td><code>C.GoStringN(p, n)</code></td>
+<td>指定長度版本</td>
+<td>同上</td>
+</tr>
+<tr>
+<td><code>C.GoBytes(p, n)</code></td>
+<td>C 記憶體 → Go <code>[]byte</code></td>
+<td>同上</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition danger">
+<p class="admonition-title"><code>C.CString</code> 忘記 free 就是記憶體洩漏</p>
+<p>這塊記憶體是 C 的 <code>malloc</code> 配置的，<strong>Go 的 GC 完全不知道它的存在</strong>，永遠不會回收。</p>
+<p>```go
+// ✗ 每次呼叫洩漏一次
+func bad(s string) {
+    C.use(C.CString(s))
+}</p>
+<p>// ✓
+func good(s string) {
+    cs := C.CString(s)
+    defer C.free(unsafe.Pointer(cs))
+    C.use(cs)
+}
+```</p>
+<p>這種洩漏用 Go 的 pprof <strong>看不到</strong>（它只看 Go 堆積）。要用 valgrind、ASAN 或作業系統層級的工具才能發現。</p>
+</div>
+<hr />
+<h2 id="cgo-的代價清單">cgo 的代價清單<a class="headerlink" href="#cgo-的代價清單" title="Permanent link">#</a></h2>
+<h3 id="1-交叉編譯幾乎無法使用">① 交叉編譯幾乎無法使用<a class="headerlink" href="#1-交叉編譯幾乎無法使用" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="c1"># 純 Go：一行搞定</span>
+<span class="nv">GOOS</span><span class="o">=</span>linux<span class="w"> </span><span class="nv">GOARCH</span><span class="o">=</span>arm64<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>.
+
+<span class="c1"># 有 cgo：需要目標平台的完整 C 交叉編譯工具鏈</span>
+<span class="nv">CGO_ENABLED</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="nv">GOOS</span><span class="o">=</span>linux<span class="w"> </span><span class="nv">GOARCH</span><span class="o">=</span>arm64<span class="w"> </span><span class="nv">CC</span><span class="o">=</span>aarch64-linux-gnu-gcc<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>.
+</code></pre></div>
+
+<p>這是 cgo 最痛的代價。Go「一個指令編出所有平台」的優勢直接消失。</p>
+<h3 id="2-建置變慢">② 建置變慢<a class="headerlink" href="#2-建置變慢" title="Permanent link">#</a></h3>
+<p>cgo 要呼叫系統的 C 編譯器，而且<strong>不吃 Go 的建置快取</strong>。有 cgo 的專案編譯時間常常是純 Go 的好幾倍。</p>
+<h3 id="3-除錯工具失效">③ 除錯工具失效<a class="headerlink" href="#3-除錯工具失效" title="Permanent link">#</a></h3>
+<ul>
+<li>Go 的 profiler 看不到 C 那邊的堆疊（除非用 <code>SetCgoTraceback</code>）</li>
+<li>race detector 看不到 C 的記憶體存取</li>
+<li>delve 在 C 程式碼裡幫不上忙</li>
+<li>C 端的 segfault 會產生難讀的堆疊追蹤</li>
+</ul>
+<h3 id="4-每個-cgo-呼叫可能佔用一條執行緒">④ 每個 cgo 呼叫可能佔用一條執行緒<a class="headerlink" href="#4-每個-cgo-呼叫可能佔用一條執行緒" title="Permanent link">#</a></h3>
+<p>C 函式無法被 Go 排程器搶佔。長時間執行的 C 呼叫會一直佔著 M。大量並行的 cgo 呼叫會讓執行緒數量膨脹，可能撞到 10000 條的上限而直接 crash。</p>
+<h3 id="5-靜態連結變複雜">⑤ 靜態連結變複雜<a class="headerlink" href="#5-靜態連結變複雜" title="Permanent link">#</a></h3>
+<p>用了 cgo 之後，執行檔預設會動態連結 libc。想放進 <code>FROM scratch</code> 的容器映像就需要額外處理：</p>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">CGO_ENABLED</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>-ldflags<span class="o">=</span><span class="s2">&quot;-extldflags=-static&quot;</span><span class="w"> </span>-tags<span class="w"> </span>netgo<span class="w"> </span>.
+</code></pre></div>
+
+<p>而且 glibc 的靜態連結有已知問題（NSS、DNS 解析），通常要改用 musl。</p>
+<hr />
+<h2 id="什麼時候該用-cgo">什麼時候該用 cgo<a class="headerlink" href="#什麼時候該用-cgo" title="Permanent link">#</a></h2>
+<p><strong>✓ 值得的情況：</strong></p>
+<table>
+<thead>
+<tr>
+<th>場景</th>
+<th>理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>綁定成熟的 C 函式庫</td>
+<td>SQLite、FFmpeg、OpenCV、libvips —— 重寫不切實際</td>
+</tr>
+<tr>
+<td>需要作業系統的特定 API</td>
+<td>某些系統呼叫沒有 Go 的封裝</td>
+</tr>
+<tr>
+<td>硬體或驅動程式介面</td>
+<td>廠商只提供 C SDK</td>
+</tr>
+<tr>
+<td>極致效能的專用程式碼</td>
+<td>手寫 SIMD 組合語言</td>
+</tr>
+</tbody>
+</table>
+<p><strong>✗ 不值得的情況：</strong></p>
+<table>
+<thead>
+<tr>
+<th>場景</th>
+<th>替代方案</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>「C 比較快」</td>
+<td>呼叫開銷可能抵銷收益。先量測</td>
+</tr>
+<tr>
+<td>有純 Go 的替代品</td>
+<td><code>modernc.org/sqlite</code>（純 Go SQLite）、<code>image/*</code></td>
+</tr>
+<tr>
+<td>只是要重用一小段邏輯</td>
+<td>直接用 Go 重寫</td>
+</tr>
+<tr>
+<td>需要交叉編譯或 scratch 映像</td>
+<td>成本太高</td>
+</tr>
+</tbody>
+</table>
+<h3 id="純-go-的替代品越來越多">純 Go 的替代品越來越多<a class="headerlink" href="#純-go-的替代品越來越多" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>C 函式庫</th>
+<th>純 Go 替代</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SQLite (<code>mattn/go-sqlite3</code>)</td>
+<td><code>modernc.org/sqlite</code></td>
+</tr>
+<tr>
+<td>libgit2</td>
+<td><code>go-git/go-git</code></td>
+</tr>
+<tr>
+<td>zlib</td>
+<td><code>compress/flate</code>（標準庫）</td>
+</tr>
+<tr>
+<td>OpenSSL</td>
+<td><code>crypto/*</code>（標準庫）</td>
+</tr>
+<tr>
+<td>libyaml</td>
+<td><code>gopkg.in/yaml.v3</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>如果有可用的純 Go 版本，優先選它。</strong> 效能通常只差一點，但你換回了交叉編譯、快速建置、完整的除錯工具。</p>
+<hr />
+<h2 id="相關的環境變數">相關的環境變數<a class="headerlink" href="#相關的環境變數" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nv">CGO_ENABLED</span><span class="o">=</span><span class="m">0</span><span class="w">    </span><span class="c1"># 完全停用 cgo（強制純 Go）</span>
+<span class="nv">CGO_ENABLED</span><span class="o">=</span><span class="m">1</span><span class="w">    </span><span class="c1"># 啟用（有 C 編譯器時的預設值）</span>
+<span class="nv">CC</span><span class="o">=</span>clang<span class="w">         </span><span class="c1"># 指定 C 編譯器</span>
+<span class="nv">CGO_CFLAGS</span><span class="o">=</span><span class="s2">&quot;-O2 -I/usr/local/include&quot;</span>
+<span class="nv">CGO_LDFLAGS</span><span class="o">=</span><span class="s2">&quot;-L/usr/local/lib -lmylib&quot;</span>
+</code></pre></div>
+
+<div class="admonition tip">
+<p class="admonition-title">在 CI 裡強制 <code>CGO_ENABLED=0</code></p>
+<p><code>bash
+CGO_ENABLED=0 go build ./...</code></p>
+<p>這能在<strong>編譯期</strong>就抓到「不小心引入了需要 cgo 的相依」。有些套件（例如某些 DNS 解析路徑、<code>os/user</code>）在有 cgo 時會走 C 實作，關掉後改走純 Go 實作。</p>
+<p>這也順帶讓執行檔完全靜態連結，可以直接放進 <code>FROM scratch</code> 映像：</p>
+<p>```dockerfile
+FROM golang:1.26 AS build
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /app .</p>
+<p>FROM scratch
+COPY --from=build /app /app
+ENTRYPOINT ["/app"]
+```</p>
+</div>
+<hr />
+<h2 id="一個完整的範例">一個完整的範例<a class="headerlink" href="#一個完整的範例" title="Permanent link">#</a></h2>
+<p>包裝一個簡單的 C 函式庫，示範所有正確的做法：</p>
+<div class="hl" data-lang=""><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="cm">/*</span>
+<span class="cm">#include &lt;stdlib.h&gt;</span>
+<span class="cm">#include &lt;string.h&gt;</span>
+
+<span class="cm">typedef struct {</span>
+<span class="cm">    int    width;</span>
+<span class="cm">    int    height;</span>
+<span class="cm">    unsigned char* data;</span>
+<span class="cm">} image_t;</span>
+
+<span class="cm">static image_t* image_new(int w, int h) {</span>
+<span class="cm">    image_t* img = malloc(sizeof(image_t));</span>
+<span class="cm">    img-&gt;width  = w;</span>
+<span class="cm">    img-&gt;height = h;</span>
+<span class="cm">    img-&gt;data   = calloc(w * h, 1);</span>
+<span class="cm">    return img;</span>
+<span class="cm">}</span>
+
+<span class="cm">static void image_free(image_t* img) {</span>
+<span class="cm">    if (img) {</span>
+<span class="cm">        free(img-&gt;data);</span>
+<span class="cm">        free(img);</span>
+<span class="cm">    }</span>
+<span class="cm">}</span>
+
+<span class="cm">static void image_fill(image_t* img, unsigned char v) {</span>
+<span class="cm">    memset(img-&gt;data, v, img-&gt;width * img-&gt;height);</span>
+<span class="cm">}</span>
+<span class="cm">*/</span>
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;C&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;errors&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime&quot;</span>
+<span class="w">    </span><span class="s">&quot;unsafe&quot;</span>
+<span class="p">)</span>
+
+<span class="c1">// Image 包裝 C 的 image_t，確保資源被正確釋放</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">Image</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ptr</span><span class="w"> </span><span class="o">*</span><span class="nx">C</span><span class="p">.</span><span class="nx">image_t</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">NewImage</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span><span class="w"> </span><span class="nx">h</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">Image</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">w</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nx">h</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;寬高必須為正數&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">image_new</span><span class="p">(</span><span class="nx">C</span><span class="p">.</span><span class="nb">int</span><span class="p">(</span><span class="nx">w</span><span class="p">),</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nb">int</span><span class="p">(</span><span class="nx">h</span><span class="p">))</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;配置失敗&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">img</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Image</span><span class="p">{</span><span class="nx">ptr</span><span class="p">:</span><span class="w"> </span><span class="nx">p</span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 保險：即使呼叫端忘記 Close，GC 時也會釋放</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">AddCleanup</span><span class="p">(</span><span class="nx">img</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">p</span><span class="w"> </span><span class="o">*</span><span class="nx">C</span><span class="p">.</span><span class="nx">image_t</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">image_free</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="nx">p</span><span class="p">)</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">img</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">im</span><span class="w"> </span><span class="o">*</span><span class="nx">Image</span><span class="p">)</span><span class="w"> </span><span class="nx">Close</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">im</span><span class="p">.</span><span class="nx">ptr</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">C</span><span class="p">.</span><span class="nx">image_free</span><span class="p">(</span><span class="nx">im</span><span class="p">.</span><span class="nx">ptr</span><span class="p">)</span>
+<span class="w">        </span><span class="nx">im</span><span class="p">.</span><span class="nx">ptr</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">nil</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">im</span><span class="w"> </span><span class="o">*</span><span class="nx">Image</span><span class="p">)</span><span class="w"> </span><span class="nx">Fill</span><span class="p">(</span><span class="nx">v</span><span class="w"> </span><span class="kt">byte</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">image_fill</span><span class="p">(</span><span class="nx">im</span><span class="p">.</span><span class="nx">ptr</span><span class="p">,</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">uchar</span><span class="p">(</span><span class="nx">v</span><span class="p">))</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">// Bytes 回傳一個「借用」C 記憶體的 slice —— 不複製，但 Image 關閉後就失效</span>
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">im</span><span class="w"> </span><span class="o">*</span><span class="nx">Image</span><span class="p">)</span><span class="w"> </span><span class="nx">Bytes</span><span class="p">()</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">n</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">int</span><span class="p">(</span><span class="nx">im</span><span class="p">.</span><span class="nx">ptr</span><span class="p">.</span><span class="nx">width</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nb">int</span><span class="p">(</span><span class="nx">im</span><span class="p">.</span><span class="nx">ptr</span><span class="p">.</span><span class="nx">height</span><span class="p">)</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Slice</span><span class="p">((</span><span class="o">*</span><span class="kt">byte</span><span class="p">)(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="nx">im</span><span class="p">.</span><span class="nx">ptr</span><span class="p">.</span><span class="nx">data</span><span class="p">)),</span><span class="w"> </span><span class="nx">n</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">img</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">NewImage</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nb">panic</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">img</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span><span class="w"> </span><span class="c1">// ✓ 明確釋放才是主要手段</span>
+
+<span class="w">    </span><span class="nx">img</span><span class="p">.</span><span class="nx">Fill</span><span class="p">(</span><span class="mh">0xAB</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%X\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">img</span><span class="p">.</span><span class="nx">Bytes</span><span class="p">()[:</span><span class="mi">8</span><span class="p">])</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="admonition version">
+<p class="admonition-title">Go 1.24：<code>runtime.AddCleanup</code> 取代 <code>SetFinalizer</code></p>
+<p><code>runtime.SetFinalizer</code> 有幾個長期問題：物件復活（resurrection）、循環參照造成永不執行、以及會延長物件生命週期一個 GC 週期。</p>
+<p>Go 1.24 加入 <code>runtime.AddCleanup</code>，語意更清楚也更安全：cleanup 函式<strong>不會</strong>收到物件本身的指標（避免復活），可以對同一物件註冊多個，而且不會阻止物件被回收。</p>
+<p><strong>但兩者都只是保險。</strong> 資源釋放的主要手段永遠是明確的 <code>Close()</code> + <code>defer</code>——finalizer 何時執行完全不確定，可能永遠不執行（程式結束時不會執行）。</p>
+</div>
+<hr />
+<p>下一節是最後一節：程式碼生成，一個常常比反射與 cgo 更好的選項。</p></article><nav class='pager'><a class='prev' href='database.html'><span>上一節</span><strong>7.3 database/sql</strong></a><a class='next' href='codegen.html'><span>下一節</span><strong>7.5 程式碼生成</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#cgo-是什麼'>cgo 是什麼</a></li><li><a href='#呼叫的代價'>呼叫的代價</a><ul><li><a href='#實測'>實測</a></li></ul></li><li><a href='#指標傳遞規則'>指標傳遞規則</a><ul><li><a href='#官方規則'>官方規則</a></li><li><a href='#檢查器'>檢查器</a></li><li><a href='#cgohandle傳遞-go-物件給-c-的正確方式'>cgo.Handle：傳遞 Go 物件給 C 的正確方式</a></li></ul></li><li><a href='#字串與記憶體管理'>字串與記憶體管理</a><ul><li><a href='#轉換函式對照'>轉換函式對照</a></li></ul></li><li><a href='#cgo-的代價清單'>cgo 的代價清單</a><ul><li><a href='#1-交叉編譯幾乎無法使用'>① 交叉編譯幾乎無法使用</a></li><li><a href='#2-建置變慢'>② 建置變慢</a></li><li><a href='#3-除錯工具失效'>③ 除錯工具失效</a></li><li><a href='#4-每個-cgo-呼叫可能佔用一條執行緒'>④ 每個 cgo 呼叫可能佔用一條執行緒</a></li><li><a href='#5-靜態連結變複雜'>⑤ 靜態連結變複雜</a></li></ul></li><li><a href='#什麼時候該用-cgo'>什麼時候該用 cgo</a><ul><li><a href='#純-go-的替代品越來越多'>純 Go 的替代品越來越多</a></li></ul></li><li><a href='#相關的環境變數'>相關的環境變數</a></li><li><a href='#一個完整的範例'>一個完整的範例</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

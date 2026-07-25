@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2.1 陣列 array — Go 底層原理筆記</title>
+<meta name="description" content="為什麼陣列長度是型別的一部分、值語意帶來的複製成本，以及編譯器對陣列做的最佳化。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li class='active'><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>資料結構</p><h1><span class='h1num'>2.1</span>陣列 array</h1><p class='lede'>為什麼陣列長度是型別的一部分、值語意帶來的複製成本，以及編譯器對陣列做的最佳化。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="陣列是值長度是型別">陣列是值，長度是型別<a class="headerlink" href="#陣列是值長度是型別" title="Permanent link">#</a></h2>
+<p>Go 的陣列跟 C 的陣列差很多。最重要的兩點：</p>
+<ol>
+<li><strong>長度是型別的一部分。</strong> <code>[3]int</code> 與 <code>[4]int</code> 是<strong>兩個不同的型別</strong>，不能互相賦值。</li>
+<li><strong>陣列是值型別。</strong> 賦值與傳參數都是<strong>整份複製</strong>，不是傳指標。</li>
+</ol>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">a</span><span class="w"> </span><span class="c1">// 整份複製，b 與 a 完全獨立</span>
+
+<span class="w">    </span><span class="nx">b</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">99</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">a</span><span class="p">,</span><span class="w"> </span><span class="nx">b</span><span class="p">)</span><span class="w"> </span><span class="c1">// [1 2 3] [99 2 3]</span>
+
+<span class="w">    </span><span class="c1">// ✗ 編譯錯誤：cannot use c (variable of type [4]int) as [3]int value</span>
+<span class="w">    </span><span class="c1">// var c [4]int</span>
+<span class="w">    </span><span class="c1">// a = c</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%T %T\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="kt">int</span><span class="p">{},</span><span class="w"> </span><span class="p">[</span><span class="mi">4</span><span class="p">]</span><span class="kt">int</span><span class="p">{})</span><span class="w"> </span><span class="c1">// [3]int [4]int</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>長度屬於型別，代表<strong>陣列大小必須在編譯期確定</strong>，只能是常數運算式：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">5</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="p">[</span><span class="nx">n</span><span class="p">]</span><span class="kt">int</span><span class="w">    </span><span class="c1">// ✓ n 是常數</span>
+
+<span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">5</span>
+<span class="c1">// var bad [m]int  // ✗ 編譯錯誤：invalid array length m</span>
+</code></pre></div>
+
+<p>要在執行期決定長度，就得用 slice（下一節）。</p>
+<h3 id="記憶體佈局連續無標頭">記憶體佈局：連續、無標頭<a class="headerlink" href="#記憶體佈局連續無標頭" title="Permanent link">#</a></h3>
+<p>陣列在記憶體裡就是<strong>一塊連續的元素</strong>，沒有任何額外的標頭或中繼資料。</p>
+<figure class="diagram"><svg viewBox="0 0 700 200" role="img" aria-label="陣列與 slice 的記憶體佈局對比"><text class="d-t-b" x="15" y="22">[4]int32 的記憶體佈局 —— 就是 16 個位元組，沒別的</text><rect class="d-box-a" x="15" y="34" width="90" height="44" rx="4"/><text class="d-t-m d-mid" x="60" y="53">10</text><text class="d-t-s d-mid" x="60" y="70">offset 0</text><rect class="d-box-a" x="105" y="34" width="90" height="44" rx="4"/><text class="d-t-m d-mid" x="150" y="53">20</text><text class="d-t-s d-mid" x="150" y="70">offset 4</text><rect class="d-box-a" x="195" y="34" width="90" height="44" rx="4"/><text class="d-t-m d-mid" x="240" y="53">30</text><text class="d-t-s d-mid" x="240" y="70">offset 8</text><rect class="d-box-a" x="285" y="34" width="90" height="44" rx="4"/><text class="d-t-m d-mid" x="330" y="53">40</text><text class="d-t-s d-mid" x="330" y="70">offset 12</text><text class="d-t-s" x="392" y="60">sizeof([4]int32) = 16　·　長度存在型別裡，不佔記憶體</text><text class="d-t-b" x="15" y="118">對比：[]int32 的 slice 標頭 —— 24 位元組，指向別處的陣列</text><rect class="d-box-w" x="15" y="130" width="120" height="44" rx="4"/><text class="d-t-m d-mid" x="75" y="149">array *int32</text><text class="d-t-s d-mid" x="75" y="166">8 位元組</text><rect class="d-box" x="135" y="130" width="100" height="44" rx="4"/><text class="d-t-m d-mid" x="185" y="149">len int</text><text class="d-t-s d-mid" x="185" y="166">8 位元組</text><rect class="d-box" x="235" y="130" width="100" height="44" rx="4"/><text class="d-t-m d-mid" x="285" y="149">cap int</text><text class="d-t-s d-mid" x="285" y="166">8 位元組</text><path class="d-line-a" d="M75 130 L75 100 L430 100 L430 84" marker-end="url(#ar7)"/><text class="d-t-s" x="440" y="150">slice 的長度存在執行期的 len 欄位，所以可以變動。</text><defs><marker id="ar7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--accent)"/></marker></defs></svg><figcaption><b>陣列 vs slice。</b>陣列沒有執行期的長度欄位——它的長度編在型別裡，編譯期就固定。slice 則有一個 24 位元組的標頭（64 位元平台），指向某個底層陣列。</figcaption></figure>
+
+<p>驗證一下：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;unsafe&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">arr</span><span class="w"> </span><span class="p">[</span><span class="mi">4</span><span class="p">]</span><span class="kt">int32</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">sli</span><span class="w"> </span><span class="p">[]</span><span class="kt">int32</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Sizeof</span><span class="p">(</span><span class="nx">arr</span><span class="p">))</span><span class="w"> </span><span class="c1">// 16</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Sizeof</span><span class="p">(</span><span class="nx">sli</span><span class="p">))</span><span class="w"> </span><span class="c1">// 24（slice 標頭大小，與元素數量無關）</span>
+
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">arr2</span><span class="w"> </span><span class="p">[</span><span class="mi">1000</span><span class="p">]</span><span class="kt">int32</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Sizeof</span><span class="p">(</span><span class="nx">arr2</span><span class="p">))</span><span class="w"> </span><span class="c1">// 4000</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hr />
+<h2 id="值語意的代價與價值">值語意的代價與價值<a class="headerlink" href="#值語意的代價與價值" title="Permanent link">#</a></h2>
+<h3 id="代價複製">代價：複製<a class="headerlink" href="#代價複製" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;testing&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Big</span><span class="w"> </span><span class="p">[</span><span class="mi">1024</span><span class="p">]</span><span class="kt">int64</span><span class="w"> </span><span class="c1">// 8 KB</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">byValue</span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="nx">Big</span><span class="p">)</span><span class="w"> </span><span class="kt">int64</span><span class="w">   </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nx">b</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">byPointer</span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="o">*</span><span class="nx">Big</span><span class="p">)</span><span class="w"> </span><span class="kt">int64</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nx">b</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">b</span><span class="w"> </span><span class="nx">Big</span>
+<span class="w">    </span><span class="nx">r1</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">testing</span><span class="p">.</span><span class="nx">Benchmark</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">bn</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">bn</span><span class="p">.</span><span class="nx">N</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">byValue</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="w">    </span><span class="nx">r2</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">testing</span><span class="p">.</span><span class="nx">Benchmark</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">bn</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">bn</span><span class="p">.</span><span class="nx">N</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">byPointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">b</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;byValue  &quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r1</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;byPointer&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r2</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>典型輸出（數字會依機器不同）：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>byValue      3062434           389.1 ns/op
+byPointer   1000000000         0.31 ns/op
+</code></pre></div>
+
+<p>差三個數量級。每次呼叫 <code>byValue</code> 都要 <code>memmove</code> 8 KB。</p>
+<div class="admonition warning">
+<p class="admonition-title">range 也會複製</p>
+<p>這是最容易踩的一個坑：</p>
+<p><code>go
+var arr [1000]Big
+for i, v := range arr {  // v 是每個元素的複製品！
+    _ = i
+    _ = v
+}</code></p>
+<p>這個迴圈會複製 1000 次 8 KB。改用索引或指標：</p>
+<p><code>go
+for i := range arr {
+    _ = &amp;arr[i]  // 不複製
+}</code></p>
+<p>小陣列與小 struct 不用擔心，編譯器通常會最佳化掉。但元素大於一兩百位元組時就要留意。</p>
+</div>
+<h3 id="價值可比較可當-map-鍵無別名">價值：可比較、可當 map 鍵、無別名<a class="headerlink" href="#價值可比較可當-map-鍵無別名" title="Permanent link">#</a></h3>
+<p>值語意也帶來三個好處。</p>
+<p><strong>① 陣列可以用 <code>==</code> 比較</strong>（只要元素型別可比較）：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">}</span>
+<span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">}</span>
+<span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">a</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nx">b</span><span class="p">)</span><span class="w"> </span><span class="c1">// true</span>
+
+<span class="c1">// slice 不行：invalid operation: s1 == s2 (slice can only be compared to nil)</span>
+</code></pre></div>
+
+<p><strong>② 陣列可以當 map 的鍵</strong>：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Coord</span><span class="w"> </span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="kt">int</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">grid</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="nx">Coord</span><span class="p">]</span><span class="kt">string</span><span class="p">{}</span>
+<span class="w">    </span><span class="nx">grid</span><span class="p">[</span><span class="nx">Coord</span><span class="p">{</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">}]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;原點&quot;</span>
+<span class="w">    </span><span class="nx">grid</span><span class="p">[</span><span class="nx">Coord</span><span class="p">{</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">}]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;目標&quot;</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">grid</span><span class="p">[</span><span class="nx">Coord</span><span class="p">{</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">}])</span><span class="w"> </span><span class="c1">// 目標</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>這是陣列在實務上最常見的正當用途。用 <code>[16]byte</code> 存 MD5、用 <code>[4]byte</code> 存 IPv4、用 <code>[2]int</code> 存座標，都可以直接當 map 鍵。</p>
+<p><strong>③ 沒有別名問題</strong>。傳一個陣列給函式，你確定對方改不到你的資料。傳 slice 就沒這個保證。</p>
+<hr />
+<h2 id="陣列的初始化">陣列的初始化<a class="headerlink" href="#陣列的初始化" title="Permanent link">#</a></h2>
+<p>三種寫法：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ① 明確長度</span>
+<span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[</span><span class="mi">5</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">}</span>
+
+<span class="c1">// ② 讓編譯器數</span>
+<span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[</span><span class="o">...</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">}</span><span class="w"> </span><span class="c1">// 型別是 [5]int</span>
+
+<span class="c1">// ③ 指定索引（其餘補零值）</span>
+<span class="nx">c</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[</span><span class="mi">10</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="mi">0</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">:</span><span class="w"> </span><span class="mi">99</span><span class="p">,</span><span class="w"> </span><span class="mi">9</span><span class="p">:</span><span class="w"> </span><span class="mi">7</span><span class="p">}</span>
+<span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">c</span><span class="p">)</span><span class="w"> </span><span class="c1">// [1 0 0 0 0 99 0 0 0 7]</span>
+</code></pre></div>
+
+<p>第三種寫法在建查表時很好用：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// 判斷 ASCII 字元是否為十六進位數字</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">isHex</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="mi">256</span><span class="p">]</span><span class="kt">bool</span><span class="p">{</span>
+<span class="w">    </span><span class="sc">&#39;0&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;1&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;2&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;3&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;4&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="sc">&#39;5&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;6&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;7&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;8&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;9&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="sc">&#39;a&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;b&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;c&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;d&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;e&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;f&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="sc">&#39;A&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;B&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;C&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;D&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;E&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;F&#39;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>查表 <code>isHex[c]</code> 是單一記憶體存取，比一連串 <code>if</code> 比較快得多，而且分支預測友善。</p>
+<div class="admonition note">
+<p class="admonition-title">編譯器怎麼處理初始化</p>
+<p>元素少的時候，編譯器直接產生一連串 <code>MOV</code> 指令逐一寫入。元素多的時候（門檻約 4 個），它會把初始值放進<strong>唯讀資料段</strong>，執行期用 <code>memmove</code> 一次搬過來。這在 <code>-S</code> 輸出裡看得到 <code>runtime.memmove</code> 或 <code>statictmp_</code> 之類的符號。</p>
+</div>
+<hr />
+<h2 id="邊界檢查">邊界檢查<a class="headerlink" href="#邊界檢查" title="Permanent link">#</a></h2>
+<p>Go 對陣列與 slice 的每次索引都做邊界檢查。這是記憶體安全的基礎。</p>
+<p><strong>常數索引在編譯期就檢查</strong>：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="kt">int</span><span class="p">{}</span>
+<span class="c1">// _ = a[5] // ✗ 編譯錯誤：invalid argument: index 5 out of bounds [0:3]</span>
+</code></pre></div>
+
+<p><strong>變數索引在執行期檢查</strong>：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">5</span>
+
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">recover</span><span class="p">();</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;recovered:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}()</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">a</span><span class="p">[</span><span class="nx">i</span><span class="p">])</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>recovered: runtime error: index out of range [5] with length 3
+</code></pre></div>
+
+<p>檢查失敗會呼叫 <code>runtime.goPanicIndex</code>，產生一個 <code>runtime.boundsError</code>。</p>
+<p>如同 <a href="ssa.html">SSA</a> 那節提過的，編譯器會盡量消除可證明安全的檢查。陣列的情況特別好——因為長度是編譯期常數，<code>for i := 0; i &lt; len(a); i++</code> 裡的檢查一定會被消除。</p>
+<hr />
+<h2 id="什麼時候該用陣列">什麼時候該用陣列<a class="headerlink" href="#什麼時候該用陣列" title="Permanent link">#</a></h2>
+<p>老實說，Go 的日常程式碼裡陣列用得不多，因為 slice 更靈活。但這幾個場景陣列是正解：</p>
+<table>
+<thead>
+<tr>
+<th>場景</th>
+<th>為什麼用陣列</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>固定大小的識別值（雜湊、UUID、IP）</td>
+<td>可比較、可當 map 鍵、無額外配置</td>
+</tr>
+<tr>
+<td>map 的鍵需要複合值</td>
+<td>slice 不能當鍵</td>
+</tr>
+<tr>
+<td>小型查表</td>
+<td>編譯期常數大小，索引檢查會被消除</td>
+</tr>
+<tr>
+<td>想要值語意、避免別名</td>
+<td>傳進函式後對方改不到原本的</td>
+</tr>
+<tr>
+<td>環形緩衝區的儲存體</td>
+<td>固定容量、無配置</td>
+</tr>
+<tr>
+<td>struct 內嵌固定大小欄位</td>
+<td>整個 struct 一塊記憶體，快取友善</td>
+</tr>
+</tbody>
+</table>
+<p>反過來，<strong>不該用陣列</strong>的情況：大小可能改變、大小很大且要常傳遞、大小要在執行期決定。</p>
+<h3 id="一個實用範例無配置的小型集合">一個實用範例：無配置的小型集合<a class="headerlink" href="#一個實用範例無配置的小型集合" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="c1">// 用固定陣列當儲存體，避免堆積配置</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">SmallSet</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">items</span><span class="w"> </span><span class="p">[</span><span class="mi">8</span><span class="p">]</span><span class="kt">string</span>
+<span class="w">    </span><span class="nx">n</span><span class="w">     </span><span class="kt">int</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="o">*</span><span class="nx">SmallSet</span><span class="p">)</span><span class="w"> </span><span class="nx">Add</span><span class="p">(</span><span class="nx">v</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">n</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">items</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="c1">// 已存在</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">n</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">s</span><span class="p">.</span><span class="nx">items</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="c1">// 滿了</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">s</span><span class="p">.</span><span class="nx">items</span><span class="p">[</span><span class="nx">s</span><span class="p">.</span><span class="nx">n</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">v</span>
+<span class="w">    </span><span class="nx">s</span><span class="p">.</span><span class="nx">n</span><span class="o">++</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">true</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="o">*</span><span class="nx">SmallSet</span><span class="p">)</span><span class="w"> </span><span class="nx">Has</span><span class="p">(</span><span class="nx">v</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">n</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">items</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">false</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">s</span><span class="w"> </span><span class="nx">SmallSet</span>
+<span class="w">    </span><span class="nx">s</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="s">&quot;a&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">s</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="s">&quot;b&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">s</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="s">&quot;a&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">s</span><span class="p">.</span><span class="nx">n</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">Has</span><span class="p">(</span><span class="s">&quot;b&quot;</span><span class="p">),</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">Has</span><span class="p">(</span><span class="s">&quot;z&quot;</span><span class="p">))</span><span class="w"> </span><span class="c1">// 2 true false</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>元素數量少時，<strong>線性掃描陣列往往比 map 快</strong> —— 沒有雜湊計算、沒有指標追逐、資料全在同一條快取線上。實測的交叉點大約在 8–16 個元素之間，依鍵的型別而定。</p>
+<hr />
+<p>下一節談 slice。它是 Go 裡最常用也最常被誤解的型別，而它的一切行為都建立在「slice 只是一個指向陣列的三欄位標頭」這個事實上。</p></article><nav class='pager'><a class='prev' href='link.html'><span>上一節</span><strong>1.6 機器碼生成與連結</strong></a><a class='next' href='slice.html'><span>下一節</span><strong>2.2 切片 slice</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#陣列是值長度是型別'>陣列是值，長度是型別</a><ul><li><a href='#記憶體佈局連續無標頭'>記憶體佈局：連續、無標頭</a></li></ul></li><li><a href='#值語意的代價與價值'>值語意的代價與價值</a><ul><li><a href='#代價複製'>代價：複製</a></li><li><a href='#價值可比較可當-map-鍵無別名'>價值：可比較、可當 map 鍵、無別名</a></li></ul></li><li><a href='#陣列的初始化'>陣列的初始化</a></li><li><a href='#邊界檢查'>邊界檢查</a></li><li><a href='#什麼時候該用陣列'>什麼時候該用陣列</a><ul><li><a href='#一個實用範例無配置的小型集合'>一個實用範例：無配置的小型集合</a></li></ul></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

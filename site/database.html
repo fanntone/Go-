@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7.3 database/sql — Go 底層原理筆記</title>
+<meta name="description" content="驅動介面與連線池的運作、prepared statement 的隱藏成本、NULL 處理，以及那些忘記 Close 就會出事的地方。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li class='active'><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>標準函式庫與進階主題</p><h1><span class='h1num'>7.3</span>database/sql</h1><p class='lede'>驅動介面與連線池的運作、prepared statement 的隱藏成本、NULL 處理，以及那些忘記 Close 就會出事的地方。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="一層抽象不是-orm">一層抽象，不是 ORM<a class="headerlink" href="#一層抽象不是-orm" title="Permanent link">#</a></h2>
+<p><code>database/sql</code> 不是 ORM，它是<strong>驅動介面 + 連線池</strong>。它本身不知道 SQL 語法、不做物件映射、也不管方言差異。</p>
+<div class="hl" data-lang="text"><pre><span></span><code>你的程式碼
+    ↓
+database/sql（連線池、交易管理、掃描）
+    ↓
+database/sql/driver（驅動介面）
+    ↓
+具體驅動（pgx / mysql / sqlite3 …）
+    ↓
+資料庫
+</code></pre></div>
+
+<p>驅動用匿名 import 註冊自己：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;database/sql&quot;</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="s">&quot;github.com/jackc/pgx/v5/stdlib&quot;</span><span class="w"> </span><span class="c1">// 執行它的 init()，呼叫 sql.Register(&quot;pgx&quot;, ...)</span>
+<span class="p">)</span>
+
+<span class="nx">db</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">sql</span><span class="p">.</span><span class="nx">Open</span><span class="p">(</span><span class="s">&quot;pgx&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">dsn</span><span class="p">)</span>
+</code></pre></div>
+
+<hr />
+<h2 id="sqldb-是連線池不是連線"><code>sql.DB</code> 是連線池，不是連線<a class="headerlink" href="#sqldb-是連線池不是連線" title="Permanent link">#</a></h2>
+<p>這是最常見的誤解。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">db</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">sql</span><span class="p">.</span><span class="nx">Open</span><span class="p">(</span><span class="s">&quot;pgx&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">dsn</span><span class="p">)</span>
+</code></pre></div>
+
+<p><strong><code>sql.Open</code> 不會連線到資料庫。</strong> 它只是建立一個 <code>sql.DB</code> 物件並驗證驅動名稱。真正的連線在第一次執行查詢時才建立。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;context&quot;</span>
+<span class="w">    </span><span class="s">&quot;database/sql&quot;</span>
+<span class="w">    </span><span class="s">&quot;log&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="s">&quot;github.com/jackc/pgx/v5/stdlib&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">db</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">sql</span><span class="p">.</span><span class="nx">Open</span><span class="p">(</span><span class="s">&quot;pgx&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;postgres://user:pass@localhost/mydb&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span><span class="w"> </span><span class="c1">// 只會在驅動名稱錯誤或 DSN 格式錯誤時發生</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span>
+
+<span class="w">    </span><span class="c1">// ✓ 用 Ping 驗證真的連得上</span>
+<span class="w">    </span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithTimeout</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nx">Background</span><span class="p">(),</span><span class="w"> </span><span class="mi">5</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">cancel</span><span class="p">()</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">PingContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatal</span><span class="p">(</span><span class="s">&quot;無法連線:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">log</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;連線正常&quot;</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><code>sql.DB</code> <strong>是並行安全的，而且應該在整個程式中共用一份</strong>。不要每個請求都 <code>sql.Open</code>。</p>
+<h3 id="連線池設定">連線池設定<a class="headerlink" href="#連線池設定" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">db</span><span class="p">.</span><span class="nx">SetMaxOpenConns</span><span class="p">(</span><span class="mi">25</span><span class="p">)</span><span class="w">                  </span><span class="c1">// 同時開啟的連線上限（含使用中與閒置）</span>
+<span class="nx">db</span><span class="p">.</span><span class="nx">SetMaxIdleConns</span><span class="p">(</span><span class="mi">25</span><span class="p">)</span><span class="w">                  </span><span class="c1">// 保留的閒置連線數</span>
+<span class="nx">db</span><span class="p">.</span><span class="nx">SetConnMaxLifetime</span><span class="p">(</span><span class="mi">5</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Minute</span><span class="p">)</span><span class="w">  </span><span class="c1">// 連線最長存活時間</span>
+<span class="nx">db</span><span class="p">.</span><span class="nx">SetConnMaxIdleTime</span><span class="p">(</span><span class="mi">1</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Minute</span><span class="p">)</span><span class="w">  </span><span class="c1">// 連線閒置多久後關閉</span>
+</code></pre></div>
+
+<figure class="diagram"><svg viewBox="0 0 700 270" role="img" aria-label="database/sql 連線池的運作"><rect class="d-box-a" x="15" y="14" width="200" height="120" rx="6"/><text class="d-t-b d-mid" x="115" y="36">使用中 in-use</text><rect class="d-box-o" x="30" y="46" width="170" height="24" rx="3"/><text class="d-t-s d-mid" x="115" y="63">conn 1 — 執行查詢</text><rect class="d-box-o" x="30" y="74" width="170" height="24" rx="3"/><text class="d-t-s d-mid" x="115" y="91">conn 2 — 交易中</text><text class="d-t-s d-mid" x="115" y="120">Rows 沒關就一直算「使用中」</text><rect class="d-box-w" x="245" y="14" width="200" height="120" rx="6"/><text class="d-t-b d-mid" x="345" y="36">閒置 idle</text><rect class="d-box" x="260" y="46" width="170" height="24" rx="3"/><text class="d-t-s d-mid" x="345" y="63">conn 3</text><rect class="d-box" x="260" y="74" width="170" height="24" rx="3"/><text class="d-t-s d-mid" x="345" y="91">conn 4</text><text class="d-t-s d-mid" x="345" y="120">受 MaxIdleConns 限制</text><rect class="d-box-d" x="475" y="14" width="210" height="120" rx="6"/><text class="d-t-b d-mid" x="580" y="36">等待中 waiting</text><rect class="d-box" x="490" y="46" width="180" height="24" rx="3"/><text class="d-t-s d-mid" x="580" y="63">goroutine A 排隊</text><rect class="d-box" x="490" y="74" width="180" height="24" rx="3"/><text class="d-t-s d-mid" x="580" y="91">goroutine B 排隊</text><text class="d-t-s d-mid" x="580" y="120">達到 MaxOpenConns 時</text><path class="d-line-a" d="M245 60 L219 60" marker-end="url(#ar23)"/><text class="d-t-a d-mid" x="232" y="152">取用</text><path class="d-line-a" d="M215 100 L241 100" marker-end="url(#ar23)"/><text class="d-t-a d-mid" x="228" y="172">歸還</text><defs><marker id="ar23" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--accent)"/></marker></defs><line class="d-dash" x1="15" y1="192" x2="685" y2="212"/><text class="d-t-s" x="15" y="234">db.Stats() 可以取得這些數字。WaitCount 與 WaitDuration 持續成長 = 池子太小或查詢太慢。</text><text class="d-t-s" x="15" y="256">MaxIdleConns 應該設成跟 MaxOpenConns 一樣，否則高峰過後連線會被反覆關閉與重建。</text></svg><figcaption><b>連線池的三種狀態。</b>常見的錯誤設定是 <code>MaxOpenConns=100</code> 但 <code>MaxIdleConns</code> 維持預設的 2——流量下降時 98 條連線被關閉，下一波流量來又要全部重建。</figcaption></figure>
+
+<h3 id="設定建議">設定建議<a class="headerlink" href="#設定建議" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>設定</th>
+<th>建議值</th>
+<th>理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MaxOpenConns</code></td>
+<td>依資料庫的 <code>max_connections</code> 除以應用實例數</td>
+<td>不能超過資料庫能承受的總量</td>
+</tr>
+<tr>
+<td><code>MaxIdleConns</code></td>
+<td><strong>等於 <code>MaxOpenConns</code></strong></td>
+<td>避免反覆建立與關閉連線</td>
+</tr>
+<tr>
+<td><code>ConnMaxLifetime</code></td>
+<td>5–30 分鐘</td>
+<td>讓連線輪替，配合負載平衡器與資料庫的 failover</td>
+</tr>
+<tr>
+<td><code>ConnMaxIdleTime</code></td>
+<td>1–5 分鐘</td>
+<td>低流量時釋放資源</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition warning">
+<p class="admonition-title"><code>ConnMaxLifetime</code> 一定要設</p>
+<p>沒設的話連線會永久存在。這會造成幾個問題：</p>
+<ul>
+<li>資料庫做 failover 或滾動重啟時，舊連線指向已下線的節點</li>
+<li>負載平衡器（例如 PgBouncer、雲端的 RDS Proxy）無法重新分配流量</li>
+<li>某些防火牆會靜默切斷長時間的閒置連線，你的程式卻不知道</li>
+</ul>
+<p>設一個小於資料庫端 <code>idle_timeout</code> 的值。</p>
+</div>
+<h3 id="監控連線池">監控連線池<a class="headerlink" href="#監控連線池" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;database/sql&quot;</span>
+<span class="w">    </span><span class="s">&quot;log/slog&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">monitorPool</span><span class="p">(</span><span class="nx">db</span><span class="w"> </span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Tick</span><span class="p">(</span><span class="mi">30</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">Stats</span><span class="p">()</span>
+<span class="w">        </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Info</span><span class="p">(</span><span class="s">&quot;db pool&quot;</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&quot;open&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">OpenConnections</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&quot;in_use&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">InUse</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&quot;idle&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">Idle</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&quot;wait_count&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">WaitCount</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&quot;wait_duration&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">WaitDuration</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&quot;max_idle_closed&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">MaxIdleClosed</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&quot;max_lifetime_closed&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">MaxLifetimeClosed</span><span class="p">,</span>
+<span class="w">        </span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>要盯的兩個指標：</strong></p>
+<ul>
+<li><strong><code>WaitCount</code> 持續成長</strong> = 連線池不夠用。要嘛調大 <code>MaxOpenConns</code>，要嘛優化慢查詢。</li>
+<li><strong><code>MaxIdleClosed</code> 很高</strong> = <code>MaxIdleConns</code> 太小，連線在反覆建立與關閉。</li>
+</ul>
+<hr />
+<h2 id="四種查詢方法">四種查詢方法<a class="headerlink" href="#四種查詢方法" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;context&quot;</span>
+<span class="w">    </span><span class="s">&quot;database/sql&quot;</span>
+<span class="w">    </span><span class="s">&quot;errors&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">User</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ID</span><span class="w">    </span><span class="kt">int64</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w">  </span><span class="kt">string</span>
+<span class="w">    </span><span class="nx">Email</span><span class="w"> </span><span class="kt">string</span>
+<span class="p">}</span>
+
+<span class="c1">// ① QueryRowContext：預期恰好一列</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">getUser</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">db</span><span class="w"> </span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="w"> </span><span class="kt">int64</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">User</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">u</span><span class="w"> </span><span class="nx">User</span>
+<span class="w">    </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">QueryRowContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span>
+<span class="w">        </span><span class="s">`SELECT id, name, email FROM users WHERE id = $1`</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">,</span>
+<span class="w">    </span><span class="p">).</span><span class="nx">Scan</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">u</span><span class="p">.</span><span class="nx">ID</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">u</span><span class="p">.</span><span class="nx">Name</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">u</span><span class="p">.</span><span class="nx">Email</span><span class="p">)</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">Is</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span><span class="w"> </span><span class="nx">sql</span><span class="p">.</span><span class="nx">ErrNoRows</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;找不到使用者 %d&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">u</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+
+<span class="c1">// ② QueryContext：多列</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">listUsers</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">db</span><span class="w"> </span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span><span class="p">,</span><span class="w"> </span><span class="nx">limit</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="nx">User</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">rows</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">QueryContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span>
+<span class="w">        </span><span class="s">`SELECT id, name, email FROM users ORDER BY id LIMIT $1`</span><span class="p">,</span><span class="w"> </span><span class="nx">limit</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">rows</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span><span class="w"> </span><span class="c1">// ✓ 絕對不能忘</span>
+
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">out</span><span class="w"> </span><span class="p">[]</span><span class="nx">User</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">rows</span><span class="p">.</span><span class="nx">Next</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kd">var</span><span class="w"> </span><span class="nx">u</span><span class="w"> </span><span class="nx">User</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">rows</span><span class="p">.</span><span class="nx">Scan</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">u</span><span class="p">.</span><span class="nx">ID</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">u</span><span class="p">.</span><span class="nx">Name</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">u</span><span class="p">.</span><span class="nx">Email</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">out</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">out</span><span class="p">,</span><span class="w"> </span><span class="nx">u</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// ✓ 迴圈結束後一定要檢查 rows.Err()</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">rows</span><span class="p">.</span><span class="nx">Err</span><span class="p">();</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">out</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+
+<span class="c1">// ③ ExecContext：不回傳列的操作</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">deleteUser</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">db</span><span class="w"> </span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="w"> </span><span class="kt">int64</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">res</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">ExecContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="s">`DELETE FROM users WHERE id = $1`</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">n</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">res</span><span class="p">.</span><span class="nx">RowsAffected</span><span class="p">()</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;找不到使用者 %d&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="admonition danger">
+<p class="admonition-title">三個必做的事</p>
+<p><strong>① <code>defer rows.Close()</code>。</strong> 沒關的 <code>Rows</code> 會<strong>一直佔著一條連線</strong>。幾百次之後連線池就空了，整個服務卡死。這是 Go 資料庫程式碼最致命的 bug。</p>
+<p><strong>② 迴圈後檢查 <code>rows.Err()</code>。</strong> <code>rows.Next()</code> 回傳 <code>false</code> 有兩種可能：資料讀完了，或<strong>發生錯誤</strong>。不檢查 <code>rows.Err()</code> 的話，網路中斷造成的部分讀取會被當成正常結束。</p>
+<p><strong>③ 用 <code>errors.Is(err, sql.ErrNoRows)</code> 判斷「查無資料」。</strong> 不要用 <code>err == sql.ErrNoRows</code>——有些驅動會包裝錯誤。</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Go 1.25：<code>Rows</code> 沒關會被偵測到</p>
+<p>Go 1.25 起，<code>database/sql</code> 會在 <code>Rows</code> 被 GC 而未關閉時記錄警告（透過 finalizer）。這讓漏掉 <code>Close</code> 的問題更早被發現。不過它是「事後偵測」，還是要靠 <code>defer</code> 從源頭避免。</p>
+</div>
+<hr />
+<h2 id="null-處理">NULL 處理<a class="headerlink" href="#null-處理" title="Permanent link">#</a></h2>
+<p>Go 的基本型別不能表示 NULL。掃描一個 NULL 到 <code>string</code> 會出錯：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>sql: Scan error on column index 2, name &quot;email&quot;: converting NULL to string is unsupported
+</code></pre></div>
+
+<h3 id="三種解法">三種解法<a class="headerlink" href="#三種解法" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;database/sql&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">User</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ID</span><span class="w">    </span><span class="kt">int64</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w">  </span><span class="kt">string</span>
+<span class="w">    </span><span class="nx">Email</span><span class="w"> </span><span class="o">*</span><span class="kt">string</span><span class="w">        </span><span class="c1">// 解法一：指標</span>
+<span class="w">    </span><span class="nx">Bio</span><span class="w">   </span><span class="nx">sql</span><span class="p">.</span><span class="nx">NullString</span><span class="w"> </span><span class="c1">// 解法二：sql.NullXxx</span>
+<span class="w">    </span><span class="nx">Age</span><span class="w">   </span><span class="nx">sql</span><span class="p">.</span><span class="nx">Null</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="w">  </span><span class="c1">// 解法三：泛型（Go 1.22+）</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">scan</span><span class="p">(</span><span class="nx">rows</span><span class="w"> </span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">Rows</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">User</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">u</span><span class="w"> </span><span class="nx">User</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">rows</span><span class="p">.</span><span class="nx">Scan</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">u</span><span class="p">.</span><span class="nx">ID</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">u</span><span class="p">.</span><span class="nx">Name</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">u</span><span class="p">.</span><span class="nx">Email</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">u</span><span class="p">.</span><span class="nx">Bio</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">u</span><span class="p">.</span><span class="nx">Age</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">u</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">show</span><span class="p">(</span><span class="nx">u</span><span class="w"> </span><span class="o">*</span><span class="nx">User</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">u</span><span class="p">.</span><span class="nx">Email</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;email:&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="nx">u</span><span class="p">.</span><span class="nx">Email</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">u</span><span class="p">.</span><span class="nx">Bio</span><span class="p">.</span><span class="nx">Valid</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;bio:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">u</span><span class="p">.</span><span class="nx">Bio</span><span class="p">.</span><span class="nx">String</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">u</span><span class="p">.</span><span class="nx">Age</span><span class="p">.</span><span class="nx">Valid</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;age:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">u</span><span class="p">.</span><span class="nx">Age</span><span class="p">.</span><span class="nx">V</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="admonition version">
+<p class="admonition-title">Go 1.22：泛型的 <code>sql.Null[T]</code></p>
+<p>以前要為每種型別記一個名字：<code>NullString</code>、<code>NullInt64</code>、<code>NullFloat64</code>、<code>NullBool</code>、<code>NullTime</code>、<code>NullInt32</code>、<code>NullInt16</code>、<code>NullByte</code>。</p>
+<p>Go 1.22 加入泛型版本：</p>
+<p><code>go
+var v sql.Null[time.Time]
+var n sql.Null[int]
+var s sql.Null[MyCustomType] // 任何實作了 Scanner/Valuer 的型別都行</code></p>
+<p>新程式碼建議用這個。</p>
+</div>
+<p><strong>解法四：在 SQL 層處理。</strong> 通常最乾淨：</p>
+<div class="hl" data-lang="sql"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="k">COALESCE</span><span class="p">(</span><span class="n">email</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">email</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">users</span>
+</code></pre></div>
+
+<p>如果「空字串」與「NULL」在你的領域模型裡沒有差別，這樣可以讓 Go 端的程式碼簡單很多。</p>
+<hr />
+<h2 id="prepared-statement-的隱藏成本">Prepared Statement 的隱藏成本<a class="headerlink" href="#prepared-statement-的隱藏成本" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">stmt</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">PrepareContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="s">`SELECT name FROM users WHERE id = $1`</span><span class="p">)</span>
+<span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="p">}</span>
+<span class="k">defer</span><span class="w"> </span><span class="nx">stmt</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span><span class="w"> </span><span class="c1">// ✓ 一定要關</span>
+
+<span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">ids</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">name</span><span class="w"> </span><span class="kt">string</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">stmt</span><span class="p">.</span><span class="nx">QueryRowContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">).</span><span class="nx">Scan</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">name</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="一個容易忽略的行為">一個容易忽略的行為<a class="headerlink" href="#一個容易忽略的行為" title="Permanent link">#</a></h3>
+<p><code>db.Prepare</code> 回傳的 <code>*sql.Stmt</code> 是<strong>綁定到連線池而非單一連線</strong>的。當你在不同連線上使用它時，<code>database/sql</code> 會<strong>在每條連線上各自準備一次</strong>。</p>
+<p>這表示：</p>
+<ul>
+<li>連線池有 25 條連線 → 這個 statement 最多會在資料庫端被準備 25 次</li>
+<li>如果連線因為 <code>ConnMaxLifetime</code> 被輪替，還要重新準備</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">單次查詢不要用 Prepare</p>
+<p>```go
+// ✗ 三次來回：Prepare → Execute → Close
+stmt, _ := db.Prepare(query)
+defer stmt.Close()
+stmt.QueryRow(arg).Scan(&amp;v)</p>
+<p>// ✓ 一次來回（多數驅動支援）
+db.QueryRow(query, arg).Scan(&amp;v)
+```</p>
+<p><strong>直接用 <code>db.Query</code>／<code>db.Exec</code> 傳參數，一樣有 SQL 注入防護。</strong> <code>database/sql</code> 內部會處理參數綁定。</p>
+<p>只有在<strong>同一個 statement 要執行很多次</strong>（例如批次匯入）時，明確 <code>Prepare</code> 才划算。</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">pgx 的差異</p>
+<p>PostgreSQL 的 <code>pgx</code> 驅動預設會<strong>自動快取</strong> prepared statement，所以你用 <code>db.Query</code> 也能享受到準備的好處，不需要手動 <code>Prepare</code>。</p>
+<p>但如果你的架構中間有 <strong>PgBouncer 且使用 transaction pooling 模式</strong>，prepared statement 會出問題（連線會被切換）。這時要設定 <code>default_query_exec_mode=simple_protocol</code> 或使用 PgBouncer 1.21+ 的 prepared statement 支援。</p>
+</div>
+<hr />
+<h2 id="交易">交易<a class="headerlink" href="#交易" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;context&quot;</span>
+<span class="w">    </span><span class="s">&quot;database/sql&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">transfer</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">db</span><span class="w"> </span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span><span class="p">,</span><span class="w"> </span><span class="nx">from</span><span class="p">,</span><span class="w"> </span><span class="nx">to</span><span class="w"> </span><span class="kt">int64</span><span class="p">,</span><span class="w"> </span><span class="nx">amount</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="nx">err</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">tx</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">BeginTx</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">sql</span><span class="p">.</span><span class="nx">TxOptions</span><span class="p">{</span>
+<span class="w">        </span><span class="nx">Isolation</span><span class="p">:</span><span class="w"> </span><span class="nx">sql</span><span class="p">.</span><span class="nx">LevelReadCommitted</span><span class="p">,</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// ✓ 用 defer 統一處理 commit / rollback</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">recover</span><span class="p">();</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">tx</span><span class="p">.</span><span class="nx">Rollback</span><span class="p">()</span>
+<span class="w">            </span><span class="nb">panic</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span><span class="w"> </span><span class="c1">// 重新拋出</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">tx</span><span class="p">.</span><span class="nx">Rollback</span><span class="p">()</span><span class="w"> </span><span class="c1">// 已經 Commit 的話這裡回傳 ErrTxDone，可以忽略</span>
+<span class="w">            </span><span class="k">return</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">err</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">Commit</span><span class="p">()</span>
+<span class="w">    </span><span class="p">}()</span>
+
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">balance</span><span class="w"> </span><span class="kt">int</span>
+<span class="w">    </span><span class="nx">err</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">QueryRowContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span>
+<span class="w">        </span><span class="s">`SELECT balance FROM accounts WHERE id = $1 FOR UPDATE`</span><span class="p">,</span><span class="w"> </span><span class="nx">from</span><span class="p">,</span>
+<span class="w">    </span><span class="p">).</span><span class="nx">Scan</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">balance</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">balance</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">amount</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;餘額不足：有 %d，需要 %d&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">balance</span><span class="p">,</span><span class="w"> </span><span class="nx">amount</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">ExecContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span>
+<span class="w">        </span><span class="s">`UPDATE accounts SET balance = balance - $1 WHERE id = $2`</span><span class="p">,</span><span class="w"> </span><span class="nx">amount</span><span class="p">,</span><span class="w"> </span><span class="nx">from</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">ExecContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span>
+<span class="w">        </span><span class="s">`UPDATE accounts SET balance = balance + $1 WHERE id = $2`</span><span class="p">,</span><span class="w"> </span><span class="nx">amount</span><span class="p">,</span><span class="w"> </span><span class="nx">to</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="c1">// defer 會執行 Commit</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>三個要點：</p>
+<ol>
+<li><strong>回傳值用具名的 <code>err</code></strong>，這樣 <code>defer</code> 才能檢查與修改它（見 <a href="defer.html#defer-與具名回傳值">defer</a>）。</li>
+<li><strong>交易期間只用 <code>tx.*</code>，不要混用 <code>db.*</code>。</strong> 用 <code>db</code> 會拿到另一條連線，不在這個交易裡。</li>
+<li><strong>一個交易佔用一條連線直到結束。</strong> 長交易會耗盡連線池。</li>
+</ol>
+<div class="admonition danger">
+<p class="admonition-title">交易中不要做外部呼叫</p>
+<p><code>go
+// ✗ HTTP 呼叫可能要好幾秒，這段時間連線與資料庫的鎖都被佔著
+tx.Exec(`UPDATE orders SET status = 'paid' WHERE id = $1`, id)
+callPaymentAPI()   // ← 危險
+tx.Commit()</code></p>
+<p>交易應該只包含資料庫操作，而且越短越好。外部呼叫放到交易外面，用冪等性或 saga 模式處理一致性。</p>
+</div>
+<hr />
+<h2 id="批次操作">批次操作<a class="headerlink" href="#批次操作" title="Permanent link">#</a></h2>
+<p>一列一列 insert 非常慢——每次都是一輪網路來回。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;context&quot;</span>
+<span class="w">    </span><span class="s">&quot;database/sql&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;strings&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Row</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w">  </span><span class="kt">string</span>
+<span class="w">    </span><span class="nx">Email</span><span class="w"> </span><span class="kt">string</span>
+<span class="p">}</span>
+
+<span class="c1">// 把多列組成一個 INSERT</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">bulkInsert</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">db</span><span class="w"> </span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span><span class="p">,</span><span class="w"> </span><span class="nx">rows</span><span class="w"> </span><span class="p">[]</span><span class="nx">Row</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">rows</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">batchSize</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">1000</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">start</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">start</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">rows</span><span class="p">);</span><span class="w"> </span><span class="nx">start</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="nx">batchSize</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">end</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">min</span><span class="p">(</span><span class="nx">start</span><span class="o">+</span><span class="nx">batchSize</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">rows</span><span class="p">))</span>
+<span class="w">        </span><span class="nx">batch</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">rows</span><span class="p">[</span><span class="nx">start</span><span class="p">:</span><span class="nx">end</span><span class="p">]</span>
+
+<span class="w">        </span><span class="nx">placeholders</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">batch</span><span class="p">))</span>
+<span class="w">        </span><span class="nx">args</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">any</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">batch</span><span class="p">)</span><span class="o">*</span><span class="mi">2</span><span class="p">)</span>
+
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">batch</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">placeholders</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">placeholders</span><span class="p">,</span>
+<span class="w">                </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Sprintf</span><span class="p">(</span><span class="s">&quot;($%d, $%d)&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">i</span><span class="o">*</span><span class="mi">2</span><span class="o">+</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nx">i</span><span class="o">*</span><span class="mi">2</span><span class="o">+</span><span class="mi">2</span><span class="p">))</span>
+<span class="w">            </span><span class="nx">args</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">args</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">Name</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">Email</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+
+<span class="w">        </span><span class="nx">query</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">`INSERT INTO users (name, email) VALUES `</span><span class="w"> </span><span class="o">+</span>
+<span class="w">            </span><span class="nx">strings</span><span class="p">.</span><span class="nx">Join</span><span class="p">(</span><span class="nx">placeholders</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;, &quot;</span><span class="p">)</span>
+
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">ExecContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">query</span><span class="p">,</span><span class="w"> </span><span class="nx">args</span><span class="o">...</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;批次 %d-%d: %w&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">start</span><span class="p">,</span><span class="w"> </span><span class="nx">end</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="admonition warning">
+<p class="admonition-title">參數數量有上限</p>
+<p>PostgreSQL 的每個查詢最多 <strong>65535</strong> 個參數。上面的例子每列 2 個參數，所以單批最多約 32767 列。批次大小要依欄位數量調整。</p>
+<p>PostgreSQL 上，<strong><code>COPY</code> 協定比批次 INSERT 快一個數量級</strong>。<code>pgx</code> 提供 <code>CopyFrom</code>：</p>
+<p><code>go
+conn.CopyFrom(ctx,
+    pgx.Identifier{"users"},
+    []string{"name", "email"},
+    pgx.CopyFromSlice(len(rows), func(i int) ([]any, error) {
+        return []any{rows[i].Name, rows[i].Email}, nil
+    }),
+)</code></p>
+</div>
+<hr />
+<h2 id="sql-注入">SQL 注入<a class="headerlink" href="#sql-注入" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 字串拼接 —— 絕對不要</span>
+<span class="nx">query</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">&quot;SELECT * FROM users WHERE name = &#39;&quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nx">name</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot;&#39;&quot;</span>
+
+<span class="c1">// ✓ 參數化查詢</span>
+<span class="nx">db</span><span class="p">.</span><span class="nx">Query</span><span class="p">(</span><span class="s">&quot;SELECT * FROM users WHERE name = $1&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">name</span><span class="p">)</span>
+</code></pre></div>
+
+<p>參數化查詢是<strong>唯一</strong>可靠的防護。它不是「跳脫特殊字元」，而是把查詢與資料<strong>分開傳送</strong>給資料庫——資料永遠不會被當成 SQL 解析。</p>
+<h3 id="動態欄位名怎麼辦">動態欄位名怎麼辦<a class="headerlink" href="#動態欄位名怎麼辦" title="Permanent link">#</a></h3>
+<p>參數只能用於<strong>值</strong>，不能用於欄位名或表名：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 不能這樣</span>
+<span class="nx">db</span><span class="p">.</span><span class="nx">Query</span><span class="p">(</span><span class="s">&quot;SELECT * FROM users ORDER BY $1&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">column</span><span class="p">)</span>
+</code></pre></div>
+
+<p>必須用白名單：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">var</span><span class="w"> </span><span class="nx">allowedSort</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">string</span><span class="p">{</span>
+<span class="w">    </span><span class="s">&quot;name&quot;</span><span class="p">:</span><span class="w">       </span><span class="s">&quot;name&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="s">&quot;created&quot;</span><span class="p">:</span><span class="w">    </span><span class="s">&quot;created_at&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="s">&quot;created_at&quot;</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;created_at&quot;</span><span class="p">,</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">buildQuery</span><span class="p">(</span><span class="nx">sortBy</span><span class="p">,</span><span class="w"> </span><span class="nx">dir</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">col</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">allowedSort</span><span class="p">[</span><span class="nx">sortBy</span><span class="p">]</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;不允許的排序欄位: %q&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">sortBy</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">order</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">&quot;ASC&quot;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">dir</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;desc&quot;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">order</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;DESC&quot;</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Sprintf</span><span class="p">(</span><span class="s">&quot;SELECT id, name FROM users ORDER BY %s %s&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">col</span><span class="p">,</span><span class="w"> </span><span class="nx">order</span><span class="p">),</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>白名單，不是黑名單。</strong> 只允許你明確列出的值。</p>
+<hr />
+<h2 id="生態系選擇">生態系選擇<a class="headerlink" href="#生態系選擇" title="Permanent link">#</a></h2>
+<p><code>database/sql</code> 很低階，實務上通常會搭配其他工具：</p>
+<table>
+<thead>
+<tr>
+<th>工具</th>
+<th>定位</th>
+<th>適合</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>database/sql</code></td>
+<td>標準庫</td>
+<td>簡單查詢、完全掌控</td>
+</tr>
+<tr>
+<td><code>sqlx</code></td>
+<td>薄封裝，加上 struct 掃描</td>
+<td>想少寫 <code>Scan</code> 但保留 SQL 掌控權</td>
+</tr>
+<tr>
+<td><code>sqlc</code></td>
+<td>從 SQL <strong>生成</strong> Go 程式碼</td>
+<td>型別安全、零反射、SQL 是唯一真相來源</td>
+</tr>
+<tr>
+<td><code>pgx</code>（原生模式）</td>
+<td>PostgreSQL 專用驅動</td>
+<td>需要 PG 特有功能與最佳效能</td>
+</tr>
+<tr>
+<td><code>ent</code> / <code>gorm</code></td>
+<td>完整 ORM</td>
+<td>快速開發、CRUD 為主的應用</td>
+</tr>
+</tbody>
+</table>
+<p><strong>個人建議</strong>：<code>sqlc</code> 是目前最好的平衡點——你寫 SQL，它產生型別安全的 Go 函式，沒有反射、沒有 DSL 要學、編譯期就能抓到欄位錯誤。</p>
+<div class="hl" data-lang="sql"><pre><span></span><code><span class="c1">-- query.sql</span>
+<span class="c1">-- name: GetUser :one</span>
+<span class="k">SELECT</span><span class="w"> </span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">email</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">users</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="mi">1</span><span class="p">;</span>
+</code></pre></div>
+
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// sqlc 產生的程式碼</span>
+<span class="nx">user</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">queries</span><span class="p">.</span><span class="nx">GetUser</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="mi">42</span><span class="p">)</span><span class="w"> </span><span class="c1">// 型別完全正確</span>
+</code></pre></div>
+
+<hr />
+<h2 id="檢查清單">檢查清單<a class="headerlink" href="#檢查清單" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>項目</th>
+<th>為什麼</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>✓ <code>sql.DB</code> 全域共用一份</td>
+<td>它是連線池，不是連線</td>
+</tr>
+<tr>
+<td>✓ 啟動時 <code>PingContext</code></td>
+<td><code>sql.Open</code> 不會真的連線</td>
+</tr>
+<tr>
+<td>✓ <code>SetMaxOpenConns</code> 有設</td>
+<td>不要打爆資料庫</td>
+</tr>
+<tr>
+<td>✓ <code>SetMaxIdleConns</code> = <code>SetMaxOpenConns</code></td>
+<td>避免連線反覆重建</td>
+</tr>
+<tr>
+<td>✓ <code>SetConnMaxLifetime</code> 有設</td>
+<td>支援 failover 與負載平衡</td>
+</tr>
+<tr>
+<td>✓ <code>defer rows.Close()</code></td>
+<td>否則連線洩漏</td>
+</tr>
+<tr>
+<td>✓ 檢查 <code>rows.Err()</code></td>
+<td>區分「讀完」與「出錯」</td>
+</tr>
+<tr>
+<td>✓ 所有查詢都用 <code>*Context</code> 版本</td>
+<td>可取消、可逾時</td>
+</tr>
+<tr>
+<td>✓ 一律用參數化查詢</td>
+<td>防 SQL 注入</td>
+</tr>
+<tr>
+<td>✓ 交易中不做外部呼叫</td>
+<td>避免長時間持鎖</td>
+</tr>
+<tr>
+<td>✓ 監控 <code>db.Stats()</code></td>
+<td>及早發現連線池問題</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<p>下一節談 cgo：跟 C 世界互通的代價。</p></article><nav class='pager'><a class='prev' href='http.html'><span>上一節</span><strong>7.2 net/http</strong></a><a class='next' href='cgo.html'><span>下一節</span><strong>7.4 cgo</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#一層抽象不是-orm'>一層抽象，不是 ORM</a></li><li><a href='#sqldb-是連線池不是連線'>sql.DB 是連線池，不是連線</a><ul><li><a href='#連線池設定'>連線池設定</a></li><li><a href='#設定建議'>設定建議</a></li><li><a href='#監控連線池'>監控連線池</a></li></ul></li><li><a href='#四種查詢方法'>四種查詢方法</a></li><li><a href='#null-處理'>NULL 處理</a><ul><li><a href='#三種解法'>三種解法</a></li></ul></li><li><a href='#prepared-statement-的隱藏成本'>Prepared Statement 的隱藏成本</a><ul><li><a href='#一個容易忽略的行為'>一個容易忽略的行為</a></li></ul></li><li><a href='#交易'>交易</a></li><li><a href='#批次操作'>批次操作</a></li><li><a href='#sql-注入'>SQL 注入</a><ul><li><a href='#動態欄位名怎麼辦'>動態欄位名怎麼辦</a></li></ul></li><li><a href='#生態系選擇'>生態系選擇</a></li><li><a href='#檢查清單'>檢查清單</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+title: Go 底層原理筆記
+kicker: 從語法糖到 runtime
+subtitle: 一份用台灣用語寫的 Go 語言設計與實作筆記 —— 編譯器怎麼翻譯你的程式碼、runtime 怎麼跑它、記憶體怎麼被管理。所有內容皆對照 Go 1.26 原始碼重新校對。
+go_version: "1.26"
+
+notes:
+  - h: 對照最新版本
+    p: 每一節都標注了對照的 Go 版本。凡是近年改過的地方（Swiss Table map、register ABI、Green Tea GC、1.22 迴圈變數、1.23 計時器）都會特別標出「舊版是這樣、現在是這樣」。
+  - h: 台灣用語
+    p: 全書使用繁體中文與台灣慣用術語：執行緒、行程、記憶體、指標、佇列、排程器、快取。goroutine、channel、slice 這類無共識譯名的詞一律保留原文。
+  - h: 讀得懂的程式碼
+    p: 範例都是可以直接 go run 的完整片段，並附上實際輸出。runtime 原始碼片段會標注檔案路徑，方便你自己翻原始碼對照。
+
+parts:
+  - id: p0
+    kicker: Part 0
+    title: 開始之前
+    blurb: 建立心智模型與工具箱：你要看的是哪一層，以及怎麼把黑盒子打開。
+  - id: p1
+    kicker: Part 1
+    title: 編譯器
+    blurb: 從一份 .go 檔到一顆可執行檔，中間到底發生了什麼事。
+  - id: p2
+    kicker: Part 2
+    title: 資料結構
+    blurb: array、slice、map、string 在記憶體裡真正的樣子。
+  - id: p3
+    kicker: Part 3
+    title: 語言核心
+    blurb: 函式呼叫慣例、介面的動態分派、反射與泛型的實作方式。
+  - id: p4
+    kicker: Part 4
+    title: 關鍵字
+    blurb: 那些看起來像語法、其實是編譯器改寫成函式呼叫的關鍵字。
+  - id: p5
+    kicker: Part 5
+    title: 並行
+    blurb: GMP 排程器、channel、鎖、計時器與網路輪詢器如何協同運作。
+  - id: p6
+    kicker: Part 6
+    title: 記憶體管理
+    blurb: 多層記憶體配置器、三色標記 GC，以及會自己長大的 goroutine 堆疊。
+  - id: p7
+    kicker: Part 7
+    title: 標準函式庫與進階主題
+    blurb: encoding/json、net/http、database/sql 的設計，以及 cgo 與程式碼生成。

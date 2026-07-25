@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2.4 字串 string — Go 底層原理筆記</title>
+<meta name="description" content="字串的兩欄位結構與不可變性、byte 與 rune 的差別、字串拼接的成本，以及零複製轉換的正確做法。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li class='active'><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>資料結構</p><h1><span class='h1num'>2.4</span>字串 string</h1><p class='lede'>字串的兩欄位結構與不可變性、byte 與 rune 的差別、字串拼接的成本，以及零複製轉換的正確做法。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="兩個欄位不可變">兩個欄位，不可變<a class="headerlink" href="#兩個欄位不可變" title="Permanent link">#</a></h2>
+<p>字串的內部結構比 slice 少一個欄位（<code>runtime/string.go</code>）：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">stringStruct</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">str</span><span class="w"> </span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="w"> </span><span class="c1">// 指向底層位元組陣列</span>
+<span class="w">    </span><span class="nx">len</span><span class="w"> </span><span class="kt">int</span><span class="w">            </span><span class="c1">// 位元組長度</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>沒有 <code>cap</code>，因為<strong>字串不可變</strong>——不會擴容，所以不需要容量。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;unsafe&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">&quot;hello&quot;</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Sizeof</span><span class="p">(</span><span class="nx">s</span><span class="p">))</span><span class="w"> </span><span class="c1">// 16（兩個欄位，各 8 位元組）</span>
+
+<span class="w">    </span><span class="c1">// ✗ 編譯錯誤：cannot assign to s[0] (neither addressable nor a map index expression)</span>
+<span class="w">    </span><span class="c1">// s[0] = &#39;H&#39;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="不可變帶來什麼">不可變帶來什麼<a class="headerlink" href="#不可變帶來什麼" title="Permanent link">#</a></h3>
+<p><strong>① 子字串是零複製的。</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">&quot;hello, world&quot;</span>
+<span class="nx">sub</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">s</span><span class="p">[</span><span class="mi">7</span><span class="p">:]</span><span class="w"> </span><span class="c1">// 只是產生一個新標頭：指標往後移 7、長度改成 5。沒有複製任何位元組</span>
+</code></pre></div>
+
+<p><strong>② 字串可以安全共享。</strong> 多個 goroutine 同時讀同一個字串完全沒問題，不需要鎖。</p>
+<p><strong>③ 字串可以當 map 鍵。</strong> 因為內容不會變，雜湊值就穩定。</p>
+<p><strong>④ 字面值放在唯讀記憶體。</strong> 程式碼裡的 <code>"hello"</code> 存在執行檔的唯讀資料段，多次使用同一個字面值只有一份。</p>
+<div class="admonition warning">
+<p class="admonition-title">子字串零複製也會造成記憶體洩漏</p>
+<p>跟 slice 一樣的問題：</p>
+<p><code>go
+func extractID(hugeJSON string) string {
+    return hugeJSON[12:24] // 只要這 12 個位元組還活著，整個 hugeJSON 都不能被回收
+}</code></p>
+<p>如果 <code>hugeJSON</code> 是 10 MB 而回傳值要長期保存，就複製一份：</p>
+<p><code>go
+return strings.Clone(hugeJSON[12:24]) // Go 1.18+</code></p>
+</div>
+<hr />
+<h2 id="byte-與-rune索引與走訪的差別">byte 與 rune：索引與走訪的差別<a class="headerlink" href="#byte-與-rune索引與走訪的差別" title="Permanent link">#</a></h2>
+<p>Go 的字串是 <strong>UTF-8 編碼的位元組序列</strong>。這個事實決定了兩件事：</p>
+<ul>
+<li><code>len(s)</code> 回傳<strong>位元組數</strong>，不是字元數。</li>
+<li><code>s[i]</code> 回傳<strong>第 i 個位元組</strong>（型別是 <code>byte</code>，即 <code>uint8</code>），不是第 i 個字元。</li>
+</ul>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">&quot;Go語言&quot;</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">s</span><span class="p">))</span><span class="w">    </span><span class="c1">// 8 —— G(1) + o(1) + 語(3) + 言(3)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">s</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="w">      </span><span class="c1">// 71 —— &#39;G&#39; 的位元組值</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%c\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="w"> </span><span class="c1">// G</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">s</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span><span class="w">      </span><span class="c1">// 232 —— &#39;語&#39; 的第一個位元組，不是完整字元</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%q\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">[</span><span class="mi">2</span><span class="p">:</span><span class="mi">5</span><span class="p">])</span><span class="w"> </span><span class="c1">// &quot;語&quot; —— 要切三個位元組才是完整的</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<figure class="diagram"><svg viewBox="0 0 700 230" role="img" aria-label="UTF-8 字串的位元組與 rune 對應"><text class="d-t-b" x="15" y="20">"Go語言" 在記憶體裡的 8 個位元組</text><rect class="d-box-a" x="15" y="32" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="53" y="58">0x47</text><rect class="d-box-a" x="91" y="32" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="129" y="58">0x6F</text><rect class="d-box-w" x="167" y="32" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="205" y="58">0xE8</text><rect class="d-box-w" x="243" y="32" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="281" y="58">0xAA</text><rect class="d-box-w" x="319" y="32" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="357" y="58">0x9E</text><rect class="d-box-o" x="395" y="32" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="433" y="58">0xE8</text><rect class="d-box-o" x="471" y="32" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="509" y="58">0xA8</text><rect class="d-box-o" x="547" y="32" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="585" y="58">0x80</text><text class="d-t-s d-mid" x="53" y="90">s[0]</text><text class="d-t-s d-mid" x="129" y="90">s[1]</text><text class="d-t-s d-mid" x="205" y="90">s[2]</text><text class="d-t-s d-mid" x="281" y="90">s[3]</text><text class="d-t-s d-mid" x="357" y="90">s[4]</text><text class="d-t-s d-mid" x="433" y="90">s[5]</text><text class="d-t-s d-mid" x="509" y="90">s[6]</text><text class="d-t-s d-mid" x="585" y="90">s[7]</text><line class="d-line-a" x1="15" y1="106" x2="91" y2="106"/><text class="d-t-a d-mid" x="53" y="124">'G'</text><line class="d-line-a" x1="91" y1="106" x2="167" y2="106"/><text class="d-t-a d-mid" x="129" y="124">'o'</text><line class="d-line-a" x1="167" y1="106" x2="395" y2="106"/><text class="d-t-a d-mid" x="281" y="124">'語' U+8A9E</text><line class="d-line-a" x1="395" y1="106" x2="623" y2="106"/><text class="d-t-a d-mid" x="509" y="124">'言' U+8A00</text><line class="d-dash" x1="15" y1="146" x2="685" y2="146"/><text class="d-t-s" x="15" y="170">len(s) = 8（位元組數）　·　utf8.RuneCountInString(s) = 4（字元數）</text><text class="d-t-s" x="15" y="192">for i, r := range s → i 依序是 0, 1, 2, 5（位元組索引），r 是完整的 rune</text><text class="d-t-s" x="15" y="214">[]rune(s) 會配置一個 4 元素的 int32 陣列並解碼 —— 有成本，別在熱路徑上做</text></svg><figcaption><b>UTF-8 是變長編碼。</b>ASCII 佔 1 位元組，中日韓文字通常佔 3 位元組，emoji 常是 4 位元組。索引 <code>s[i]</code> 取的是位元組；要取字元必須解碼。</figcaption></figure>
+
+<h3 id="兩種走訪兩種結果">兩種走訪，兩種結果<a class="headerlink" href="#兩種走訪兩種結果" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">&quot;Go語言&quot;</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;--- 依位元組（傳統 for）---&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">s</span><span class="p">);</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%d:%#x &quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">[</span><span class="nx">i</span><span class="p">])</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">()</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;--- 依 rune（range）---&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">s</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%d:%c(%d) &quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">()</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>--- 依位元組（傳統 for）---
+0:0x47 1:0x6f 2:0xe8 3:0xaa 4:0x9e 5:0xe8 6:0xa8 7:0x80 
+--- 依 rune（range）---
+0:G(71) 1:o(111) 2:語(35486) 5:言(35328) 
+</code></pre></div>
+
+<p><strong><code>range</code> 字串會自動解碼 UTF-8</strong>，這是編譯器在 walk 階段插入的（會呼叫 <code>runtime.decoderune</code>）。注意索引是<strong>位元組位置</strong>（0, 1, 2, 5），不是字元序號。</p>
+<div class="admonition danger">
+<p class="admonition-title">「字元」這個概念比你想的複雜</p>
+<p>即使用 rune 也不等於使用者感知的「一個字」。例如 <code>"é"</code> 可能是一個 rune（U+00E9）或兩個（U+0065 + U+0301 組合附加符號）。emoji 更誇張：<code>"👨‍👩‍👧"</code> 是三個人物 emoji 加兩個零寬連接符，共 5 個 rune、18 個位元組，但顯示成一個圖案。</p>
+<p>要正確處理「使用者看到的一個字」（grapheme cluster），需要 <code>golang.org/x/text</code> 或專門的函式庫。標準庫沒有提供。</p>
+</div>
+<h3 id="常見錯誤反轉字串">常見錯誤：反轉字串<a class="headerlink" href="#常見錯誤反轉字串" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="c1">// ✗ 按位元組反轉 —— 多位元組字元會壞掉</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">reverseBad</span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="nb">byte</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">j</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span><span class="o">-</span><span class="mi">1</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">j</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">j</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">i</span><span class="o">+</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nx">j</span><span class="o">-</span><span class="mi">1</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">b</span><span class="p">[</span><span class="nx">i</span><span class="p">],</span><span class="w"> </span><span class="nx">b</span><span class="p">[</span><span class="nx">j</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">b</span><span class="p">[</span><span class="nx">j</span><span class="p">],</span><span class="w"> </span><span class="nx">b</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ 按 rune 反轉</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">reverseRunes</span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">r</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="nb">rune</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">j</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">r</span><span class="p">)</span><span class="o">-</span><span class="mi">1</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">j</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">j</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">i</span><span class="o">+</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nx">j</span><span class="o">-</span><span class="mi">1</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">r</span><span class="p">[</span><span class="nx">i</span><span class="p">],</span><span class="w"> </span><span class="nx">r</span><span class="p">[</span><span class="nx">j</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">r</span><span class="p">[</span><span class="nx">j</span><span class="p">],</span><span class="w"> </span><span class="nx">r</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nb">string</span><span class="p">(</span><span class="nx">r</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">&quot;Go語言&quot;</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%q\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">reverseBad</span><span class="p">(</span><span class="nx">s</span><span class="p">))</span><span class="w">   </span><span class="c1">// &quot;\x80\xa8\xe8\x9e\xaa\xe8oG&quot; —— 亂碼</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%q\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">reverseRunes</span><span class="p">(</span><span class="nx">s</span><span class="p">))</span><span class="w"> </span><span class="c1">// &quot;言語oG&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>（就算是 rune 版本，遇到組合字元或 emoji 序列仍會壞掉。「反轉字串」是個比表面上難得多的問題。）</p>
+<hr />
+<h2 id="字串拼接的成本">字串拼接的成本<a class="headerlink" href="#字串拼接的成本" title="Permanent link">#</a></h2>
+<p><code>s1 + s2</code> 會被改寫成 <code>runtime.concatstring2</code>，它<strong>配置一塊新記憶體並複製兩邊的內容</strong>。因為字串不可變，沒有別的做法。</p>
+<p>在迴圈裡拼接是經典的效能陷阱：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;strings&quot;</span>
+<span class="w">    </span><span class="s">&quot;testing&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">plusEq</span><span class="p">(</span><span class="nx">parts</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">s</span><span class="w"> </span><span class="kt">string</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">parts</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">s</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="c1">// 每次都配置新記憶體 + 複製全部既有內容 → O(n²)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">s</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">builder</span><span class="p">(</span><span class="nx">parts</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">sb</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">Builder</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">parts</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">sb</span><span class="p">.</span><span class="nx">WriteString</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">sb</span><span class="p">.</span><span class="nx">String</span><span class="p">()</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">builderGrow</span><span class="p">(</span><span class="nx">parts</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">n</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">parts</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">n</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">sb</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">Builder</span>
+<span class="w">    </span><span class="nx">sb</span><span class="p">.</span><span class="nx">Grow</span><span class="p">(</span><span class="nx">n</span><span class="p">)</span><span class="w"> </span><span class="c1">// 一次配置到位</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">parts</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">sb</span><span class="p">.</span><span class="nx">WriteString</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">sb</span><span class="p">.</span><span class="nx">String</span><span class="p">()</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">joined</span><span class="p">(</span><span class="nx">parts</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">Join</span><span class="p">(</span><span class="nx">parts</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">parts</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="mi">2000</span><span class="p">)</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">parts</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">parts</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;abcdefgh&quot;</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">name</span><span class="p">,</span><span class="w"> </span><span class="nx">fn</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kd">func</span><span class="p">([]</span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="p">{</span>
+<span class="w">        </span><span class="s">&quot;+=&quot;</span><span class="p">:</span><span class="w">          </span><span class="nx">plusEq</span><span class="p">,</span>
+<span class="w">        </span><span class="s">&quot;Builder&quot;</span><span class="p">:</span><span class="w">     </span><span class="nx">builder</span><span class="p">,</span>
+<span class="w">        </span><span class="s">&quot;BuilderGrow&quot;</span><span class="p">:</span><span class="w"> </span><span class="nx">builderGrow</span><span class="p">,</span>
+<span class="w">        </span><span class="s">&quot;Join&quot;</span><span class="p">:</span><span class="w">        </span><span class="nx">joined</span><span class="p">,</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">r</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">testing</span><span class="p">.</span><span class="nx">Benchmark</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">b</span><span class="p">.</span><span class="nx">ReportAllocs</span><span class="p">()</span>
+<span class="w">            </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">b</span><span class="p">.</span><span class="nx">N</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">fn</span><span class="p">(</span><span class="nx">parts</span><span class="p">)</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">})</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%-12s %s  %s\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">name</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">MemString</span><span class="p">())</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>典型結果：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>+=              1204   1002341 ns/op   16094208 B/op    1999 allocs/op
+Builder        68142     17203 ns/op      49152 B/op      12 allocs/op
+BuilderGrow   152331      7841 ns/op      16384 B/op       1 allocs/op
+Join          148902      8012 ns/op      16384 B/op       1 allocs/op
+</code></pre></div>
+
+<p><code>+=</code> 慢了兩個數量級，配置量差 1000 倍。</p>
+<h3 id="選哪一種">選哪一種<a class="headerlink" href="#選哪一種" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>情況</th>
+<th>用什麼</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>已經有 <code>[]string</code> 且要用分隔符連接</td>
+<td><code>strings.Join</code></td>
+</tr>
+<tr>
+<td>迴圈中逐步建構、知道大概長度</td>
+<td><code>strings.Builder</code> + <code>Grow</code></td>
+</tr>
+<tr>
+<td>迴圈中逐步建構、長度未知</td>
+<td><code>strings.Builder</code></td>
+</tr>
+<tr>
+<td>少數幾個（2–5 個）字串一次拼</td>
+<td>直接用 <code>+</code>，編譯器會最佳化成 <code>concatstringN</code></td>
+</tr>
+<tr>
+<td>有格式化需求</td>
+<td><code>fmt.Sprintf</code>（慢但可讀，非熱路徑無妨）</td>
+</tr>
+<tr>
+<td>建構 <code>[]byte</code> 給 I/O 用</td>
+<td><code>append</code> 或 <code>bytes.Buffer</code></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title"><code>strings.Builder</code> 為什麼快</p>
+<p>它內部就是一個 <code>[]byte</code>，<code>WriteString</code> 是 <code>append</code>。最後 <code>String()</code> 用 <code>unsafe</code> 把 <code>[]byte</code> 直接轉成 <code>string</code>，<strong>不複製</strong>——因為 Builder 保證那塊記憶體之後不會再被修改。</p>
+<p>這也是為什麼 <code>Builder</code> <strong>不能複製</strong>：複製之後兩份會共用同一塊底層陣列，破壞前述保證。它內部有一個 <code>addr</code> 欄位專門偵測這件事，複製後使用會 panic：<code>strings: illegal use of non-zero Builder copied by value</code>。</p>
+</div>
+<hr />
+<h2 id="string-與-byte-的轉換">string 與 []byte 的轉換<a class="headerlink" href="#string-與-byte-的轉換" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="nb">byte</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span><span class="w">  </span><span class="c1">// 配置 + 複製</span>
+<span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span><span class="w">  </span><span class="c1">// 配置 + 複製</span>
+</code></pre></div>
+
+<p><strong>兩個方向都會複製</strong>，因為 <code>string</code> 必須不可變，而 <code>[]byte</code> 可變。如果不複製，改 <code>b</code> 就會改到 <code>s</code>。</p>
+<h3 id="編譯器的最佳化">編譯器的最佳化<a class="headerlink" href="#編譯器的最佳化" title="Permanent link">#</a></h3>
+<p>有幾種情況編譯器可以省掉複製：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ① map 查找：不會複製</span>
+<span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="s">&quot;key&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">}</span>
+<span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="nb">byte</span><span class="p">(</span><span class="s">&quot;key&quot;</span><span class="p">)</span>
+<span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">m</span><span class="p">[</span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">)]</span><span class="w"> </span><span class="c1">// 編譯器知道這個字串只用來查找，不會逃逸</span>
+
+<span class="c1">// ② 比較：不會複製</span>
+<span class="k">if</span><span class="w"> </span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;key&quot;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">// ③ range：不會複製</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">// ④ 拼接的運算元：不會複製</span>
+<span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">&quot;prefix&quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span>
+</code></pre></div>
+
+<p>這些是編譯器特別辨識的模式。稍微改一下寫法就會失效：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">tmp</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span><span class="w"> </span><span class="c1">// 存進變數 → 會複製</span>
+<span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">m</span><span class="p">[</span><span class="nx">tmp</span><span class="p">]</span>
+</code></pre></div>
+
+<h3 id="真正的零複製轉換">真正的零複製轉換<a class="headerlink" href="#真正的零複製轉換" title="Permanent link">#</a></h3>
+<div class="admonition version">
+<p class="admonition-title">Go 1.20 起：<code>unsafe.String</code> 與 <code>unsafe.Slice</code></p>
+<p>在 Go 1.20 之前，零複製轉換要用 <code>reflect.SliceHeader</code> 之類的髒招，寫法脆弱且容易出錯。Go 1.20 加入了官方支援的 <code>unsafe.String</code> 與 <code>unsafe.StringData</code>。</p>
+</div>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;unsafe&quot;</span>
+<span class="p">)</span>
+
+<span class="c1">// []byte → string，零複製</span>
+<span class="c1">// 前提：呼叫後絕對不可再修改 b</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">b2s</span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="s">&quot;&quot;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">String</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">SliceData</span><span class="p">(</span><span class="nx">b</span><span class="p">),</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">b</span><span class="p">))</span>
+<span class="p">}</span>
+
+<span class="c1">// string → []byte，零複製</span>
+<span class="c1">// 前提：絕對不可修改回傳的 slice</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">s2b</span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Slice</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">StringData</span><span class="p">(</span><span class="nx">s</span><span class="p">),</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">s</span><span class="p">))</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="nb">byte</span><span class="p">(</span><span class="s">&quot;hello&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">b2s</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span><span class="w"> </span><span class="c1">// hello</span>
+
+<span class="w">    </span><span class="nx">b</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="sc">&#39;H&#39;</span><span class="w">     </span><span class="c1">// 違反前提！</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span><span class="w"> </span><span class="c1">// Hello ← 「不可變」的字串被改了</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="admonition danger">
+<p class="admonition-title">只在你能證明安全時使用</p>
+<p>上面示範的最後兩行就是它的危險之處：字串的不可變保證被打破了。如果那個字串被當成 map 的鍵、被其他 goroutine 讀取、或被存進長期結構，行為完全不可預測。</p>
+<p>合理的使用場景只有一種：<strong>在一個明確的、短暫的作用域內，你完全掌控那塊記憶體的生命週期</strong>。例如從網路讀進一塊 buffer、轉成字串做一次解析、然後 buffer 立刻歸還 pool。</p>
+<p>絕大多數程式碼<strong>不應該</strong>用這個。先量測，確定轉換真的是瓶頸，再考慮。</p>
+</div>
+<hr />
+<h2 id="實用的字串處理">實用的字串處理<a class="headerlink" href="#實用的字串處理" title="Permanent link">#</a></h2>
+<h3 id="strings-套件的高頻函式"><code>strings</code> 套件的高頻函式<a class="headerlink" href="#strings-套件的高頻函式" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;strings&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">&quot;  Hello, Go World!  &quot;</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%q\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">TrimSpace</span><span class="p">(</span><span class="nx">s</span><span class="p">))</span><span class="w">              </span><span class="c1">// &quot;Hello, Go World!&quot;</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">strings</span><span class="p">.</span><span class="nx">Contains</span><span class="p">(</span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;Go&quot;</span><span class="p">))</span><span class="w">                </span><span class="c1">// true</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">strings</span><span class="p">.</span><span class="nx">HasPrefix</span><span class="p">(</span><span class="nx">strings</span><span class="p">.</span><span class="nx">TrimSpace</span><span class="p">(</span><span class="nx">s</span><span class="p">),</span><span class="w"> </span><span class="s">&quot;Hello&quot;</span><span class="p">))</span><span class="w"> </span><span class="c1">// true</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">strings</span><span class="p">.</span><span class="nx">Split</span><span class="p">(</span><span class="s">&quot;a,b,c&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;,&quot;</span><span class="p">))</span><span class="w">              </span><span class="c1">// [a b c]</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">strings</span><span class="p">.</span><span class="nx">Join</span><span class="p">([]</span><span class="kt">string</span><span class="p">{</span><span class="s">&quot;a&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;b&quot;</span><span class="p">},</span><span class="w"> </span><span class="s">&quot;-&quot;</span><span class="p">))</span><span class="w">    </span><span class="c1">// a-b</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">strings</span><span class="p">.</span><span class="nx">ReplaceAll</span><span class="p">(</span><span class="s">&quot;aaa&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;a&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;b&quot;</span><span class="p">))</span><span class="w">      </span><span class="c1">// bbb</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">strings</span><span class="p">.</span><span class="nx">ToUpper</span><span class="p">(</span><span class="s">&quot;go&quot;</span><span class="p">))</span><span class="w">                    </span><span class="c1">// GO</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">strings</span><span class="p">.</span><span class="nx">Repeat</span><span class="p">(</span><span class="s">&quot;ab&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">))</span><span class="w">                  </span><span class="c1">// ababab</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">strings</span><span class="p">.</span><span class="nx">Fields</span><span class="p">(</span><span class="s">&quot;  a   b  c &quot;</span><span class="p">))</span><span class="w">            </span><span class="c1">// [a b c]</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">strings</span><span class="p">.</span><span class="nx">Count</span><span class="p">(</span><span class="s">&quot;cheese&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;e&quot;</span><span class="p">))</span><span class="w">             </span><span class="c1">// 3</span>
+
+<span class="w">    </span><span class="c1">// Cut：比 Split 更適合「切一次」的場景（Go 1.18+）</span>
+<span class="w">    </span><span class="nx">before</span><span class="p">,</span><span class="w"> </span><span class="nx">after</span><span class="p">,</span><span class="w"> </span><span class="nx">found</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">Cut</span><span class="p">(</span><span class="s">&quot;key=value&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;=&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">before</span><span class="p">,</span><span class="w"> </span><span class="nx">after</span><span class="p">,</span><span class="w"> </span><span class="nx">found</span><span class="p">)</span><span class="w"> </span><span class="c1">// key value true</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="admonition version">
+<p class="admonition-title">Go 1.18 的 <code>strings.Cut</code></p>
+<p>這個函式應該取代大部分 <code>strings.SplitN(s, sep, 2)</code> 的用法。它更清楚地表達意圖（切一次），回傳值也直接告訴你有沒有找到分隔符，不用檢查 slice 長度。</p>
+</div>
+<div class="admonition version">
+<p class="admonition-title">Go 1.24：<code>strings.Lines</code>、<code>SplitSeq</code> 等迭代器版本</p>
+<p>Go 1.24 為 <code>strings</code> 與 <code>bytes</code> 加入了回傳迭代器的版本，避免配置中間的 slice：</p>
+<p><code>go
+for line := range strings.Lines(text) { ... }
+for part := range strings.SplitSeq(csv, ",") { ... }
+for f := range strings.FieldsSeq(s) { ... }</code></p>
+<p>處理大文字時這能省下可觀的配置。</p>
+</div>
+<h3 id="大小寫與比較">大小寫與比較<a class="headerlink" href="#大小寫與比較" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 效率差：兩次配置</span>
+<span class="k">if</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">ToLower</span><span class="p">(</span><span class="nx">a</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">ToLower</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">// ✓ 無配置</span>
+<span class="k">if</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">EqualFold</span><span class="p">(</span><span class="nx">a</span><span class="p">,</span><span class="w"> </span><span class="nx">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+
+<p><code>EqualFold</code> 做的是 Unicode 的 case folding，比單純的小寫轉換更正確（例如土耳其文的 İ）。</p>
+<hr />
+<p>Part 2 結束。你現在知道 array、slice、map、string 在記憶體裡真正的樣子。</p>
+<p>Part 3 換個層次，看語言核心機制：函式怎麼呼叫、介面怎麼做動態分派、反射怎麼運作。</p></article><nav class='pager'><a class='prev' href='map.html'><span>上一節</span><strong>2.3 雜湊表 map</strong></a><a class='next' href='calling-convention.html'><span>下一節</span><strong>3.1 函式呼叫與呼叫慣例</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#兩個欄位不可變'>兩個欄位，不可變</a><ul><li><a href='#不可變帶來什麼'>不可變帶來什麼</a></li></ul></li><li><a href='#byte-與-rune索引與走訪的差別'>byte 與 rune：索引與走訪的差別</a><ul><li><a href='#兩種走訪兩種結果'>兩種走訪，兩種結果</a></li><li><a href='#常見錯誤反轉字串'>常見錯誤：反轉字串</a></li></ul></li><li><a href='#字串拼接的成本'>字串拼接的成本</a><ul><li><a href='#選哪一種'>選哪一種</a></li></ul></li><li><a href='#string-與-byte-的轉換'>string 與 []byte 的轉換</a><ul><li><a href='#編譯器的最佳化'>編譯器的最佳化</a></li><li><a href='#真正的零複製轉換'>真正的零複製轉換</a></li></ul></li><li><a href='#實用的字串處理'>實用的字串處理</a><ul><li><a href='#strings-套件的高頻函式'>strings 套件的高頻函式</a></li><li><a href='#大小寫與比較'>大小寫與比較</a></li></ul></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

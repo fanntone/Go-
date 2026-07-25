@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4.5 make 與 new — Go 底層原理筆記</title>
+<meta name="description" content="兩個內建函式的分工、它們各自被改寫成哪個 runtime 呼叫、零值可用的設計原則，以及 Go 1.26 對 new 的擴充。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li class='active'><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>關鍵字</p><h1><span class='h1num'>4.5</span>make 與 new</h1><p class='lede'>兩個內建函式的分工、它們各自被改寫成哪個 runtime 呼叫、零值可用的設計原則，以及 Go 1.26 對 new 的擴充。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="一句話分清楚">一句話分清楚<a class="headerlink" href="#一句話分清楚" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>new(T)</code></th>
+<th><code>make(T, ...)</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>回傳</td>
+<td><code>*T</code>（指標）</td>
+<td><code>T</code>（值本身）</td>
+</tr>
+<tr>
+<td>適用型別</td>
+<td><strong>任何型別</strong></td>
+<td>只有 slice、map、chan</td>
+</tr>
+<tr>
+<td>初始化</td>
+<td>零值</td>
+<td>建立可用的內部結構</td>
+</tr>
+</tbody>
+</table>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">new</span><span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="w">      </span><span class="c1">// *int，指向一個值為 0 的 int</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="o">*</span><span class="nx">p</span><span class="p">)</span><span class="w">    </span><span class="c1">// 0</span>
+
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">)</span><span class="w"> </span><span class="c1">// []int，長度 3</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span><span class="w">      </span><span class="c1">// [0 0 0]</span>
+
+<span class="w">    </span><span class="c1">// ✗ 編譯錯誤：cannot make int</span>
+<span class="w">    </span><span class="c1">// make(int)</span>
+
+<span class="w">    </span><span class="c1">// new 也能用在 slice，但幾乎沒用</span>
+<span class="w">    </span><span class="nx">sp</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">new</span><span class="p">([]</span><span class="kt">int</span><span class="p">)</span><span class="w">   </span><span class="c1">// *[]int，指向一個 nil slice</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="o">*</span><span class="nx">sp</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="kc">nil</span><span class="p">)</span><span class="w"> </span><span class="c1">// true</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>判斷準則：</strong>「我需要的是<strong>指標</strong>，還是一個<strong>可以直接用的容器</strong>？」</p>
+<hr />
+<h2 id="為什麼-slicemapchan-需要-make">為什麼 slice、map、chan 需要 <code>make</code><a class="headerlink" href="#為什麼-slicemapchan-需要-make" title="Permanent link">#</a></h2>
+<p>因為這三個型別的<strong>零值不可直接使用</strong>（map 與 chan），或使用範圍有限（slice）。它們都需要 runtime 先建立內部結構。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// slice 的零值是 nil，但可以 append 與 range</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">s</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span>
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="c1">// ✓</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">s</span><span class="p">))</span>
+
+<span class="w">    </span><span class="c1">// map 的零值是 nil，可以讀但不能寫</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">m</span><span class="p">[</span><span class="s">&quot;missing&quot;</span><span class="p">],</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">m</span><span class="p">))</span><span class="w"> </span><span class="c1">// ✓ 讀取回傳零值</span>
+
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;panic:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nb">recover</span><span class="p">())</span><span class="w"> </span><span class="p">}()</span>
+<span class="w">    </span><span class="nx">m</span><span class="p">[</span><span class="s">&quot;key&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="c1">// ✗ panic: assignment to entry in nil map</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>[1] 1
+0 0
+panic: assignment to entry in nil map
+</code></pre></div>
+
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// chan 的零值是 nil，讀寫都會永久阻塞</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">ch</span><span class="w"> </span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span>
+<span class="c1">// &lt;-ch    // 永久阻塞</span>
+<span class="c1">// ch &lt;- 1 // 永久阻塞</span>
+<span class="nb">close</span><span class="p">(</span><span class="nx">ch</span><span class="p">)</span><span class="w">  </span><span class="c1">// panic: close of nil channel</span>
+</code></pre></div>
+
+<h3 id="對應的-runtime-呼叫">對應的 runtime 呼叫<a class="headerlink" href="#對應的-runtime-呼叫" title="Permanent link">#</a></h3>
+<p>walk 階段的改寫（見 <a href="ssa.html#walk語法糖的終點">中間表示與 SSA</a>）：</p>
+<table>
+<thead>
+<tr>
+<th>你寫的</th>
+<th>改寫成</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>new(T)</code>（逃逸時）</td>
+<td><code>runtime.newobject(typ)</code></td>
+</tr>
+<tr>
+<td><code>new(T)</code>（不逃逸）</td>
+<td>堆疊上配置，清零</td>
+</tr>
+<tr>
+<td><code>make([]T, n, m)</code></td>
+<td><code>runtime.makeslice(typ, n, m)</code></td>
+</tr>
+<tr>
+<td><code>make(map[K]V, n)</code></td>
+<td><code>runtime.makemap(typ, n, h)</code></td>
+</tr>
+<tr>
+<td><code>make(chan T, n)</code></td>
+<td><code>runtime.makechan(typ, n)</code></td>
+</tr>
+<tr>
+<td><code>&amp;T{...}</code>（逃逸時）</td>
+<td><code>runtime.newobject</code> + 初始化</td>
+</tr>
+</tbody>
+</table>
+<p>注意 <strong><code>new(T)</code> 與 <code>&amp;T{}</code> 是等價的</strong>：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">p1</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">new</span><span class="p">(</span><span class="nx">Point</span><span class="p">)</span><span class="w">      </span><span class="c1">// 指向零值 Point</span>
+<span class="nx">p2</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Point</span><span class="p">{}</span><span class="w">        </span><span class="c1">// 完全一樣</span>
+<span class="nx">p3</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Point</span><span class="p">{</span><span class="nx">X</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">}</span><span class="w">    </span><span class="c1">// 指向已初始化的 Point</span>
+</code></pre></div>
+
+<p>實務上 <code>&amp;T{}</code> 更常用，因為它可以順便設欄位。<code>new</code> 主要用在<strong>基本型別</strong>：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">count</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">new</span><span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="w">      </span><span class="c1">// 需要一個 *int</span>
+<span class="nx">flag</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">new</span><span class="p">(</span><span class="kt">bool</span><span class="p">)</span>
+</code></pre></div>
+
+<p>不過現在更常見的寫法是：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">count</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span>
+<span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">count</span>
+</code></pre></div>
+
+<p>或用泛型輔助函式：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">Ptr</span><span class="p">[</span><span class="nx">T</span><span class="w"> </span><span class="kt">any</span><span class="p">](</span><span class="nx">v</span><span class="w"> </span><span class="nx">T</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="nx">T</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">v</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">// 設定結構常見的 *bool 欄位</span>
+<span class="nx">cfg</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">Config</span><span class="p">{</span><span class="nx">Enabled</span><span class="p">:</span><span class="w"> </span><span class="nx">Ptr</span><span class="p">(</span><span class="kc">true</span><span class="p">),</span><span class="w"> </span><span class="nx">Retries</span><span class="p">:</span><span class="w"> </span><span class="nx">Ptr</span><span class="p">(</span><span class="mi">3</span><span class="p">)}</span>
+</code></pre></div>
+
+<div class="admonition version">
+<p class="admonition-title">Go 1.26：<code>new</code> 可以接運算式</p>
+<p>Go 1.26 擴充了 <code>new</code>，讓它直接接受一個值：</p>
+<p><code>go
+p := new(int64(300))   // 等同 v := int64(300); p := &amp;v
+q := new("hello")      // *string</code></p>
+<p>這消除了「宣告變數只為了取它的位址」這種樣板程式碼，在建構含大量選用欄位（<code>*bool</code>、<code>*int</code>）的設定結構時特別方便。上面那個 <code>Ptr[T]</code> 輔助函式現在可以不用寫了。</p>
+</div>
+<hr />
+<h2 id="make-的容量參數"><code>make</code> 的容量參數<a class="headerlink" href="#make-的容量參數" title="Permanent link">#</a></h2>
+<h3 id="slice長度與容量分開">slice：長度與容量分開<a class="headerlink" href="#slice長度與容量分開" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">)</span><span class="w">     </span><span class="c1">// len=3 cap=3，內容 [0 0 0]</span>
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">)</span><span class="w">  </span><span class="c1">// len=0 cap=3，內容 []</span>
+<span class="w">    </span><span class="nx">c</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">)</span><span class="w">  </span><span class="c1">// len=2 cap=5，內容 [0 0]</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">a</span><span class="p">),</span><span class="w"> </span><span class="nb">cap</span><span class="p">(</span><span class="nx">a</span><span class="p">),</span><span class="w"> </span><span class="nx">a</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">b</span><span class="p">),</span><span class="w"> </span><span class="nb">cap</span><span class="p">(</span><span class="nx">b</span><span class="p">),</span><span class="w"> </span><span class="nx">b</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">c</span><span class="p">),</span><span class="w"> </span><span class="nb">cap</span><span class="p">(</span><span class="nx">c</span><span class="p">),</span><span class="w"> </span><span class="nx">c</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>3 3 [0 0 0]
+0 3 []
+2 5 [0 0]
+</code></pre></div>
+
+<div class="admonition danger">
+<p class="admonition-title">最常見的 make + append 錯誤</p>
+<p>```go
+// ✗ 想建一個空 slice 然後 append
+s := make([]int, 10) // 建了 10 個 0！
+for i := 0; i &lt; 10; i++ {
+    s = append(s, i) // 變成 20 個元素
+}
+fmt.Println(s) // [0 0 0 0 0 0 0 0 0 0 0 1 2 3 4 5 6 7 8 9]</p>
+<p>// ✓ 正確：長度 0、容量 10
+s := make([]int, 0, 10)
+for i := 0; i &lt; 10; i++ {
+    s = append(s, i)
+}
+fmt.Println(s) // [0 1 2 3 4 5 6 7 8 9]
+```</p>
+<p>第二個參數是<strong>長度</strong>不是容量。要預留容量得寫第三個參數。</p>
+</div>
+<h3 id="map容量是提示">map：容量是提示<a class="headerlink" href="#map容量是提示" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">1000</span><span class="p">)</span><span class="w"> </span><span class="c1">// 預先配置能裝約 1000 個元素的空間</span>
+</code></pre></div>
+
+<p>這是<strong>提示</strong>不是硬性上限，超過會自動擴張。給對數字可以避免多次分裂與搬移。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;testing&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">100000</span>
+
+<span class="w">    </span><span class="nx">r1</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">testing</span><span class="p">.</span><span class="nx">Benchmark</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">b</span><span class="p">.</span><span class="nx">ReportAllocs</span><span class="p">()</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">b</span><span class="p">.</span><span class="nx">N</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">int</span><span class="p">)</span>
+<span class="w">            </span><span class="k">for</span><span class="w"> </span><span class="nx">j</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">j</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">n</span><span class="p">;</span><span class="w"> </span><span class="nx">j</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="nx">m</span><span class="p">[</span><span class="nx">j</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">j</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="w">    </span><span class="nx">r2</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">testing</span><span class="p">.</span><span class="nx">Benchmark</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">b</span><span class="p">.</span><span class="nx">ReportAllocs</span><span class="p">()</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">b</span><span class="p">.</span><span class="nx">N</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="nx">n</span><span class="p">)</span>
+<span class="w">            </span><span class="k">for</span><span class="w"> </span><span class="nx">j</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">j</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">n</span><span class="p">;</span><span class="w"> </span><span class="nx">j</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="nx">m</span><span class="p">[</span><span class="nx">j</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">j</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;無提示:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r1</span><span class="p">,</span><span class="w"> </span><span class="nx">r1</span><span class="p">.</span><span class="nx">MemString</span><span class="p">())</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;有提示:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r2</span><span class="p">,</span><span class="w"> </span><span class="nx">r2</span><span class="p">.</span><span class="nx">MemString</span><span class="p">())</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>有提示的版本通常快 30–50%，配置次數也少很多。</p>
+<h3 id="channel緩衝大小">channel：緩衝大小<a class="headerlink" href="#channel緩衝大小" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">unbuffered</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w">    </span><span class="c1">// 無緩衝：傳送方會等到有人接收</span>
+<span class="nx">buffered</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span><span class="p">)</span><span class="w">  </span><span class="c1">// 緩衝 10：未滿時傳送不阻塞</span>
+</code></pre></div>
+
+<p>這是<strong>語意上的差別</strong>，不只是效能：</p>
+<ul>
+<li><strong>無緩衝</strong> channel 提供<strong>同步保證</strong>——傳送完成代表接收方已經拿到了。</li>
+<li><strong>有緩衝</strong> channel 是<strong>非同步佇列</strong>——傳送完成只代表資料進了佇列。</li>
+</ul>
+<p>詳見 <a href="channel.html">channel</a>。</p>
+<hr />
+<h2 id="零值可用go-的核心設計原則">零值可用：Go 的核心設計原則<a class="headerlink" href="#零值可用go-的核心設計原則" title="Permanent link">#</a></h2>
+<p>Go 鼓勵讓型別的<strong>零值就是可用狀態</strong>（zero value is useful）。這讓 <code>var x T</code> 直接就能用，不需要建構函式。</p>
+<p>標準庫的典範：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;bytes&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;strings&quot;</span>
+<span class="w">    </span><span class="s">&quot;sync&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// ✓ sync.Mutex 零值可用</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">mu</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">Mutex</span>
+<span class="w">    </span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+
+<span class="w">    </span><span class="c1">// ✓ sync.WaitGroup 零值可用</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">wg</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+<span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">defer</span><span class="w"> </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Done</span><span class="p">()</span><span class="w"> </span><span class="p">}()</span>
+<span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
+
+<span class="w">    </span><span class="c1">// ✓ bytes.Buffer 零值可用</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">buf</span><span class="w"> </span><span class="nx">bytes</span><span class="p">.</span><span class="nx">Buffer</span>
+<span class="w">    </span><span class="nx">buf</span><span class="p">.</span><span class="nx">WriteString</span><span class="p">(</span><span class="s">&quot;hello&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">buf</span><span class="p">.</span><span class="nx">String</span><span class="p">())</span>
+
+<span class="w">    </span><span class="c1">// ✓ strings.Builder 零值可用</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">sb</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">Builder</span>
+<span class="w">    </span><span class="nx">sb</span><span class="p">.</span><span class="nx">WriteString</span><span class="p">(</span><span class="s">&quot;world&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">sb</span><span class="p">.</span><span class="nx">String</span><span class="p">())</span>
+
+<span class="w">    </span><span class="c1">// ✓ sync.Once、sync.Map、sync.Pool 都是零值可用</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">once</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">Once</span>
+<span class="w">    </span><span class="nx">once</span><span class="p">.</span><span class="nx">Do</span><span class="p">(</span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;只執行一次&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">})</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="自己的型別怎麼做到">自己的型別怎麼做到<a class="headerlink" href="#自己的型別怎麼做到" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;sync&quot;</span>
+<span class="p">)</span>
+
+<span class="c1">// ✓ 零值就能用：內部 map 延後建立</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">Registry</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">mu</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">RWMutex</span>
+<span class="w">    </span><span class="nx">m</span><span class="w">  </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="w"> </span><span class="c1">// nil 也沒關係</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">Registry</span><span class="p">)</span><span class="w"> </span><span class="nx">Set</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">r</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">m</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">r</span><span class="p">.</span><span class="nx">m</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="c1">// 第一次寫入時才建立</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">r</span><span class="p">.</span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">v</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">Registry</span><span class="p">)</span><span class="w"> </span><span class="nx">Get</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">r</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RLock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RUnlock</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span><span class="w"> </span><span class="c1">// 讀 nil map 是安全的</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="nx">Registry</span><span class="w"> </span><span class="c1">// 不需要 NewRegistry()</span>
+<span class="w">    </span><span class="nx">r</span><span class="p">.</span><span class="nx">Set</span><span class="p">(</span><span class="s">&quot;a&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">r</span><span class="p">.</span><span class="nx">Get</span><span class="p">(</span><span class="s">&quot;a&quot;</span><span class="p">))</span><span class="w"> </span><span class="c1">// 1 true</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">r</span><span class="p">.</span><span class="nx">Get</span><span class="p">(</span><span class="s">&quot;b&quot;</span><span class="p">))</span><span class="w"> </span><span class="c1">// 0 false</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>這種設計讓 <code>Registry</code> 可以直接內嵌在其他 struct 裡，不用擔心初始化順序。</p>
+<h3 id="什麼時候還是需要建構函式">什麼時候還是需要建構函式<a class="headerlink" href="#什麼時候還是需要建構函式" title="Permanent link">#</a></h3>
+<p>零值可用不是萬能的。這些情況還是要寫 <code>NewXxx</code>：</p>
+<ol>
+<li><strong>需要驗證參數。</strong> <code>NewClient(addr string)</code> 應該檢查 addr 格式。</li>
+<li><strong>需要建立無法延後的資源。</strong> 例如開啟連線、啟動背景 goroutine。</li>
+<li><strong>有必填的相依。</strong> <code>NewService(db *sql.DB, logger *slog.Logger)</code>。</li>
+<li><strong>零值有意義但不是你要的預設值。</strong> 例如 timeout 的零值是 0（立刻逾時），你想要的預設是 30 秒。</li>
+</ol>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">Client</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">addr</span><span class="w">    </span><span class="kt">string</span>
+<span class="w">    </span><span class="nx">timeout</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Duration</span>
+<span class="w">    </span><span class="nx">client</span><span class="w">  </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Client</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">NewClient</span><span class="p">(</span><span class="nx">addr</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">opts</span><span class="w"> </span><span class="o">...</span><span class="nx">Option</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">Client</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">addr</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;addr 不可為空&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">c</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Client</span><span class="p">{</span>
+<span class="w">        </span><span class="nx">addr</span><span class="p">:</span><span class="w">    </span><span class="nx">addr</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">timeout</span><span class="p">:</span><span class="w"> </span><span class="mi">30</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span><span class="w"> </span><span class="c1">// 有意義的預設值</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">o</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">opts</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">o</span><span class="p">(</span><span class="nx">c</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">client</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Client</span><span class="p">{</span><span class="nx">Timeout</span><span class="p">:</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">timeout</span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">c</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hr />
+<h2 id="記憶體是怎麼配置的">記憶體是怎麼配置的<a class="headerlink" href="#記憶體是怎麼配置的" title="Permanent link">#</a></h2>
+<p><code>new</code> 與 <code>make</code> 最終都會走到記憶體配置器：</p>
+<figure class="diagram"><svg viewBox="0 0 700 250" role="img" aria-label="new 與 make 到記憶體配置器的路徑"><rect class="d-box-a" x="15" y="14" width="150" height="40" rx="5"/><text class="d-t-m d-mid" x="90" y="39">new(T) / &amp;T{}</text><rect class="d-box-a" x="185" y="14" width="150" height="40" rx="5"/><text class="d-t-m d-mid" x="260" y="39">make([]T, n)</text><rect class="d-box-a" x="355" y="14" width="150" height="40" rx="5"/><text class="d-t-m d-mid" x="430" y="39">make(map[K]V)</text><rect class="d-box-a" x="525" y="14" width="160" height="40" rx="5"/><text class="d-t-m d-mid" x="605" y="39">make(chan T, n)</text><path class="d-line" d="M90 54 L200 84" marker-end="url(#ar15)"/><path class="d-line" d="M260 54 L280 84" marker-end="url(#ar15)"/><path class="d-line" d="M430 54 L400 84" marker-end="url(#ar15)"/><path class="d-line" d="M605 54 L490 84" marker-end="url(#ar15)"/><rect class="d-box-w" x="180" y="88" width="330" height="42" rx="5"/><text class="d-t-b d-mid" x="345" y="108">runtime.mallocgc(size, typ, needzero)</text><text class="d-t-s d-mid" x="345" y="124">所有堆積配置的唯一入口</text><path class="d-line-a" d="M345 130 L345 152" marker-end="url(#ar15a)"/><rect class="d-box-o" x="120" y="156" width="450" height="62" rx="5"/><text class="d-t-b d-mid" x="345" y="178">三層記憶體配置器</text><text class="d-t-s d-mid" x="345" y="198">mcache（每個 P 一份，無鎖）→ mcentral（依 size class）→ mheap（全域）</text><text class="d-t-s d-mid" x="345" y="212">小於 16 位元組且無指標 → tiny allocator 合併配置</text><defs><marker id="ar15" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--line-strong)"/></marker><marker id="ar15a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--accent)"/></marker></defs><text class="d-t-s" x="15" y="240">如果逃逸分析判定不逃逸，這整條路徑都不會走 —— 直接在堆疊上配置。</text></svg><figcaption><b>統一的配置入口。</b>不管你寫 <code>new</code>、<code>make</code> 還是複合字面值，逃逸的配置最後都走 <code>mallocgc</code>。詳細機制見 <a href="allocator.html">記憶體配置器</a>。</figcaption></figure>
+
+<p><strong>最重要的一點：如果編譯器證明不逃逸，這些呼叫根本不會發生。</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">stackAlloc</span><span class="p">()</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">new</span><span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="c1">// 不逃逸 → 就在堆疊上，不呼叫 newobject</span>
+<span class="w">    </span><span class="o">*</span><span class="nx">p</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">42</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="o">*</span><span class="nx">p</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">heapAlloc</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">new</span><span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="c1">// 逃逸 → runtime.newobject</span>
+<span class="w">    </span><span class="o">*</span><span class="nx">p</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">42</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">p</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nb">println</span><span class="p">(</span><span class="nx">stackAlloc</span><span class="p">())</span>
+<span class="w">    </span><span class="nb">println</span><span class="p">(</span><span class="o">*</span><span class="nx">heapAlloc</span><span class="p">())</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m&quot;</span><span class="w"> </span>./main.go
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>./main.go:4:10: new(int) does not escape
+./main.go:10:10: new(int) escapes to heap
+</code></pre></div>
+
+<hr />
+<p>Part 4 到此結束。你已經看過那些「看起來像語法糖、其實是 runtime 呼叫」的關鍵字。</p>
+<p>Part 5 進入 Go 最有特色的部分：並行。從 <code>context</code> 開始，一路走到 GMP 排程器。</p></article><nav class='pager'><a class='prev' href='panic.html'><span>上一節</span><strong>4.4 panic 與 recover</strong></a><a class='next' href='context.html'><span>下一節</span><strong>5.1 context</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#一句話分清楚'>一句話分清楚</a></li><li><a href='#為什麼-slicemapchan-需要-make'>為什麼 slice、map、chan 需要 make</a><ul><li><a href='#對應的-runtime-呼叫'>對應的 runtime 呼叫</a></li></ul></li><li><a href='#make-的容量參數'>make 的容量參數</a><ul><li><a href='#slice長度與容量分開'>slice：長度與容量分開</a></li><li><a href='#map容量是提示'>map：容量是提示</a></li><li><a href='#channel緩衝大小'>channel：緩衝大小</a></li></ul></li><li><a href='#零值可用go-的核心設計原則'>零值可用：Go 的核心設計原則</a><ul><li><a href='#自己的型別怎麼做到'>自己的型別怎麼做到</a></li><li><a href='#什麼時候還是需要建構函式'>什麼時候還是需要建構函式</a></li></ul></li><li><a href='#記憶體是怎麼配置的'>記憶體是怎麼配置的</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

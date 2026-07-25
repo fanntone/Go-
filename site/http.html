@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7.2 net/http — Go 底層原理筆記</title>
+<meta name="description" content="伺服器的每連線一 goroutine 模型、ServeMux 的路由（含 1.22 的新語法）、Transport 的連線池，以及必設的逾時。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li class='active'><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>標準函式庫與進階主題</p><h1><span class='h1num'>7.2</span>net/http</h1><p class='lede'>伺服器的每連線一 goroutine 模型、ServeMux 的路由（含 1.22 的新語法）、Transport 的連線池，以及必設的逾時。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="伺服器每連線一個-goroutine">伺服器：每連線一個 goroutine<a class="headerlink" href="#伺服器每連線一個-goroutine" title="Permanent link">#</a></h2>
+<p><code>net/http</code> 的伺服器模型非常簡單直白：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>ListenAndServe():
+    ln := net.Listen(&quot;tcp&quot;, addr)
+    for {
+        conn := ln.Accept()
+        go serve(conn)      ← 每條連線開一個 goroutine
+    }
+
+serve(conn):
+    for {                   ← keep-alive：同一條連線可處理多個請求
+        req := readRequest(conn)
+        handler.ServeHTTP(w, req)
+        if 不能 keep-alive { break }
+    }
+    conn.Close()
+</code></pre></div>
+
+<p>在其他語言裡，「每連線一執行緒」是眾所周知的反模式（C10K 問題）。在 Go 裡它可行，因為：</p>
+<ol>
+<li><strong>goroutine 便宜</strong> —— 2 KB 起跳，不是 8 MB。</li>
+<li><strong>netpoller 讓阻塞的讀寫不佔用執行緒</strong> —— 見 <a href="netpoller.html">網路輪詢器</a>。</li>
+</ol>
+<p>結果是：你可以用最直覺的同步寫法，得到事件驅動架構的效能。</p>
+<div class="admonition warning">
+<p class="admonition-title">但這不代表沒有上限</p>
+<p>每條連線至少消耗：
+- 一個 goroutine（2 KB 起，實際常到 8–16 KB）
+- 讀寫緩衝區（<code>bufio.Reader</code> 4 KB + <code>bufio.Writer</code> 4 KB）
+- <code>http.Request</code> 與相關結構</p>
+<p><strong>實務上每條閒置連線約 10–30 KB。</strong> 十萬條連線就是 1–3 GB。高連線數的服務仍然需要限流：</p>
+<p>```go
+import "golang.org/x/net/netutil"</p>
+<p>ln, _ := net.Listen("tcp", ":8080")
+ln = netutil.LimitListener(ln, 10000) // 超過就不 accept
+srv.Serve(ln)
+```</p>
+</div>
+<hr />
+<h2 id="逾時唯一最重要的設定">逾時：唯一最重要的設定<a class="headerlink" href="#逾時唯一最重要的設定" title="Permanent link">#</a></h2>
+<p><strong>預設的 <code>http.Server</code> 沒有任何逾時。</strong> 這是 Go 標準庫少數會讓人踩雷的預設值。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;net/http&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">mux</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">NewServeMux</span><span class="p">()</span>
+
+<span class="w">    </span><span class="nx">srv</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Server</span><span class="p">{</span>
+<span class="w">        </span><span class="nx">Addr</span><span class="p">:</span><span class="w">    </span><span class="s">&quot;:8080&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">Handler</span><span class="p">:</span><span class="w"> </span><span class="nx">mux</span><span class="p">,</span>
+
+<span class="w">        </span><span class="c1">// 讀取請求標頭的最長時間 —— 防 Slowloris 攻擊</span>
+<span class="w">        </span><span class="nx">ReadHeaderTimeout</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+
+<span class="w">        </span><span class="c1">// 讀完整個請求（含 body）的最長時間</span>
+<span class="w">        </span><span class="nx">ReadTimeout</span><span class="p">:</span><span class="w"> </span><span class="mi">30</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+
+<span class="w">        </span><span class="c1">// 從讀完標頭到寫完回應的最長時間</span>
+<span class="w">        </span><span class="nx">WriteTimeout</span><span class="p">:</span><span class="w"> </span><span class="mi">30</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+
+<span class="w">        </span><span class="c1">// keep-alive 連線的閒置上限</span>
+<span class="w">        </span><span class="nx">IdleTimeout</span><span class="p">:</span><span class="w"> </span><span class="mi">120</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+
+<span class="w">        </span><span class="c1">// 標頭大小上限（預設 1 MB）</span>
+<span class="w">        </span><span class="nx">MaxHeaderBytes</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">20</span><span class="p">,</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">srv</span><span class="p">.</span><span class="nx">ListenAndServe</span><span class="p">()</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<figure class="diagram"><svg viewBox="0 0 700 250" role="img" aria-label="HTTP 伺服器各項逾時涵蓋的階段"><text class="d-t-b" x="15" y="20">一次請求的生命週期</text><rect class="d-box" x="15" y="32" width="120" height="32" rx="4"/><text class="d-t-s d-mid" x="75" y="52">建立連線</text><rect class="d-box-d" x="135" y="32" width="130" height="32" rx="4"/><text class="d-t-s d-mid" x="200" y="52">讀取標頭</text><rect class="d-box-w" x="265" y="32" width="130" height="32" rx="4"/><text class="d-t-s d-mid" x="330" y="52">讀取 body</text><rect class="d-box-a" x="395" y="32" width="150" height="32" rx="4"/><text class="d-t-s d-mid" x="470" y="52">handler 執行</text><rect class="d-box-o" x="545" y="32" width="140" height="32" rx="4"/><text class="d-t-s d-mid" x="615" y="52">寫出回應</text><line class="d-line-a" x1="135" y1="80" x2="265" y2="80"/><text class="d-t-a" x="140" y="98">ReadHeaderTimeout</text><line class="d-line-a" x1="135" y1="116" x2="395" y2="116"/><text class="d-t-a" x="140" y="134">ReadTimeout（含標頭與 body）</text><line class="d-line-a" x1="265" y1="152" x2="685" y2="152"/><text class="d-t-a" x="270" y="170">WriteTimeout（從讀完標頭算起，涵蓋 handler 與寫出）</text><line class="d-dash" x1="15" y1="188" x2="685" y2="188"/><text class="d-t-s" x="15" y="210">IdleTimeout：keep-alive 連線在兩次請求之間可以閒置多久。沒設的話會沿用 ReadTimeout。</text><text class="d-t-s" x="15" y="232">注意 WriteTimeout 涵蓋 handler 的執行時間 —— 慢的 handler 會讓回應被截斷，而且客戶端只看到連線中斷。</text></svg><figcaption><b>四種逾時的涵蓋範圍。</b><code>ReadHeaderTimeout</code> 最關鍵：沒有它，攻擊者用極慢的速度送標頭就能無限期佔住一個 goroutine 與一條連線（Slowloris 攻擊）。</figcaption></figure>
+
+<div class="admonition danger">
+<p class="admonition-title"><code>WriteTimeout</code> 與長時間的 handler</p>
+<p><code>WriteTimeout</code> 包含 handler 的執行時間。如果你有需要跑 5 分鐘的 handler（大檔案下載、SSE、長輪詢），設 30 秒的 <code>WriteTimeout</code> 會讓它被截斷。</p>
+<p>對這類 endpoint 的解法：</p>
+<p>```go
+// 方法一：整個伺服器不設 WriteTimeout，改在每個 handler 用 context 控制
+srv := &amp;http.Server{
+    ReadHeaderTimeout: 5 * time.Second,
+    // 不設 WriteTimeout
+}</p>
+<p>func normalHandler(w http.ResponseWriter, r <em>http.Request) {
+    ctx, cancel := context.WithTimeout(r.Context(), 30</em>time.Second)
+    defer cancel()
+    doWork(ctx)
+}</p>
+<p>// 方法二：用 http.TimeoutHandler 包裝需要限制的路由
+mux.Handle("/api/", http.TimeoutHandler(apiHandler, 30*time.Second, "timeout"))
+```</p>
+</div>
+<hr />
+<h2 id="servemux-的路由">ServeMux 的路由<a class="headerlink" href="#servemux-的路由" title="Permanent link">#</a></h2>
+<div class="admonition version">
+<p class="admonition-title">Go 1.22：ServeMux 支援方法與路徑參數</p>
+<p>這是標準庫路由多年來最大的一次升級。Go 1.22 之前，<code>http.ServeMux</code> 只支援前綴比對，沒有方法區分、沒有路徑參數——所以幾乎每個專案都要引入 <code>chi</code>、<code>gorilla/mux</code> 之類的第三方路由器。</p>
+<p>Go 1.22 起，標準庫就夠用了。</p>
+</div>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;net/http&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">mux</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">NewServeMux</span><span class="p">()</span>
+
+<span class="w">    </span><span class="c1">// 方法 + 路徑參數</span>
+<span class="w">    </span><span class="nx">mux</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;GET /users/{id}&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">id</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">PathValue</span><span class="p">(</span><span class="s">&quot;id&quot;</span><span class="p">)</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Fprintf</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;取得使用者 %s&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">)</span>
+<span class="w">    </span><span class="p">})</span>
+
+<span class="w">    </span><span class="nx">mux</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;POST /users&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Fprintln</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;建立使用者&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">})</span>
+
+<span class="w">    </span><span class="nx">mux</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;DELETE /users/{id}&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Fprintf</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;刪除使用者 %s&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">PathValue</span><span class="p">(</span><span class="s">&quot;id&quot;</span><span class="p">))</span>
+<span class="w">    </span><span class="p">})</span>
+
+<span class="w">    </span><span class="c1">// 萬用尾綴：{path...} 會匹配剩下的所有路徑段</span>
+<span class="w">    </span><span class="nx">mux</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;GET /files/{path...}&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Fprintf</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;檔案路徑: %s&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">PathValue</span><span class="p">(</span><span class="s">&quot;path&quot;</span><span class="p">))</span>
+<span class="w">    </span><span class="p">})</span>
+
+<span class="w">    </span><span class="c1">// 結尾的 {$} 表示「精確匹配」，不會匹配子路徑</span>
+<span class="w">    </span><span class="nx">mux</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;GET /{$}&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Fprintln</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;首頁&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">})</span>
+
+<span class="w">    </span><span class="c1">// 主機名比對</span>
+<span class="w">    </span><span class="nx">mux</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;api.example.com/health&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Fprintln</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ok&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">})</span>
+
+<span class="w">    </span><span class="nx">http</span><span class="p">.</span><span class="nx">ListenAndServe</span><span class="p">(</span><span class="s">&quot;:8080&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">mux</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="模式語法">模式語法<a class="headerlink" href="#模式語法" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>意義</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/users</code></td>
+<td>精確路徑（會匹配 <code>/users</code> 與重導 <code>/users/</code>）</td>
+</tr>
+<tr>
+<td><code>/users/</code></td>
+<td>前綴，匹配 <code>/users/</code> 底下所有路徑</td>
+</tr>
+<tr>
+<td><code>/users/{$}</code></td>
+<td><strong>只</strong>匹配 <code>/users/</code>，不匹配子路徑</td>
+</tr>
+<tr>
+<td><code>GET /users</code></td>
+<td>限定 HTTP 方法</td>
+</tr>
+<tr>
+<td><code>/users/{id}</code></td>
+<td>單一路徑段的參數，用 <code>r.PathValue("id")</code> 取得</td>
+</tr>
+<tr>
+<td><code>/files/{path...}</code></td>
+<td>匹配剩餘的所有路徑段</td>
+</tr>
+<tr>
+<td><code>example.com/x</code></td>
+<td>限定主機名</td>
+</tr>
+</tbody>
+</table>
+<h3 id="優先順序規則">優先順序規則<a class="headerlink" href="#優先順序規則" title="Permanent link">#</a></h3>
+<p><strong>最具體的模式勝出</strong>，跟註冊順序無關：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>/users/{id}/posts   比  /users/{id}/   更具體  → 前者勝
+GET /users/{id}     比  /users/{id}    更具體  → 前者勝
+/users/admin        比  /users/{id}    更具體  → 前者勝
+</code></pre></div>
+
+<p>如果兩個模式互相衝突（誰也不比誰具體），<code>ServeMux</code> 會在註冊時 <strong>panic</strong>——在啟動時就發現問題，而不是執行期才出現奇怪的行為。</p>
+<div class="admonition tip">
+<p class="admonition-title">還需要第三方路由器嗎</p>
+<p>Go 1.22 之後，大部分專案不需要了。仍然值得考慮第三方的情況：</p>
+<ul>
+<li>需要<strong>路由群組</strong>與<strong>群組層級的中介層</strong>（<code>chi</code> 的 <code>r.Route</code> / <code>r.Use</code>）</li>
+<li>需要正規表示式約束（<code>/users/{id:[0-9]+}</code>）</li>
+<li>需要極致的路由效能（<code>httprouter</code> 的 radix tree）</li>
+<li>已有大量既存程式碼</li>
+</ul>
+<p>純標準庫加上自己寫的中介層鏈，對多數服務已經綽綽有餘。</p>
+</div>
+<hr />
+<h2 id="中介層">中介層<a class="headerlink" href="#中介層" title="Permanent link">#</a></h2>
+<p>Go 沒有內建的中介層機制，但 <code>http.Handler</code> 介面讓它變得非常自然：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;log/slog&quot;</span>
+<span class="w">    </span><span class="s">&quot;net/http&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Middleware</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">http</span><span class="p">.</span><span class="nx">Handler</span><span class="p">)</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">Handler</span>
+
+<span class="c1">// 串接多個中介層：Chain(a, b, c)(h) 等於 a(b(c(h)))</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">Chain</span><span class="p">(</span><span class="nx">mws</span><span class="w"> </span><span class="o">...</span><span class="nx">Middleware</span><span class="p">)</span><span class="w"> </span><span class="nx">Middleware</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">next</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">Handler</span><span class="p">)</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">Handler</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">mws</span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">--</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">next</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">mws</span><span class="p">[</span><span class="nx">i</span><span class="p">](</span><span class="nx">next</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">next</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="c1">// 需要包裝 ResponseWriter 才能取得 status code</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">statusWriter</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span>
+<span class="w">    </span><span class="nx">status</span><span class="w"> </span><span class="kt">int</span>
+<span class="w">    </span><span class="nx">bytes</span><span class="w">  </span><span class="kt">int</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="o">*</span><span class="nx">statusWriter</span><span class="p">)</span><span class="w"> </span><span class="nx">WriteHeader</span><span class="p">(</span><span class="nx">code</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">w</span><span class="p">.</span><span class="nx">status</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">code</span>
+<span class="w">    </span><span class="nx">w</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">.</span><span class="nx">WriteHeader</span><span class="p">(</span><span class="nx">code</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="o">*</span><span class="nx">statusWriter</span><span class="p">)</span><span class="w"> </span><span class="nx">Write</span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">w</span><span class="p">.</span><span class="nx">status</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">w</span><span class="p">.</span><span class="nx">status</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">StatusOK</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">n</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">w</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">.</span><span class="nx">Write</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">w</span><span class="p">.</span><span class="nx">bytes</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="nx">n</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">n</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">Logging</span><span class="p">(</span><span class="nx">next</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">Handler</span><span class="p">)</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">Handler</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">HandlerFunc</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">start</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Now</span><span class="p">()</span>
+<span class="w">        </span><span class="nx">sw</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">statusWriter</span><span class="p">{</span><span class="nx">ResponseWriter</span><span class="p">:</span><span class="w"> </span><span class="nx">w</span><span class="p">}</span>
+
+<span class="w">        </span><span class="nx">next</span><span class="p">.</span><span class="nx">ServeHTTP</span><span class="p">(</span><span class="nx">sw</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">)</span>
+
+<span class="w">        </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Info</span><span class="p">(</span><span class="s">&quot;request&quot;</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&quot;method&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">Method</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&quot;path&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">URL</span><span class="p">.</span><span class="nx">Path</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&quot;status&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">sw</span><span class="p">.</span><span class="nx">status</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&quot;bytes&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">sw</span><span class="p">.</span><span class="nx">bytes</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&quot;duration&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Since</span><span class="p">(</span><span class="nx">start</span><span class="p">),</span>
+<span class="w">        </span><span class="p">)</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">mux</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">NewServeMux</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">mux</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;GET /hello&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">w</span><span class="p">.</span><span class="nx">Write</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="s">&quot;hi&quot;</span><span class="p">))</span>
+<span class="w">    </span><span class="p">})</span>
+
+<span class="w">    </span><span class="nx">handler</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">Chain</span><span class="p">(</span><span class="nx">Logging</span><span class="p">)(</span><span class="nx">mux</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">http</span><span class="p">.</span><span class="nx">ListenAndServe</span><span class="p">(</span><span class="s">&quot;:8080&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">handler</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="admonition danger">
+<p class="admonition-title">包裝 ResponseWriter 會弄丟可選介面</p>
+<p><code>http.ResponseWriter</code> 的實作還會滿足 <code>http.Flusher</code>、<code>http.Hijacker</code>、<code>io.ReaderFrom</code> 等介面。你的 <code>statusWriter</code> 只嵌入了 <code>ResponseWriter</code>，這些額外介面就消失了——SSE（需要 <code>Flush</code>）、WebSocket 升級（需要 <code>Hijack</code>）都會壞掉。</p>
+<p><strong>解法：用 <code>http.NewResponseController</code>（Go 1.20+）。</strong></p>
+<p><code>go
+rc := http.NewResponseController(w)
+rc.Flush()                                   // 會穿透包裝層找到真正的 Flusher
+rc.SetWriteDeadline(time.Now().Add(time.Minute))</code></p>
+<p>它會沿著 <code>Unwrap() http.ResponseWriter</code> 方法鏈往下找。所以你的包裝型別應該提供：</p>
+<p><code>go
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }</code></p>
+</div>
+<hr />
+<h2 id="客戶端transport-與連線池">客戶端：Transport 與連線池<a class="headerlink" href="#客戶端transport-與連線池" title="Permanent link">#</a></h2>
+<p><code>http.Client</code> 是薄薄一層，真正做事的是 <code>http.Transport</code>——它管理連線池、TLS 握手、HTTP/2 升級。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;net&quot;</span>
+<span class="w">    </span><span class="s">&quot;net/http&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">var</span><span class="w"> </span><span class="nx">client</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Client</span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Timeout</span><span class="p">:</span><span class="w"> </span><span class="mi">10</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span><span class="w"> </span><span class="c1">// 涵蓋整個請求：連線 + 送出 + 讀完 body</span>
+
+<span class="w">    </span><span class="nx">Transport</span><span class="p">:</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Transport</span><span class="p">{</span>
+<span class="w">        </span><span class="nx">DialContext</span><span class="p">:</span><span class="w"> </span><span class="p">(</span><span class="o">&amp;</span><span class="nx">net</span><span class="p">.</span><span class="nx">Dialer</span><span class="p">{</span>
+<span class="w">            </span><span class="nx">Timeout</span><span class="p">:</span><span class="w">   </span><span class="mi">3</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span><span class="w">  </span><span class="c1">// 建立 TCP 連線</span>
+<span class="w">            </span><span class="nx">KeepAlive</span><span class="p">:</span><span class="w"> </span><span class="mi">30</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span><span class="w"> </span><span class="c1">// TCP keep-alive 探測</span>
+<span class="w">        </span><span class="p">}).</span><span class="nx">DialContext</span><span class="p">,</span>
+
+<span class="w">        </span><span class="nx">TLSHandshakeTimeout</span><span class="p">:</span><span class="w">   </span><span class="mi">5</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">ResponseHeaderTimeout</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">ExpectContinueTimeout</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+
+<span class="w">        </span><span class="nx">MaxIdleConns</span><span class="p">:</span><span class="w">        </span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="c1">// 全部主機加起來的閒置連線上限</span>
+<span class="w">        </span><span class="nx">MaxIdleConnsPerHost</span><span class="p">:</span><span class="w"> </span><span class="mi">10</span><span class="p">,</span><span class="w">  </span><span class="c1">// 每個主機的閒置連線上限（預設只有 2！）</span>
+<span class="w">        </span><span class="nx">MaxConnsPerHost</span><span class="p">:</span><span class="w">     </span><span class="mi">50</span><span class="p">,</span><span class="w">  </span><span class="c1">// 每個主機的總連線上限（0 = 無限）</span>
+<span class="w">        </span><span class="nx">IdleConnTimeout</span><span class="p">:</span><span class="w">     </span><span class="mi">90</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+
+<span class="w">        </span><span class="nx">ForceAttemptHTTP2</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="兩個最常見的效能問題">兩個最常見的效能問題<a class="headerlink" href="#兩個最常見的效能問題" title="Permanent link">#</a></h3>
+<p><strong>① <code>MaxIdleConnsPerHost</code> 預設只有 2</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// 預設值</span>
+<span class="nx">DefaultMaxIdleConnsPerHost</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">2</span>
+</code></pre></div>
+
+<p>如果你的服務高頻呼叫同一個下游 API，只有 2 條連線能被重用，其餘的每次都要重新建立（TCP 三次握手 + TLS 握手）。<strong>這是 Go 微服務最常見的效能陷阱之一。</strong></p>
+<p>呼叫同一個後端時，把它調到跟你的並行度相當：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">MaxIdleConnsPerHost</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span>
+</code></pre></div>
+
+<p><strong>② 每次請求都建立新的 Client 或 Transport</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 每次都新的 Transport → 連線池完全沒作用，還會累積 TIME_WAIT</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">fetch</span><span class="p">(</span><span class="nx">url</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">client</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Client</span><span class="p">{</span><span class="nx">Transport</span><span class="p">:</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Transport</span><span class="p">{}}</span>
+<span class="w">    </span><span class="nx">client</span><span class="p">.</span><span class="nx">Get</span><span class="p">(</span><span class="nx">url</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ 全域共用一個</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">client</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Client</span><span class="p">{</span><span class="w"> </span><span class="cm">/* ... */</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+
+<p><code>http.Client</code> 與 <code>http.Transport</code> 都是<strong>並行安全</strong>的，設計上就是要被共用。</p>
+<div class="admonition danger">
+<p class="admonition-title">必須讀完並關閉 response body</p>
+<p>```go
+resp, err := client.Get(url)
+if err != nil {
+    return err
+}
+defer resp.Body.Close()</p>
+<p>// 就算不需要內容，也要讀完
+io.Copy(io.Discard, resp.Body)
+```</p>
+<p><strong>只 <code>Close</code> 而不讀完，連線不會回到池子裡</strong>——它會被直接關掉。在高頻呼叫下，這等於連線池完全失效，而且會累積大量 TIME_WAIT 狀態的連線，可能耗盡本地埠號。</p>
+<p>這是 Go 客戶端程式碼最常見的 bug。</p>
+</div>
+<h3 id="一定要傳-context">一定要傳 context<a class="headerlink" href="#一定要傳-context" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">fetch</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">url</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">req</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">NewRequestWithContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">MethodGet</span><span class="p">,</span><span class="w"> </span><span class="nx">url</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">resp</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">client</span><span class="p">.</span><span class="nx">Do</span><span class="p">(</span><span class="nx">req</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">resp</span><span class="p">.</span><span class="nx">Body</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">resp</span><span class="p">.</span><span class="nx">StatusCode</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">StatusOK</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">io</span><span class="p">.</span><span class="nx">Copy</span><span class="p">(</span><span class="nx">io</span><span class="p">.</span><span class="nx">Discard</span><span class="p">,</span><span class="w"> </span><span class="nx">resp</span><span class="p">.</span><span class="nx">Body</span><span class="p">)</span><span class="w"> </span><span class="c1">// 仍要讀完</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;非預期的狀態碼: %d&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">resp</span><span class="p">.</span><span class="nx">StatusCode</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">io</span><span class="p">.</span><span class="nx">ReadAll</span><span class="p">(</span><span class="nx">io</span><span class="p">.</span><span class="nx">LimitReader</span><span class="p">(</span><span class="nx">resp</span><span class="p">.</span><span class="nx">Body</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span><span class="o">&lt;&lt;</span><span class="mi">20</span><span class="p">))</span><span class="w"> </span><span class="c1">// 限制大小，防惡意的巨大回應</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>三個重點：<code>NewRequestWithContext</code> 讓請求可被取消、非 2xx 也要讀完 body、用 <code>io.LimitReader</code> 防止記憶體被打爆。</p>
+<hr />
+<h2 id="優雅關閉">優雅關閉<a class="headerlink" href="#優雅關閉" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;context&quot;</span>
+<span class="w">    </span><span class="s">&quot;errors&quot;</span>
+<span class="w">    </span><span class="s">&quot;log/slog&quot;</span>
+<span class="w">    </span><span class="s">&quot;net/http&quot;</span>
+<span class="w">    </span><span class="s">&quot;os&quot;</span>
+<span class="w">    </span><span class="s">&quot;os/signal&quot;</span>
+<span class="w">    </span><span class="s">&quot;syscall&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">mux</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">NewServeMux</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">mux</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;GET /health&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">w</span><span class="p">.</span><span class="nx">Write</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="s">&quot;ok&quot;</span><span class="p">))</span>
+<span class="w">    </span><span class="p">})</span>
+
+<span class="w">    </span><span class="nx">srv</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Server</span><span class="p">{</span>
+<span class="w">        </span><span class="nx">Addr</span><span class="p">:</span><span class="w">              </span><span class="s">&quot;:8080&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">Handler</span><span class="p">:</span><span class="w">           </span><span class="nx">mux</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">ReadHeaderTimeout</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">IdleTimeout</span><span class="p">:</span><span class="w">       </span><span class="mi">120</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 在背景啟動</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">srv</span><span class="p">.</span><span class="nx">ListenAndServe</span><span class="p">();</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="p">!</span><span class="nx">errors</span><span class="p">.</span><span class="nx">Is</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ErrServerClosed</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Error</span><span class="p">(</span><span class="s">&quot;listen failed&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;err&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span>
+<span class="w">            </span><span class="nx">os</span><span class="p">.</span><span class="nx">Exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}()</span>
+<span class="w">    </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Info</span><span class="p">(</span><span class="s">&quot;伺服器啟動&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;addr&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">srv</span><span class="p">.</span><span class="nx">Addr</span><span class="p">)</span>
+
+<span class="w">    </span><span class="c1">// 等待中斷訊號</span>
+<span class="w">    </span><span class="nx">stop</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">Signal</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">signal</span><span class="p">.</span><span class="nx">Notify</span><span class="p">(</span><span class="nx">stop</span><span class="p">,</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">Interrupt</span><span class="p">,</span><span class="w"> </span><span class="nx">syscall</span><span class="p">.</span><span class="nx">SIGTERM</span><span class="p">)</span>
+<span class="w">    </span><span class="o">&lt;-</span><span class="nx">stop</span>
+
+<span class="w">    </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Info</span><span class="p">(</span><span class="s">&quot;開始優雅關閉…&quot;</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithTimeout</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nx">Background</span><span class="p">(),</span><span class="w"> </span><span class="mi">30</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">cancel</span><span class="p">()</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">srv</span><span class="p">.</span><span class="nx">Shutdown</span><span class="p">(</span><span class="nx">ctx</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Error</span><span class="p">(</span><span class="s">&quot;強制關閉&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;err&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span>
+<span class="w">        </span><span class="nx">srv</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Info</span><span class="p">(</span><span class="s">&quot;已關閉&quot;</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><code>Shutdown</code> 做的事：</p>
+<ol>
+<li>停止接受新連線</li>
+<li>關閉所有閒置的 keep-alive 連線</li>
+<li>等待進行中的請求完成（或 context 逾時）</li>
+</ol>
+<div class="admonition warning">
+<p class="admonition-title"><code>Shutdown</code> 不會等 hijack 的連線與背景 goroutine</p>
+<p>WebSocket（hijack）連線與你在 handler 裡開的背景 goroutine，<code>Shutdown</code> 都管不到。這些要自己用 <code>sync.WaitGroup</code> 或 context 追蹤。</p>
+<p>也記得 <code>signal.Notify</code> 的 channel <strong>必須有緩衝</strong>（至少 1）。無緩衝的話，訊號送達時如果沒人在接收，會被直接丟棄。</p>
+</div>
+<hr />
+<h2 id="http2-與-http3">HTTP/2 與 HTTP/3<a class="headerlink" href="#http2-與-http3" title="Permanent link">#</a></h2>
+<p><strong>HTTP/2 是預設開啟的</strong>（僅限 HTTPS）。<code>net/http</code> 會在 TLS 握手時透過 ALPN 協商，成功就自動用 HTTP/2。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// 想關掉 HTTP/2</span>
+<span class="nx">tr</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Transport</span><span class="p">{</span>
+<span class="w">    </span><span class="nx">TLSNextProto</span><span class="p">:</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kd">func</span><span class="p">(</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="nx">tls</span><span class="p">.</span><span class="nx">Conn</span><span class="p">)</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">RoundTripper</span><span class="p">{},</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>觀察實際使用的版本：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">resp</span><span class="p">.</span><span class="nx">Proto</span><span class="p">)</span><span class="w"> </span><span class="c1">// HTTP/2.0 或 HTTP/1.1</span>
+</code></pre></div>
+
+<p><strong>HTTP/3（QUIC）目前不在標準庫裡</strong>，需要用 <code>github.com/quic-go/quic-go</code>。</p>
+<hr />
+<h2 id="檢查清單">檢查清單<a class="headerlink" href="#檢查清單" title="Permanent link">#</a></h2>
+<p>上線前對照這張表：</p>
+<table>
+<thead>
+<tr>
+<th>項目</th>
+<th>為什麼</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>✓ <code>ReadHeaderTimeout</code> 有設</td>
+<td>防 Slowloris</td>
+</tr>
+<tr>
+<td>✓ <code>IdleTimeout</code> 有設</td>
+<td>回收閒置連線</td>
+</tr>
+<tr>
+<td>✓ 有 recover 中介層</td>
+<td>一個 panic 不該弄垮整個服務</td>
+</tr>
+<tr>
+<td>✓ 客戶端共用 <code>http.Client</code></td>
+<td>連線池才有效</td>
+</tr>
+<tr>
+<td>✓ <code>MaxIdleConnsPerHost</code> 有調大</td>
+<td>預設 2 太小</td>
+</tr>
+<tr>
+<td>✓ response body 一律讀完並 Close</td>
+<td>連線才能重用</td>
+</tr>
+<tr>
+<td>✓ 請求都帶 context</td>
+<td>可取消、可逾時</td>
+</tr>
+<tr>
+<td>✓ 讀取 body 有大小限制</td>
+<td><code>http.MaxBytesReader</code> 或 <code>io.LimitReader</code></td>
+</tr>
+<tr>
+<td>✓ 有優雅關閉</td>
+<td>部署時不中斷進行中的請求</td>
+</tr>
+<tr>
+<td>✓ pprof 只綁 localhost</td>
+<td>不要暴露內部狀態</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<p>下一節談 <code>database/sql</code>：連線池、prepared statement 與那些容易漏掉的 <code>Close</code>。</p></article><nav class='pager'><a class='prev' href='json.html'><span>上一節</span><strong>7.1 encoding/json</strong></a><a class='next' href='database.html'><span>下一節</span><strong>7.3 database/sql</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#伺服器每連線一個-goroutine'>伺服器：每連線一個 goroutine</a></li><li><a href='#逾時唯一最重要的設定'>逾時：唯一最重要的設定</a></li><li><a href='#servemux-的路由'>ServeMux 的路由</a><ul><li><a href='#模式語法'>模式語法</a></li><li><a href='#優先順序規則'>優先順序規則</a></li></ul></li><li><a href='#中介層'>中介層</a></li><li><a href='#客戶端transport-與連線池'>客戶端：Transport 與連線池</a><ul><li><a href='#兩個最常見的效能問題'>兩個最常見的效能問題</a></li><li><a href='#一定要傳-context'>一定要傳 context</a></li></ul></li><li><a href='#優雅關閉'>優雅關閉</a></li><li><a href='#http2-與-http3'>HTTP/2 與 HTTP/3</a></li><li><a href='#檢查清單'>檢查清單</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

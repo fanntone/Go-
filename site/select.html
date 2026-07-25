@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4.2 select — Go 底層原理筆記</title>
+<meta name="description" content="selectgo 的四步驟、隨機選擇為什麼是必要的、空 select 與 default 的特殊處理，以及常見的 select 慣用寫法。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li class='active'><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>關鍵字</p><h1><span class='h1num'>4.2</span>select</h1><p class='lede'>selectgo 的四步驟、隨機選擇為什麼是必要的、空 select 與 default 的特殊處理，以及常見的 select 慣用寫法。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="select-做什麼">select 做什麼<a class="headerlink" href="#select-做什麼" title="Permanent link">#</a></h2>
+<p><code>select</code> 讓一個 goroutine 同時等待多個 channel 操作，哪個先就緒就執行哪個。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">fast</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">slow</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span>
+
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="mi">10</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">);</span><span class="w"> </span><span class="nx">fast</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="s">&quot;快的&quot;</span><span class="w"> </span><span class="p">}()</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="mi">100</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">);</span><span class="w"> </span><span class="nx">slow</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="s">&quot;慢的&quot;</span><span class="w"> </span><span class="p">}()</span>
+
+<span class="w">    </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">fast</span><span class="p">:</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">slow</span><span class="p">:</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>快的
+</code></pre></div>
+
+<p>它跟 <code>switch</code> 長得像，但語意完全不同：<code>switch</code> 是<strong>依值分支</strong>，<code>select</code> 是<strong>等待事件</strong>。</p>
+<hr />
+<h2 id="四種特殊情況">四種特殊情況<a class="headerlink" href="#四種特殊情況" title="Permanent link">#</a></h2>
+<p>在談一般情況之前，先看編譯器特別處理的四種：</p>
+<h3 id="1-空-select永久阻塞">① 空 select：永久阻塞<a class="headerlink" href="#1-空-select永久阻塞" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="k">select</span><span class="w"> </span><span class="p">{}</span><span class="w"> </span><span class="c1">// 直接呼叫 runtime.block()，永久休眠</span>
+</code></pre></div>
+
+<p>這個 goroutine 永遠不會被喚醒。如果是 <code>main</code> goroutine 執行到這裡，而其他 goroutine 也都在等待，runtime 會偵測到死結：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>fatal error: all goroutines are asleep - deadlock!
+</code></pre></div>
+
+<p>有時候會看到 <code>select {}</code> 被用在 <code>main</code> 結尾當「不要結束」的手段。<strong>不建議</strong>——用 <code>sync.WaitGroup</code> 或等待訊號更清楚。</p>
+<h3 id="2-只有一個-case等同直接操作">② 只有一個 case：等同直接操作<a class="headerlink" href="#2-只有一個-case等同直接操作" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="k">case</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ch</span><span class="p">:</span>
+<span class="w">    </span><span class="nx">use</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>編譯器直接改寫成 <code>v := &lt;-ch; use(v)</code>，不走 <code>selectgo</code>。</p>
+<h3 id="3-一個-case-加-default非阻塞操作">③ 一個 case 加 default：非阻塞操作<a class="headerlink" href="#3-一個-case-加-default非阻塞操作" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="k">case</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ch</span><span class="p">:</span>
+<span class="w">    </span><span class="nx">use</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
+<span class="k">default</span><span class="p">:</span>
+<span class="w">    </span><span class="c1">// channel 沒東西時走這裡</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>改寫成非阻塞版本的 channel 操作（<code>runtime.selectnbrecv</code>／<code>selectnbsend</code>），只是「試一下」，不會讓 goroutine 睡著。</p>
+<h3 id="4-有-default-的多-case先掃一遍都不行就走-default">④ 有 default 的多 case：先掃一遍，都不行就走 default<a class="headerlink" href="#4-有-default-的多-case先掃一遍都不行就走-default" title="Permanent link">#</a></h3>
+<p>不需要進入休眠邏輯，掃過所有 case 看有沒有能立刻完成的。</p>
+<hr />
+<h2 id="一般情況runtimeselectgo">一般情況：<code>runtime.selectgo</code><a class="headerlink" href="#一般情況runtimeselectgo" title="Permanent link">#</a></h2>
+<p>多個 case 且沒有 <code>default</code> 時，編譯器把整個 <code>select</code> 改寫成一次 <code>runtime.selectgo</code> 呼叫（<code>runtime/select.go</code>）。它做四件事：</p>
+<figure class="diagram"><svg viewBox="0 0 700 350" role="img" aria-label="selectgo 的四個步驟"><rect class="d-box-a" x="15" y="14" width="670" height="62" rx="7"/><text class="d-t-b" x="30" y="36">① 隨機打亂順序 + 依位址排序</text><text class="d-t-s" x="30" y="56">pollorder：隨機排列，決定「檢查誰先」——避免飢餓　·　lockorder：依 channel 位址排序，決定「上鎖順序」——避免死結</text><path class="d-line" d="M350 76 L350 90" marker-end="url(#ar13)"/><rect class="d-box-a" x="15" y="92" width="670" height="62" rx="7"/><text class="d-t-b" x="30" y="114">② 依 pollorder 掃一遍，找有沒有能立刻完成的</text><text class="d-t-s" x="30" y="134">接收：channel 有緩衝資料、有等待中的傳送者、或已關閉　·　傳送：有等待中的接收者、或緩衝區未滿</text><text class="d-t-a" x="480" y="176">找到 → 直接完成，回傳</text><path class="d-line" d="M350 154 L350 190" marker-end="url(#ar13)"/><text class="d-t-s" x="200" y="176">都不行 ↓</text><rect class="d-box-w" x="15" y="192" width="670" height="62" rx="7"/><text class="d-t-b" x="30" y="214">③ 把自己掛到「所有」channel 的等待佇列上，然後休眠</text><text class="d-t-s" x="30" y="234">為每個 case 建立一個 sudog（等待記錄），全部串進對應 channel 的 sendq / recvq，最後呼叫 gopark 讓出 CPU</text><path class="d-line" d="M350 254 L350 268" marker-end="url(#ar13)"/><rect class="d-box-o" x="15" y="270" width="670" height="62" rx="7"/><text class="d-t-b" x="30" y="292">④ 被某個 channel 喚醒後，從其他所有佇列上把自己摘掉</text><text class="d-t-s" x="30" y="312">喚醒者已經把資料直接寫進 sudog，所以醒來即完成；接著清理其餘 sudog，回傳中選的 case 索引</text><defs><marker id="ar13" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--line-strong)"/></marker></defs></svg><figcaption><b>selectgo 的四步。</b>關鍵在步驟 ③：goroutine 會同時掛在所有 channel 的等待佇列上。任何一個 channel 就緒都能喚醒它，醒來後負責從其他佇列清掉自己——這是 <code>select</code> 比手動輪詢高效的原因。</figcaption></figure>
+
+<h3 id="為什麼要兩種順序">為什麼要兩種順序<a class="headerlink" href="#為什麼要兩種順序" title="Permanent link">#</a></h3>
+<p><strong><code>pollorder</code>（隨機）</strong> 決定檢查哪個 case 的順序。如果固定按程式碼順序檢查，寫在前面的 case 永遠優先，後面的可能永遠輪不到。</p>
+<p><strong><code>lockorder</code>（依位址排序）</strong> 決定上鎖的順序。<code>selectgo</code> 需要同時鎖住所有涉及的 channel。如果兩個 goroutine 用不同順序鎖，就會死結。<strong>依記憶體位址排序</strong>是解決這類問題的經典手法——所有人都用同一個全域一致的順序。</p>
+<h3 id="隨機選擇親眼驗證">隨機選擇：親眼驗證<a class="headerlink" href="#隨機選擇親眼驗證" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">counts</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">{}</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">10000</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">a</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="mi">1</span>
+<span class="w">        </span><span class="nx">b</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="mi">2</span>
+
+<span class="w">        </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">a</span><span class="p">:</span>
+<span class="w">            </span><span class="nx">counts</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">]</span><span class="o">++</span>
+<span class="w">        </span><span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">b</span><span class="p">:</span>
+<span class="w">            </span><span class="nx">counts</span><span class="p">[</span><span class="s">&quot;b&quot;</span><span class="p">]</span><span class="o">++</span>
+<span class="w">        </span><span class="p">}</span>
+
+<span class="w">        </span><span class="c1">// 清空另一個</span>
+<span class="w">        </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">a</span><span class="p">:</span>
+<span class="w">        </span><span class="k">default</span><span class="p">:</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">b</span><span class="p">:</span>
+<span class="w">        </span><span class="k">default</span><span class="p">:</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">counts</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>map[a:5027 b:4973]
+</code></pre></div>
+
+<p>兩者都就緒時，機率大約各半。</p>
+<div class="admonition warning">
+<p class="admonition-title">不要依賴 case 的順序</p>
+<p><code>go
+// ✗ 錯誤的假設：以為 ctx.Done() 會優先
+select {
+case &lt;-ctx.Done():
+    return ctx.Err()
+case v := &lt;-work:
+    process(v)
+}</code></p>
+<p>如果 context 已取消<strong>且</strong> <code>work</code> 有資料，這段程式碼有一半的機率會處理那筆資料。要保證優先檢查取消，得寫成兩層：</p>
+<p>```go
+// ✓ 明確的優先順序
+select {
+case &lt;-ctx.Done():
+    return ctx.Err()
+default:
+}</p>
+<p>select {
+case &lt;-ctx.Done():
+    return ctx.Err()
+case v := &lt;-work:
+    process(v)
+}
+```</p>
+</div>
+<hr />
+<h2 id="nil-channel動態關閉某個-case">nil channel：動態關閉某個 case<a class="headerlink" href="#nil-channel動態關閉某個-case" title="Permanent link">#</a></h2>
+<p>對 <code>nil</code> channel 的傳送與接收都會<strong>永久阻塞</strong>。這看起來像個坑，其實是 <code>select</code> 最實用的技巧之一：<strong>把某個 case 設成 nil，等於暫時停用它。</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="c1">// 合併兩個 channel，任一關閉後就不再從它讀取</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">merge</span><span class="p">(</span><span class="nx">a</span><span class="p">,</span><span class="w"> </span><span class="nx">b</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">out</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span>
+
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">defer</span><span class="w"> </span><span class="nb">close</span><span class="p">(</span><span class="nx">out</span><span class="p">)</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">a</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nx">b</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">case</span><span class="w"> </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">a</span><span class="p">:</span>
+<span class="w">                </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                    </span><span class="nx">a</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="c1">// 停用這個 case</span>
+<span class="w">                    </span><span class="k">continue</span>
+<span class="w">                </span><span class="p">}</span>
+<span class="w">                </span><span class="nx">out</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="nx">v</span>
+<span class="w">            </span><span class="k">case</span><span class="w"> </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">b</span><span class="p">:</span>
+<span class="w">                </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                    </span><span class="nx">b</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">nil</span>
+<span class="w">                    </span><span class="k">continue</span>
+<span class="w">                </span><span class="p">}</span>
+<span class="w">                </span><span class="nx">out</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="nx">v</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}()</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">out</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">a</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="mi">1</span>
+<span class="w">    </span><span class="nx">a</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="mi">3</span>
+<span class="w">    </span><span class="nb">close</span><span class="p">(</span><span class="nx">a</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="mi">2</span>
+<span class="w">    </span><span class="nb">close</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">sum</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">merge</span><span class="p">(</span><span class="nx">a</span><span class="p">,</span><span class="w"> </span><span class="nx">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">sum</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="nx">v</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;總和:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">sum</span><span class="p">)</span><span class="w"> </span><span class="c1">// 6</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>如果沒有 <code>a = nil</code> 這一招，已關閉的 channel 會<strong>一直立刻就緒</strong>（回傳零值與 <code>false</code>），讓 <code>select</code> 陷入忙碌迴圈。</p>
+<hr />
+<h2 id="常見慣用寫法">常見慣用寫法<a class="headerlink" href="#常見慣用寫法" title="Permanent link">#</a></h2>
+<h3 id="逾時">逾時<a class="headerlink" href="#逾時" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="k">case</span><span class="w"> </span><span class="nx">res</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">work</span><span class="p">:</span>
+<span class="w">    </span><span class="nx">handle</span><span class="p">(</span><span class="nx">res</span><span class="p">)</span>
+<span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">time</span><span class="p">.</span><span class="nx">After</span><span class="p">(</span><span class="mi">3</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">):</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;逾時&quot;</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="admonition warning">
+<p class="admonition-title"><code>time.After</code> 在迴圈裡會累積計時器</p>
+<p><code>go
+// ✗ 每一輪都建立一個新計時器，到期前不會被回收
+for {
+    select {
+    case v := &lt;-ch:
+        process(v)
+    case &lt;-time.After(time.Second):
+        return
+    }
+}</code></p>
+<p>在 Go 1.23 之前，這是真實的記憶體洩漏來源。<strong>Go 1.23 起，未被參照的 Timer 可以立刻被 GC 回收</strong>（不再需要呼叫 <code>Stop</code>），問題大幅緩解。</p>
+<p>但即使如此，在高頻迴圈裡重複建立計時器仍有成本。正確做法是重用：</p>
+<p>```go
+t := time.NewTimer(time.Second)
+defer t.Stop()</p>
+<p>for {
+    t.Reset(time.Second)
+    select {
+    case v := &lt;-ch:
+        process(v)
+    case &lt;-t.C:
+        return
+    }
+}
+```</p>
+</div>
+<h3 id="取消">取消<a class="headerlink" href="#取消" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">worker</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">jobs</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="nx">Job</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nx">Done</span><span class="p">():</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="nx">ctx</span><span class="p">.</span><span class="nx">Err</span><span class="p">()</span>
+<span class="w">        </span><span class="k">case</span><span class="w"> </span><span class="nx">j</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">jobs</span><span class="p">:</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">process</span><span class="p">(</span><span class="nx">j</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>這是 Go 服務裡最常見的迴圈骨架。</p>
+<h3 id="非阻塞傳送滿了就丟棄">非阻塞傳送：滿了就丟棄<a class="headerlink" href="#非阻塞傳送滿了就丟棄" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">tryPublish</span><span class="p">(</span><span class="nx">ch</span><span class="w"> </span><span class="kd">chan</span><span class="o">&lt;-</span><span class="w"> </span><span class="nx">Event</span><span class="p">,</span><span class="w"> </span><span class="nx">e</span><span class="w"> </span><span class="nx">Event</span><span class="p">)</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="nx">ch</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="nx">e</span><span class="p">:</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">    </span><span class="k">default</span><span class="p">:</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="c1">// 緩衝區滿了，丟棄</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>日誌、指標上報這類「掉了也沒關係」的場景很適用，可以避免生產者被慢消費者拖住。</p>
+<h3 id="心跳">心跳<a class="headerlink" href="#心跳" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">run</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">work</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="nx">Job</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">tick</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">NewTicker</span><span class="p">(</span><span class="mi">30</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">tick</span><span class="p">.</span><span class="nx">Stop</span><span class="p">()</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nx">Done</span><span class="p">():</span>
+<span class="w">            </span><span class="k">return</span>
+<span class="w">        </span><span class="k">case</span><span class="w"> </span><span class="nx">j</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">work</span><span class="p">:</span>
+<span class="w">            </span><span class="nx">process</span><span class="p">(</span><span class="nx">j</span><span class="p">)</span>
+<span class="w">        </span><span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">tick</span><span class="p">.</span><span class="nx">C</span><span class="p">:</span>
+<span class="w">            </span><span class="nx">reportHealth</span><span class="p">()</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="fan-in多個來源合併">fan-in：多個來源合併<a class="headerlink" href="#fan-in多個來源合併" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;sync&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">fanIn</span><span class="p">[</span><span class="nx">T</span><span class="w"> </span><span class="kt">any</span><span class="p">](</span><span class="nx">chans</span><span class="w"> </span><span class="o">...&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="nx">T</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="nx">T</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">out</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="nx">T</span><span class="p">)</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">wg</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">c</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">chans</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">        </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="nx">T</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">defer</span><span class="w"> </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Done</span><span class="p">()</span>
+<span class="w">            </span><span class="k">for</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">c</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="nx">out</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="nx">v</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}(</span><span class="nx">c</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
+<span class="w">        </span><span class="nb">close</span><span class="p">(</span><span class="nx">out</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}()</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">out</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">mk</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">vals</span><span class="w"> </span><span class="o">...</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">c</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">vals</span><span class="p">))</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">vals</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">c</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="nx">v</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nb">close</span><span class="p">(</span><span class="nx">c</span><span class="p">)</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">c</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">total</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">fanIn</span><span class="p">(</span><span class="nx">mk</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">),</span><span class="w"> </span><span class="nx">mk</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">),</span><span class="w"> </span><span class="nx">mk</span><span class="p">(</span><span class="mi">5</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">total</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="nx">v</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">total</span><span class="p">)</span><span class="w"> </span><span class="c1">// 15</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>當來源數量在執行期才知道時，用這種「每個來源一個 goroutine」的做法，比動態建構 <code>select</code>（只能用 <code>reflect.Select</code>，很慢）好得多。</p>
+<hr />
+<h2 id="效能特性">效能特性<a class="headerlink" href="#效能特性" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>情況</th>
+<th>大致成本</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>單一 case（編譯器改寫）</td>
+<td>等同直接 channel 操作</td>
+</tr>
+<tr>
+<td>有 default 且立刻就緒</td>
+<td>幾十 ns，無休眠</td>
+</tr>
+<tr>
+<td>多 case 且立刻有就緒的</td>
+<td>掃描 + 鎖，約 100 ns 級</td>
+</tr>
+<tr>
+<td>多 case 需要休眠</td>
+<td>建立 N 個 sudog + gopark + 喚醒，微秒級</td>
+</tr>
+</tbody>
+</table>
+<p><code>selectgo</code> 的固定成本跟 case 數量成正比（要建立 N 個 sudog、鎖 N 個 channel）。case 很多時考慮改架構——例如把多個 channel 合併成一個帶標籤的 channel。</p>
+<div class="admonition tip">
+<p class="admonition-title"><code>reflect.Select</code> 只在萬不得已時用</p>
+<p>如果 case 數量在執行期才確定，只能用 <code>reflect.Select</code>。它比一般 <code>select</code> 慢一到兩個數量級，而且沒有編譯期檢查。</p>
+<p>絕大多數情況下，改用「每個 channel 一個 goroutine，全部寫進同一個出口 channel」的 fan-in 模式更好。</p>
+</div>
+<hr />
+<p>下一節談 <code>defer</code>。它是 Go 錯誤處理與資源清理的核心，實作上有三種完全不同的路徑。</p></article><nav class='pager'><a class='prev' href='for-range.html'><span>上一節</span><strong>4.1 for 與 range</strong></a><a class='next' href='defer.html'><span>下一節</span><strong>4.3 defer</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#select-做什麼'>select 做什麼</a></li><li><a href='#四種特殊情況'>四種特殊情況</a><ul><li><a href='#1-空-select永久阻塞'>① 空 select：永久阻塞</a></li><li><a href='#2-只有一個-case等同直接操作'>② 只有一個 case：等同直接操作</a></li><li><a href='#3-一個-case-加-default非阻塞操作'>③ 一個 case 加 default：非阻塞操作</a></li><li><a href='#4-有-default-的多-case先掃一遍都不行就走-default'>④ 有 default 的多 case：先掃一遍，都不行就走 default</a></li></ul></li><li><a href='#一般情況runtimeselectgo'>一般情況：runtime.selectgo</a><ul><li><a href='#為什麼要兩種順序'>為什麼要兩種順序</a></li><li><a href='#隨機選擇親眼驗證'>隨機選擇：親眼驗證</a></li></ul></li><li><a href='#nil-channel動態關閉某個-case'>nil channel：動態關閉某個 case</a></li><li><a href='#常見慣用寫法'>常見慣用寫法</a><ul><li><a href='#逾時'>逾時</a></li><li><a href='#取消'>取消</a></li><li><a href='#非阻塞傳送滿了就丟棄'>非阻塞傳送：滿了就丟棄</a></li><li><a href='#心跳'>心跳</a></li><li><a href='#fan-in多個來源合併'>fan-in：多個來源合併</a></li></ul></li><li><a href='#效能特性'>效能特性</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

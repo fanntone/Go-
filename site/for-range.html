@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4.1 for 與 range — Go 底層原理筆記</title>
+<meta name="description" content="range 被改寫成什麼、Go 1.22 迴圈變數的語意變更、range 陣列與 slice 的差異，以及 Go 1.23 的 range over func 迭代器。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li class='active'><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>關鍵字</p><h1><span class='h1num'>4.1</span>for 與 range</h1><p class='lede'>range 被改寫成什麼、Go 1.22 迴圈變數的語意變更、range 陣列與 slice 的差異，以及 Go 1.23 的 range over func 迭代器。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="go-只有一個迴圈關鍵字">Go 只有一個迴圈關鍵字<a class="headerlink" href="#go-只有一個迴圈關鍵字" title="Permanent link">#</a></h2>
+<p><code>for</code> 涵蓋了其他語言的 <code>while</code>、<code>do-while</code>、<code>foreach</code>：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ① 三段式</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">10</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">// ② 只有條件（等同 while）</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">x</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">100</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">x</span><span class="w"> </span><span class="o">*=</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">// ③ 無限迴圈</span>
+<span class="k">for</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">// ④ range</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">s</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+
+<p>前三種沒什麼好說的，直接對應到條件跳轉。有趣的是第四種——<code>range</code> 會被編譯器<strong>改寫成前三種之一</strong>。</p>
+<hr />
+<h2 id="range-slice-的改寫">range slice 的改寫<a class="headerlink" href="#range-slice-的改寫" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">s</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">body</span><span class="p">(</span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>被 walk 階段改寫成大致這樣：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="p">{</span>
+<span class="w">    </span><span class="nx">s_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">s</span><span class="w">              </span><span class="c1">// ① 複製 slice 標頭</span>
+<span class="w">    </span><span class="nx">len_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">s_</span><span class="p">)</span><span class="w">      </span><span class="c1">// ② 長度先算好，之後不再重算</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i_</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">len_</span><span class="p">;</span><span class="w"> </span><span class="nx">i_</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">i_</span><span class="w">          </span><span class="c1">// ③ Go 1.22 起：每輪建立新變數</span>
+<span class="w">        </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">s_</span><span class="p">[</span><span class="nx">i_</span><span class="p">]</span><span class="w">      </span><span class="c1">//    v 是元素的複本</span>
+<span class="w">        </span><span class="nx">body</span><span class="p">(</span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>三個改寫細節，各自對應一個常見的困惑。</p>
+<h3 id="1-長度只算一次">① 長度只算一次<a class="headerlink" href="#1-長度只算一次" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">}</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">s</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">s</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="mi">6</span><span class="p">)</span><span class="w"> </span><span class="c1">// 迴圈中修改 s</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Print</span><span class="p">(</span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="s">&quot; &quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;\n最終 s =&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>1 2 3 
+最終 s = [1 2 3 4 5 6]
+</code></pre></div>
+
+<p>只跑三輪。因為 <code>len_</code> 在迴圈開始前就算好了，之後的 <code>append</code> 影響不到它。</p>
+<p><strong>這是好事</strong> —— 否則在迴圈中 append 會變成無窮迴圈。</p>
+<h3 id="2-v-是複本">② <code>v</code> 是複本<a class="headerlink" href="#2-v-是複本" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Item</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">N</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">items</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="nx">Item</span><span class="p">{{</span><span class="mi">1</span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="mi">2</span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="mi">3</span><span class="p">}}</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">it</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">items</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">it</span><span class="p">.</span><span class="nx">N</span><span class="w"> </span><span class="o">*=</span><span class="w"> </span><span class="mi">10</span><span class="w"> </span><span class="c1">// 改的是複本，原本的 slice 不受影響</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">items</span><span class="p">)</span><span class="w"> </span><span class="c1">// [{1} {2} {3}]</span>
+
+<span class="w">    </span><span class="c1">// ✓ 正確做法：用索引</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">items</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">items</span><span class="p">[</span><span class="nx">i</span><span class="p">].</span><span class="nx">N</span><span class="w"> </span><span class="o">*=</span><span class="w"> </span><span class="mi">10</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">items</span><span class="p">)</span><span class="w"> </span><span class="c1">// [{10} {20} {30}]</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>這也意味著<strong>大型元素的 range 會有複製成本</strong>：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">Big</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">data</span><span class="w"> </span><span class="p">[</span><span class="mi">4096</span><span class="p">]</span><span class="kt">byte</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">var</span><span class="w"> </span><span class="nx">arr</span><span class="w"> </span><span class="p">[]</span><span class="nx">Big</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">arr</span><span class="w"> </span><span class="p">{</span><span class="w">  </span><span class="c1">// 每輪複製 4 KB</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">b</span>
+<span class="p">}</span>
+
+<span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">arr</span><span class="w"> </span><span class="p">{</span><span class="w">     </span><span class="c1">// 不複製</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">arr</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="admonition version">
+<p class="admonition-title">Go 1.22：<code>for i := range n</code></p>
+<p>Go 1.22 開始，<code>range</code> 可以直接接一個整數：</p>
+<p>```go
+for i := range 10 {
+    fmt.Println(i) // 0 到 9
+}</p>
+<p>for range 3 {
+    fmt.Println("重複三次")
+}
+```</p>
+<p>比 <code>for i := 0; i &lt; 10; i++</code> 簡潔，而且不會寫錯邊界。</p>
+</div>
+<h3 id="3-迴圈變數go-122-的重大變更">③ 迴圈變數：Go 1.22 的重大變更<a class="headerlink" href="#3-迴圈變數go-122-的重大變更" title="Permanent link">#</a></h3>
+<p>這是 Go 最著名的坑，也是 Go 1 相容性承諾下少見的<strong>語意變更</strong>。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;sync&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">wg</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">        </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">defer</span><span class="w"> </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Done</span><span class="p">()</span>
+<span class="w">            </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Print</span><span class="p">(</span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="s">&quot; &quot;</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}()</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">()</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>版本</th>
+<th>輸出</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Go ≤ 1.21</td>
+<td><code>3 3 3</code>（或其他非預期組合）</td>
+</tr>
+<tr>
+<td>Go ≥ 1.22</td>
+<td><code>0 1 2</code> 的某種排列</td>
+</tr>
+</tbody>
+</table>
+<figure class="diagram"><svg viewBox="0 0 700 260" role="img" aria-label="Go 1.21 與 1.22 的迴圈變數差異"><text class="d-t-b" x="15" y="20">Go ≤ 1.21：整個迴圈共用一個 i</text><rect class="d-box-d" x="15" y="32" width="120" height="44" rx="5"/><text class="d-t-m d-mid" x="75" y="52">i</text><text class="d-t-s d-mid" x="75" y="70">單一變數</text><rect class="d-box" x="220" y="30" width="140" height="24" rx="3"/><text class="d-t-s d-mid" x="290" y="47">goroutine 1</text><rect class="d-box" x="220" y="58" width="140" height="24" rx="3"/><text class="d-t-s d-mid" x="290" y="75">goroutine 2</text><rect class="d-box" x="220" y="86" width="140" height="24" rx="3"/><text class="d-t-s d-mid" x="290" y="103">goroutine 3</text><path class="d-line" d="M216 42 L139 50" marker-end="url(#ar12)"/><path class="d-line" d="M216 70 L139 56" marker-end="url(#ar12)"/><path class="d-line" d="M216 98 L139 62" marker-end="url(#ar12)"/><text class="d-t-s" x="390" y="60">三個 goroutine 都指向同一個 i。</text><text class="d-t-s" x="390" y="80">它們真正跑的時候，迴圈往往已經結束，i = 3。</text><line class="d-dash" x1="15" y1="130" x2="685" y2="130"/><text class="d-t-b" x="15" y="158">Go ≥ 1.22：每一輪迭代都是新的 i</text><rect class="d-box-o" x="15" y="170" width="120" height="24" rx="3"/><text class="d-t-m d-mid" x="75" y="187">i₀ = 0</text><rect class="d-box-o" x="15" y="198" width="120" height="24" rx="3"/><text class="d-t-m d-mid" x="75" y="215">i₁ = 1</text><rect class="d-box-o" x="15" y="226" width="120" height="24" rx="3"/><text class="d-t-m d-mid" x="75" y="243">i₂ = 2</text><rect class="d-box" x="220" y="170" width="140" height="24" rx="3"/><text class="d-t-s d-mid" x="290" y="187">goroutine 1</text><rect class="d-box" x="220" y="198" width="140" height="24" rx="3"/><text class="d-t-s d-mid" x="290" y="215">goroutine 2</text><rect class="d-box" x="220" y="226" width="140" height="24" rx="3"/><text class="d-t-s d-mid" x="290" y="243">goroutine 3</text><path class="d-line-a" d="M216 182 L139 182" marker-end="url(#ar12a)"/><path class="d-line-a" d="M216 210 L139 210" marker-end="url(#ar12a)"/><path class="d-line-a" d="M216 238 L139 238" marker-end="url(#ar12a)"/><text class="d-t-s" x="390" y="200">每個 goroutine 捕捉到自己那一份。</text><text class="d-t-s" x="390" y="220">只有真的被閉包捕捉的迭代才會配置，不影響效能。</text><defs><marker id="ar12" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--line-strong)"/></marker><marker id="ar12a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--accent)"/></marker></defs></svg><figcaption><b>per-iteration 語意。</b>Go 1.22 讓每輪迭代都有獨立的迴圈變數。編譯器很聰明：只有當變數真的被閉包捕捉時才會產生額外配置，一般迴圈完全不受影響。</figcaption></figure>
+
+<div class="admonition version">
+<p class="admonition-title">這個變更由 go.mod 閘門控制</p>
+<p><strong>不是</strong>「用 Go 1.22 編譯就生效」，而是<strong>「<code>go.mod</code> 宣告 <code>go 1.22</code> 以上才生效」</strong>。</p>
+<p>這是 Go 團隊在相容性與修 bug 之間的折衷：舊模組維持舊行為（就算你用新工具鏈編譯），你主動升級 <code>go.mod</code> 才切換。</p>
+<p>```text
+module example.com/myapp</p>
+<p>go 1.22   ← 這一行決定語意
+```</p>
+<p>也可以用 <code>GOEXPERIMENT=loopvar</code> / <code>GODEBUG=loopvar=1</code> 個別控制，但一般不需要。</p>
+</div>
+<p><strong>舊版的解法</strong>（如果你還在維護舊模組）：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="c1">// 遮蔽：建立一個新的區域變數</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Print</span><span class="p">(</span><span class="nx">i</span><span class="p">)</span><span class="w"> </span><span class="p">}()</span>
+<span class="p">}</span>
+
+<span class="c1">// 或當成參數傳</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">n</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Print</span><span class="p">(</span><span class="nx">n</span><span class="p">)</span><span class="w"> </span><span class="p">}(</span><span class="nx">i</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hr />
+<h2 id="range-陣列-vs-range-slice">range 陣列 vs range slice<a class="headerlink" href="#range-陣列-vs-range-slice" title="Permanent link">#</a></h2>
+<p>這個差異很細微但值得知道。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// ① 陣列：range 的是「複本」</span>
+<span class="w">    </span><span class="nx">arr</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">}</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">arr</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">arr</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">99</span><span class="w"> </span><span class="c1">// 改的是原陣列</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Print</span><span class="p">(</span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="s">&quot; &quot;</span><span class="p">)</span><span class="w"> </span><span class="c1">// 印的是複本的值</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;| arr =&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">arr</span><span class="p">)</span>
+
+<span class="w">    </span><span class="c1">// ② 陣列指標：不複製</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">arr</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">arr</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">777</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Print</span><span class="p">(</span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="s">&quot; &quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;| arr =&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">arr</span><span class="p">)</span>
+
+<span class="w">    </span><span class="c1">// ③ slice：只複製標頭，元素共享</span>
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">}</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">s</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">s</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">99</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Print</span><span class="p">(</span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="s">&quot; &quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;| s =&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>1 2 3 | arr = [1 99 3]
+1 777 3 | arr = [1 777 3]
+1 99 3 | s = [1 99 3]
+</code></pre></div>
+
+<ul>
+<li><strong>陣列</strong>：整份複製（如果編譯器判斷需要）。改原陣列，迴圈讀到的還是舊值。</li>
+<li><strong>陣列指標</strong>：不複製，改了就看得到。</li>
+<li><strong>slice</strong>：只複製 24 位元組的標頭，底層陣列共享，改了就看得到。</li>
+</ul>
+<p>實務上，大陣列直接 range 會產生明顯的複製成本，用 <code>range &amp;arr</code> 或改用 slice。</p>
+<hr />
+<h2 id="range-map-與-range-channel">range map 與 range channel<a class="headerlink" href="#range-map-與-range-channel" title="Permanent link">#</a></h2>
+<h3 id="map隨機順序可安全刪除">map：隨機順序，可安全刪除<a class="headerlink" href="#map隨機順序可安全刪除" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">string</span><span class="p">{</span><span class="mi">1</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;a&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;b&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;c&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;d&quot;</span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">k</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">k</span><span class="o">%</span><span class="mi">2</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nb">delete</span><span class="p">(</span><span class="nx">m</span><span class="p">,</span><span class="w"> </span><span class="nx">k</span><span class="p">)</span><span class="w"> </span><span class="c1">// ✓ 在 range 中刪除是安全的</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">m</span><span class="p">)</span><span class="w"> </span><span class="c1">// map[1:a 3:c]</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>規格明確保證：<strong>range 中刪除元素是安全的</strong>，被刪的元素若尚未走訪到就不會出現。</p>
+<p>但<strong>新增</strong>元素的行為未定義——新元素可能出現也可能不出現。要新增就先收集到 slice，迴圈結束後再處理。</p>
+<h3 id="channel讀到關閉為止">channel：讀到關閉為止<a class="headerlink" href="#channel讀到關閉為止" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ch</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">)</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">ch</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="nx">i</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nb">close</span><span class="p">(</span><span class="nx">ch</span><span class="p">)</span><span class="w"> </span><span class="c1">// 必須關閉，否則 range 永遠不會結束</span>
+<span class="w">    </span><span class="p">}()</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">ch</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Print</span><span class="p">(</span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="s">&quot; &quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;| 完成&quot;</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><code>for v := range ch</code> 等同於：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="k">for</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ch</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">break</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="c1">// body</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>忘記 <code>close</code> 是 goroutine 洩漏的頭號原因。</strong></p>
+<h3 id="range-字串解碼-utf-8">range 字串：解碼 UTF-8<a class="headerlink" href="#range-字串解碼-utf-8" title="Permanent link">#</a></h3>
+<p>見 <a href="string.html#byte-與-rune索引與走訪的差別">字串</a>。重點是索引為位元組位置，值為完整的 rune。</p>
+<hr />
+<h2 id="go-123range-over-func-迭代器">Go 1.23：range over func 迭代器<a class="headerlink" href="#go-123range-over-func-迭代器" title="Permanent link">#</a></h2>
+<div class="admonition version">
+<p class="admonition-title">Go 1.23 起：自訂迭代器</p>
+<p>Go 1.23 讓 <code>range</code> 可以接受特定簽章的函式，這是 Go 1.18 泛型之後最重要的語言擴充。</p>
+</div>
+<h3 id="三種簽章">三種簽章<a class="headerlink" href="#三種簽章" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="p">(</span><span class="nx">yield</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="kt">bool</span><span class="p">)</span><span class="w">          </span><span class="c1">// 無值</span>
+<span class="kd">func</span><span class="p">(</span><span class="nx">yield</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">V</span><span class="p">)</span><span class="w"> </span><span class="kt">bool</span><span class="p">)</span><span class="w">         </span><span class="c1">// 單值 —— iter.Seq[V]</span>
+<span class="kd">func</span><span class="p">(</span><span class="nx">yield</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">K</span><span class="p">,</span><span class="w"> </span><span class="nx">V</span><span class="p">)</span><span class="w"> </span><span class="kt">bool</span><span class="p">)</span><span class="w">      </span><span class="c1">// 雙值 —— iter.Seq2[K, V]</span>
+</code></pre></div>
+
+<p><code>yield</code> 回傳 <code>false</code> 表示「消費端要提前結束」，迭代器應該立刻停止。</p>
+<h3 id="一個實際例子">一個實際例子<a class="headerlink" href="#一個實際例子" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;iter&quot;</span>
+<span class="p">)</span>
+
+<span class="c1">// 回傳一個走訪 slice 中所有偶數的迭代器</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">Evens</span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="nx">iter</span><span class="p">.</span><span class="nx">Seq2</span><span class="p">[</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="p">]</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">yield</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">bool</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">s</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="nx">v</span><span class="o">%</span><span class="mi">2</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="k">continue</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">yield</span><span class="p">(</span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="k">return</span><span class="w"> </span><span class="c1">// 消費端 break 了</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="mi">6</span><span class="p">,</span><span class="w"> </span><span class="mi">7</span><span class="p">,</span><span class="w"> </span><span class="mi">8</span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">Evens</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;s[%d]=%d &quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">()</span>
+
+<span class="w">    </span><span class="c1">// break 也正常運作</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">Evens</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="p">&gt;</span><span class="w"> </span><span class="mi">4</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">break</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;s[%d]=%d &quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">()</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>s[1]=2 s[3]=4 s[5]=6 s[7]=8 
+s[1]=2 s[3]=4 
+</code></pre></div>
+
+<h3 id="為什麼這個功能重要">為什麼這個功能重要<a class="headerlink" href="#為什麼這個功能重要" title="Permanent link">#</a></h3>
+<p><strong>① 標準庫全面採用。</strong> Go 1.23 起，<code>maps</code> 與 <code>slices</code> 都有迭代器版本：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;maps&quot;</span>
+<span class="w">    </span><span class="s">&quot;slices&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="s">&quot;b&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;a&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;c&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 排序後的鍵</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">k</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">slices</span><span class="p">.</span><span class="nx">Sorted</span><span class="p">(</span><span class="nx">maps</span><span class="p">.</span><span class="nx">Keys</span><span class="p">(</span><span class="nx">m</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Print</span><span class="p">(</span><span class="nx">k</span><span class="p">,</span><span class="w"> </span><span class="s">&quot; &quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">()</span>
+
+<span class="w">    </span><span class="c1">// 收集成 slice</span>
+<span class="w">    </span><span class="nx">vals</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">slices</span><span class="p">.</span><span class="nx">Collect</span><span class="p">(</span><span class="nx">maps</span><span class="p">.</span><span class="nx">Values</span><span class="p">(</span><span class="nx">m</span><span class="p">))</span>
+<span class="w">    </span><span class="nx">slices</span><span class="p">.</span><span class="nx">Sort</span><span class="p">(</span><span class="nx">vals</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">vals</span><span class="p">)</span><span class="w"> </span><span class="c1">// [1 2 3]</span>
+
+<span class="w">    </span><span class="c1">// 反向走訪</span>
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">}</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">slices</span><span class="p">.</span><span class="nx">Backward</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%d:%d &quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">()</span><span class="w"> </span><span class="c1">// 2:3 1:2 0:1</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>② 讓「串流處理」變得自然。</strong> 以前要處理大檔案而不全部載入記憶體，只能用 callback 或 channel。callback 不能 <code>break</code>，channel 有 goroutine 與同步成本。迭代器兩個問題都解決了：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;bufio&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;iter&quot;</span>
+<span class="w">    </span><span class="s">&quot;strings&quot;</span>
+<span class="p">)</span>
+
+<span class="c1">// 逐行讀取，不把整份內容載入記憶體</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">Lines</span><span class="p">(</span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">bufio</span><span class="p">.</span><span class="nx">Scanner</span><span class="p">)</span><span class="w"> </span><span class="nx">iter</span><span class="p">.</span><span class="nx">Seq</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">yield</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">bool</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">Scan</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">yield</span><span class="p">(</span><span class="nx">r</span><span class="p">.</span><span class="nx">Text</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="k">return</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">sc</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">bufio</span><span class="p">.</span><span class="nx">NewScanner</span><span class="p">(</span><span class="nx">strings</span><span class="p">.</span><span class="nx">NewReader</span><span class="p">(</span><span class="s">&quot;alpha\nbeta\ngamma\ndelta&quot;</span><span class="p">))</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">line</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">Lines</span><span class="p">(</span><span class="nx">sc</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">HasPrefix</span><span class="p">(</span><span class="nx">line</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;g&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;找到:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">line</span><span class="p">)</span>
+<span class="w">            </span><span class="k">break</span><span class="w"> </span><span class="c1">// 立刻停止讀取</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>找到: gamma
+</code></pre></div>
+
+<p><strong>③ <code>iter.Pull</code>：把推送式轉成拉取式。</strong> 有時候你需要「一次拿一個」的控制權（例如同時走訪兩個序列做合併）：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;iter&quot;</span>
+<span class="w">    </span><span class="s">&quot;slices&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">slices</span><span class="p">.</span><span class="nx">Values</span><span class="p">([]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">})</span>
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">slices</span><span class="p">.</span><span class="nx">Values</span><span class="p">([]</span><span class="kt">int</span><span class="p">{</span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="mi">6</span><span class="p">})</span>
+
+<span class="w">    </span><span class="nx">nextA</span><span class="p">,</span><span class="w"> </span><span class="nx">stopA</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">iter</span><span class="p">.</span><span class="nx">Pull</span><span class="p">(</span><span class="nx">a</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">nextB</span><span class="p">,</span><span class="w"> </span><span class="nx">stopB</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">iter</span><span class="p">.</span><span class="nx">Pull</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">stopA</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">stopB</span><span class="p">()</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">x</span><span class="p">,</span><span class="w"> </span><span class="nx">okA</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">nextA</span><span class="p">()</span>
+<span class="w">        </span><span class="nx">y</span><span class="p">,</span><span class="w"> </span><span class="nx">okB</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">nextB</span><span class="p">()</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">okA</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="p">!</span><span class="nx">okB</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">break</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Print</span><span class="p">(</span><span class="nx">x</span><span class="p">,</span><span class="w"> </span><span class="s">&quot; &quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">y</span><span class="p">,</span><span class="w"> </span><span class="s">&quot; &quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">()</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>1 2 3 4 5 6 
+</code></pre></div>
+
+<div class="admonition warning">
+<p class="admonition-title"><code>iter.Pull</code> 一定要 <code>defer stop()</code></p>
+<p><code>iter.Pull</code> 內部用 goroutine 實作。忘記呼叫 <code>stop</code> 會讓那個 goroutine 永遠卡住，造成洩漏。</p>
+</div>
+<hr />
+<h2 id="breakcontinue-與標籤"><code>break</code>、<code>continue</code> 與標籤<a class="headerlink" href="#breakcontinue-與標籤" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">grid</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[][]</span><span class="kt">int</span><span class="p">{{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="mi">6</span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="mi">7</span><span class="p">,</span><span class="w"> </span><span class="mi">8</span><span class="p">,</span><span class="w"> </span><span class="mi">9</span><span class="p">}}</span>
+
+<span class="nx">outer</span><span class="p">:</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">row</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">grid</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">j</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">row</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;在 (%d,%d) 找到 5\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">j</span><span class="p">)</span>
+<span class="w">                </span><span class="k">break</span><span class="w"> </span><span class="nx">outer</span><span class="w"> </span><span class="c1">// 跳出外層迴圈</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// continue 也可以帶標籤</span>
+<span class="w">    </span><span class="nx">rows</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[][]</span><span class="kt">int</span><span class="p">{{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="mi">6</span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="mi">7</span><span class="p">,</span><span class="w"> </span><span class="mi">9</span><span class="p">,</span><span class="w"> </span><span class="mi">11</span><span class="p">}}</span>
+<span class="nx">next</span><span class="p">:</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">row</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">rows</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">row</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="nx">v</span><span class="o">%</span><span class="mi">2</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="k">continue</span><span class="w"> </span><span class="nx">next</span><span class="w"> </span><span class="c1">// 這一列有偶數，直接跳到下一列</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;全是奇數的列:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">row</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>在 (1,1) 找到 5
+全是奇數的列: [1 3 5]
+全是奇數的列: [7 9 11]
+</code></pre></div>
+
+<div class="admonition tip">
+<p class="admonition-title"><code>break</code> 在 <code>select</code> 與 <code>switch</code> 裡的陷阱</p>
+<p>在 <code>for</code> 迴圈裡的 <code>switch</code> 或 <code>select</code> 中，<code>break</code> 只會跳出 <code>switch</code>／<code>select</code>，<strong>不會跳出迴圈</strong>：</p>
+<p><code>go
+for {
+    select {
+    case &lt;-ch:
+        break // ✗ 只跳出 select，迴圈繼續
+    }
+}</code></p>
+<p>要跳出迴圈必須用標籤：</p>
+<p><code>go
+loop:
+for {
+    select {
+    case &lt;-ch:
+        break loop // ✓
+    }
+}</code></p>
+<p>這是實務上很常見的 bug。</p>
+</div>
+<hr />
+<p>下一節談 <code>select</code>——channel 多路選擇的實作。</p></article><nav class='pager'><a class='prev' href='reflect.html'><span>上一節</span><strong>3.3 反射 reflect</strong></a><a class='next' href='select.html'><span>下一節</span><strong>4.2 select</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#go-只有一個迴圈關鍵字'>Go 只有一個迴圈關鍵字</a></li><li><a href='#range-slice-的改寫'>range slice 的改寫</a><ul><li><a href='#1-長度只算一次'>① 長度只算一次</a></li><li><a href='#2-v-是複本'>② v 是複本</a></li><li><a href='#3-迴圈變數go-122-的重大變更'>③ 迴圈變數：Go 1.22 的重大變更</a></li></ul></li><li><a href='#range-陣列-vs-range-slice'>range 陣列 vs range slice</a></li><li><a href='#range-map-與-range-channel'>range map 與 range channel</a><ul><li><a href='#map隨機順序可安全刪除'>map：隨機順序，可安全刪除</a></li><li><a href='#channel讀到關閉為止'>channel：讀到關閉為止</a></li><li><a href='#range-字串解碼-utf-8'>range 字串：解碼 UTF-8</a></li></ul></li><li><a href='#go-123range-over-func-迭代器'>Go 1.23：range over func 迭代器</a><ul><li><a href='#三種簽章'>三種簽章</a></li><li><a href='#一個實際例子'>一個實際例子</a></li><li><a href='#為什麼這個功能重要'>為什麼這個功能重要</a></li></ul></li><li><a href='#breakcontinue-與標籤'>break、continue 與標籤</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

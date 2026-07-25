@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1.1 編譯流程總覽 — Go 底層原理筆記</title>
+<meta name="description" content="從 go build 到可執行檔，編譯器內部的六個階段各自負責什麼，以及怎麼把每個階段的中間產物 dump 出來看。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li class='active'><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>編譯器</p><h1><span class='h1num'>1.1</span>編譯流程總覽</h1><p class='lede'>從 go build 到可執行檔，編譯器內部的六個階段各自負責什麼，以及怎麼把每個階段的中間產物 dump 出來看。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="go-build-只是個總指揮"><code>go build</code> 只是個總指揮<a class="headerlink" href="#go-build-只是個總指揮" title="Permanent link">#</a></h2>
+<p>輸入 <code>go build</code> 的時候，<code>go</code> 這個指令本身不做編譯。它負責解析模組相依、決定編譯順序、管理建置快取，然後對每個套件呼叫真正的編譯器 <code>cmd/compile</code>，最後呼叫連結器 <code>cmd/link</code>。</p>
+<p>想看它到底跑了哪些指令，加上 <code>-x</code>：</p>
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-x<span class="w"> </span>-o<span class="w"> </span>hello.exe<span class="w"> </span>./main.go
+</code></pre></div>
+
+<p>輸出會很長，但骨幹只有三步：</p>
+<div class="hl" data-lang="text"><pre><span></span><code># 1. 編譯：把 .go 檔編成目標檔 _pkg_.a
+&quot;C:\\Program Files\\Go\\pkg\\tool\\windows_amd64\\compile.exe&quot; -o $WORK\b001\_pkg_.a -p main ... ./main.go
+
+# 2. 打包相依資訊
+&quot;...\\buildid.exe&quot; -w $WORK\b001\_pkg_.a
+
+# 3. 連結：把所有 .a 與 runtime 合成執行檔
+&quot;...\\link.exe&quot; -o $WORK\b001\exe\a.out.exe -importcfg $WORK\b001\importcfg.link ... $WORK\b001\_pkg_.a
+</code></pre></div>
+
+<div class="admonition tip">
+<p class="admonition-title">建置快取</p>
+<p>Go 會把每個套件的編譯結果依「原始碼 + 編譯旗標 + 相依」的雜湊值存進快取（<code>go env GOCACHE</code>）。所以第二次 <code>go build</code> 幾乎是瞬間完成。想量測真實的編譯時間要先 <code>go clean -cache</code>。</p>
+</div>
+<hr />
+<h2 id="編譯器的六個階段">編譯器的六個階段<a class="headerlink" href="#編譯器的六個階段" title="Permanent link">#</a></h2>
+<p><code>cmd/compile</code> 的內部流程，可以拆成下面六段。這張圖是後續五節的地圖。</p>
+<figure class="diagram"><svg viewBox="0 0 740 470" role="img" aria-label="Go 編譯器的六個階段"><rect class="d-box-a" x="20" y="14" width="700" height="52" rx="8"/><text class="d-t-b" x="38" y="38">① 詞法與語法分析　Lexing &amp; Parsing</text><text class="d-t-s" x="38" y="57">cmd/compile/internal/syntax　.go 原始碼 → token 串流 → 語法樹（syntax AST）</text><path class="d-line" d="M370 66 L370 82" marker-end="url(#ar2)"/><rect class="d-box-a" x="20" y="84" width="700" height="52" rx="8"/><text class="d-t-b" x="38" y="108">② 型別檢查　Type Checking</text><text class="d-t-s" x="38" y="127">cmd/compile/internal/types2　解析識別字、推導型別、檢查介面滿足、泛型實例化</text><path class="d-line" d="M370 136 L370 152" marker-end="url(#ar2)"/><rect class="d-box" x="20" y="154" width="700" height="52" rx="8"/><text class="d-t-b" x="38" y="178">③ 建構 IR　Unified IR → ir.Node</text><text class="d-t-s" x="38" y="197">cmd/compile/internal/noder　把 syntax AST 與型別資訊寫成統一中間格式，再讀成編譯器的 IR</text><path class="d-line" d="M370 206 L370 222" marker-end="url(#ar2)"/><rect class="d-box-w" x="20" y="224" width="700" height="70" rx="8"/><text class="d-t-b" x="38" y="248">④ 中端最佳化　Middle End</text><text class="d-t-s" x="38" y="267">內聯 inline　·　逃逸分析 escape　·　去虛擬化 devirtualize　·　PGO 引導</text><text class="d-t-s" x="38" y="285">walk：把語法糖改寫成 runtime 呼叫（append / range / map 存取 / defer / channel）</text><path class="d-line" d="M370 294 L370 310" marker-end="url(#ar2)"/><rect class="d-box-o" x="20" y="312" width="700" height="52" rx="8"/><text class="d-t-b" x="38" y="336">⑤ SSA 與機器碼　SSA &amp; Codegen</text><text class="d-t-s" x="38" y="355">cmd/compile/internal/ssa　數十個最佳化 pass → 暫存器配置 → 平台指令 → 目標檔 .a</text><path class="d-line" d="M370 364 L370 380" marker-end="url(#ar2)"/><rect class="d-box-o" x="20" y="382" width="700" height="52" rx="8"/><text class="d-t-b" x="38" y="406">⑥ 連結　Linking</text><text class="d-t-s" x="38" y="425">cmd/link　合併目標檔與 runtime、去除死碼、產生型別與 GC 中繼資料 → 可執行檔</text><defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--line-strong)"/></marker></defs><text class="d-t-s" x="20" y="460">前端（①②）與後端（⑤⑥）中間隔著 IR，這讓 Go 能支援十多種 CPU 架構而不用重寫前端。</text></svg><figcaption><b>編譯器全貌。</b>階段 ①② 只跟 Go 的語言規格有關，階段 ⑤⑥ 只跟目標平台有關，中間用 IR 解耦。本書 Part 1 的後續五節，就是逐一走過這六格。</figcaption></figure>
+
+<h3 id="各階段一句話">各階段一句話<a class="headerlink" href="#各階段一句話" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>階段</th>
+<th>套件</th>
+<th>輸入 → 輸出</th>
+<th>這一階段抓什麼錯</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>① 詞法／語法</td>
+<td><code>syntax</code></td>
+<td>位元組 → syntax AST</td>
+<td><code>syntax error: unexpected }</code></td>
+</tr>
+<tr>
+<td>② 型別檢查</td>
+<td><code>types2</code></td>
+<td>AST → 帶型別的 AST</td>
+<td><code>cannot use x (int) as string</code></td>
+</tr>
+<tr>
+<td>③ 建構 IR</td>
+<td><code>noder</code></td>
+<td>帶型別的 AST → <code>ir.Node</code> 樹</td>
+<td>（幾乎不報錯）</td>
+</tr>
+<tr>
+<td>④ 中端</td>
+<td><code>inline</code> / <code>escape</code> / <code>walk</code></td>
+<td>IR → 改寫過的 IR</td>
+<td>（只做轉換，不報錯）</td>
+</tr>
+<tr>
+<td>⑤ SSA／後端</td>
+<td><code>ssa</code> / <code>ssagen</code></td>
+<td>IR → 機器指令</td>
+<td>極少數暫存器壓力錯誤</td>
+</tr>
+<tr>
+<td>⑥ 連結</td>
+<td><code>cmd/link</code></td>
+<td><code>.a</code> → 執行檔</td>
+<td><code>undefined: xxx</code></td>
+</tr>
+</tbody>
+</table>
+<p>錯誤訊息屬於哪一階段，其實從訊息本身就看得出來，這對排查建置失敗很有幫助。</p>
+<hr />
+<h2 id="前端與後端的分界ir">前端與後端的分界：IR<a class="headerlink" href="#前端與後端的分界ir" title="Permanent link">#</a></h2>
+<p>第 ③ 階段是整個編譯器的樞紐。它把「Go 語言長什麼樣」跟「機器指令長什麼樣」這兩件事切開：</p>
+<ul>
+<li><strong>前端</strong>只關心 Go 的規格。不管你的目標是 <code>amd64</code> 還是 <code>riscv64</code>，語法樹跟型別檢查完全一樣。</li>
+<li><strong>後端</strong>只關心目標平台。它拿到的是一棵不再有「Go 語法」概念的 IR 樹。</li>
+</ul>
+<p>這就是為什麼 Go 能支援十幾種 <code>GOOS</code>／<code>GOARCH</code> 組合，而增加一個新架構主要只需要動後端。</p>
+<div class="admonition version">
+<p class="admonition-title">Unified IR：Go 1.21 起的預設</p>
+<p>Go 1.18 引入泛型時，編譯器需要一種能跨套件傳遞「未實例化的泛型函式」的中間格式。原本的 export data 格式做不到，於是 Go 團隊做了 <strong>Unified IR</strong>：一種同時當作 export data（給其他套件讀）與內部 IR 建構來源的統一序列化格式。</p>
+<p>它在 Go 1.20 可透過 <code>GOEXPERIMENT=unified</code> 試用，Go 1.21 成為預設並移除舊路徑。實務上的影響是<strong>跨套件內聯</strong>變得更積極——以前只有很簡單的函式能跨套件內聯，現在包含泛型在內的更多函式都可以。</p>
+</div>
+<hr />
+<h2 id="一個套件一個編譯單位">一個套件一個編譯單位<a class="headerlink" href="#一個套件一個編譯單位" title="Permanent link">#</a></h2>
+<p>Go 的編譯單位是<strong>套件（package）</strong>，不是檔案。<code>cmd/compile</code> 一次收下整個套件的所有 <code>.go</code> 檔：</p>
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-p<span class="w"> </span>mypkg<span class="w"> </span>a.go<span class="w"> </span>b.go<span class="w"> </span>c.go
+</code></pre></div>
+
+<p>這帶來幾個直接後果：</p>
+<ol>
+<li><strong>同一套件內沒有宣告順序問題。</strong> <code>a.go</code> 可以呼叫 <code>c.go</code> 定義的函式，不需要前向宣告或標頭檔。</li>
+<li><strong>套件之間有嚴格的相依順序。</strong> 編譯 <code>main</code> 之前，它 import 的每個套件都必須先編好。這也是 Go <strong>禁止循環 import</strong> 的根本原因——不是設計潔癖，是編譯模型使然。</li>
+<li><strong>跨套件的資訊靠 export data 傳遞。</strong> 編譯 <code>mypkg</code> 時會把「其他套件需要知道的部分」（匯出的型別、常數、可內聯函式的 IR）寫進 <code>.a</code> 檔。編譯 <code>main</code> 時只讀這份摘要，不重新剖析 <code>mypkg</code> 的原始碼。</li>
+</ol>
+<figure class="diagram"><svg viewBox="0 0 700 220" role="img" aria-label="套件層級的編譯相依"><rect class="d-box" x="20" y="30" width="130" height="58" rx="8"/><text class="d-t-m d-mid" x="85" y="55">fmt</text><text class="d-t-s d-mid" x="85" y="74">（標準庫，已預編）</text><rect class="d-box" x="20" y="118" width="130" height="58" rx="8"/><text class="d-t-m d-mid" x="85" y="143">myapp/store</text><text class="d-t-s d-mid" x="85" y="162">store.a</text><rect class="d-box-a" x="285" y="74" width="140" height="58" rx="8"/><text class="d-t-m d-mid" x="355" y="99">myapp/service</text><text class="d-t-s d-mid" x="355" y="118">service.a</text><rect class="d-box-o" x="540" y="74" width="140" height="58" rx="8"/><text class="d-t-m d-mid" x="610" y="99">main</text><text class="d-t-s d-mid" x="610" y="118">app.exe</text><path class="d-line" d="M150 59 L230 59 L230 96 L281 96" marker-end="url(#ar3)"/><path class="d-line" d="M150 147 L230 147 L230 110 L281 110" marker-end="url(#ar3)"/><path class="d-line-a" d="M425 103 L536 103" marker-end="url(#ar3a)"/><text class="d-t-s d-mid" x="480" y="94">export data</text><defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--line-strong)"/></marker><marker id="ar3a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--accent)"/></marker></defs><text class="d-t-s" x="20" y="205">相依圖必須是 DAG（無環有向圖）。編譯器依拓撲順序處理，彼此獨立的套件可以平行編譯。</text></svg><figcaption><b>套件相依決定編譯順序。</b>`go build` 會先算出拓撲順序，再把彼此無關的套件丟給多個 worker 平行編譯（數量取決於 <code>GOMAXPROCS</code>）。</figcaption></figure>
+
+<hr />
+<h2 id="把中間產物-dump-出來">把中間產物 dump 出來<a class="headerlink" href="#把中間產物-dump-出來" title="Permanent link">#</a></h2>
+<p>紙上談兵沒有意義。下面五個指令讓你親眼看到每個階段的產物。準備一份範例：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">sum</span><span class="p">(</span><span class="nx">nums</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">total</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">nums</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">total</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="nx">n</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">total</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">sum</span><span class="p">([]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">}))</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="1-看語法樹">① 看語法樹<a class="headerlink" href="#1-看語法樹" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-W<span class="w"> </span>main.go
+</code></pre></div>
+
+<p><code>-W</code> 會印出 walk <strong>之前</strong>的 IR 樹；<code>-w</code> 印出 walk <strong>之後</strong>的。對照這兩者，就能看到語法糖被展開的過程（下一節與 <a href="for-range.html">for 與 range</a> 會詳談）。</p>
+<h3 id="2-看型別檢查結果">② 看型別檢查結果<a class="headerlink" href="#2-看型別檢查結果" title="Permanent link">#</a></h3>
+<p>型別檢查沒有直接的 dump 旗標，但可以用標準庫的 <code>go/types</code>（與編譯器的 <code>types2</code> 是同一套演算法的兩份實作）自己跑一遍：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;go/ast&quot;</span>
+<span class="w">    </span><span class="s">&quot;go/importer&quot;</span>
+<span class="w">    </span><span class="s">&quot;go/parser&quot;</span>
+<span class="w">    </span><span class="s">&quot;go/token&quot;</span>
+<span class="w">    </span><span class="s">&quot;go/types&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="nx">src</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">`</span>
+<span class="s">package demo</span>
+
+<span class="s">func sum(nums []int) int {</span>
+<span class="s">    total := 0</span>
+<span class="s">    for _, n := range nums {</span>
+<span class="s">        total += n</span>
+<span class="s">    }</span>
+<span class="s">    return total</span>
+<span class="s">}</span>
+<span class="s">`</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">fset</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">token</span><span class="p">.</span><span class="nx">NewFileSet</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">file</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">parser</span><span class="p">.</span><span class="nx">ParseFile</span><span class="p">(</span><span class="nx">fset</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;demo.go&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">src</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nb">panic</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">info</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">types</span><span class="p">.</span><span class="nx">Info</span><span class="p">{</span>
+<span class="w">        </span><span class="nx">Types</span><span class="p">:</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="nx">ast</span><span class="p">.</span><span class="nx">Expr</span><span class="p">]</span><span class="nx">types</span><span class="p">.</span><span class="nx">TypeAndValue</span><span class="p">),</span>
+<span class="w">        </span><span class="nx">Defs</span><span class="p">:</span><span class="w">  </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="o">*</span><span class="nx">ast</span><span class="p">.</span><span class="nx">Ident</span><span class="p">]</span><span class="nx">types</span><span class="p">.</span><span class="nx">Object</span><span class="p">),</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">conf</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">types</span><span class="p">.</span><span class="nx">Config</span><span class="p">{</span><span class="nx">Importer</span><span class="p">:</span><span class="w"> </span><span class="nx">importer</span><span class="p">.</span><span class="nx">Default</span><span class="p">()}</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">conf</span><span class="p">.</span><span class="nx">Check</span><span class="p">(</span><span class="s">&quot;demo&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">fset</span><span class="p">,</span><span class="w"> </span><span class="p">[]</span><span class="o">*</span><span class="nx">ast</span><span class="p">.</span><span class="nx">File</span><span class="p">{</span><span class="nx">file</span><span class="p">},</span><span class="w"> </span><span class="nx">info</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nb">panic</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">ident</span><span class="p">,</span><span class="w"> </span><span class="nx">obj</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">info</span><span class="p">.</span><span class="nx">Defs</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">obj</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%-8s %s\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">ident</span><span class="p">.</span><span class="nx">Name</span><span class="p">,</span><span class="w"> </span><span class="nx">obj</span><span class="p">.</span><span class="nx">Type</span><span class="p">())</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>sum      func(nums []int) int
+nums     []int
+total    int
+n        int
+</code></pre></div>
+
+<p>注意 <code>total</code> 被推導成 <code>int</code>，<code>n</code> 也是 —— 這些型別在原始碼裡都沒寫出來，是型別檢查器推導出來的。</p>
+<h3 id="3-看-ssa-的每一個-pass最強的一招">③ 看 SSA 的每一個 pass（最強的一招）<a class="headerlink" href="#3-看-ssa-的每一個-pass最強的一招" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GOSSAFUNC</span><span class="o">=</span>sum<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>nul<span class="w"> </span>./main.go
+</code></pre></div>
+
+<p>這會在目前目錄產生一份 <strong><code>ssa.html</code></strong>。打開它，你會看到一個橫向的表格，每一欄是一個 SSA pass 的結果，從最初的 IR 一路到最終的機器指令。點任何一個值，會把它在所有 pass 中的對應高亮起來。</p>
+<p>這是理解「最佳化到底做了什麼」最直觀的工具。例如你會看到 <code>range</code> 迴圈的邊界檢查（bounds check）在 <code>prove</code> 這個 pass 被消除掉。</p>
+<div class="admonition tip">
+<p class="admonition-title">Windows 上的寫法</p>
+<p>PowerShell 沒有 <code>VAR=x cmd</code> 的語法，要分兩行：</p>
+<p><code>text
+$env:GOSSAFUNC = "sum"
+go build -o nul .\main.go</code></p>
+<p>用完記得 <code>Remove-Item Env:GOSSAFUNC</code>，否則之後每次編譯都會產生 ssa.html。</p>
+</div>
+<h3 id="4-看最終機器碼">④ 看最終機器碼<a class="headerlink" href="#4-看最終機器碼" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-S<span class="w"> </span>main.go
+</code></pre></div>
+
+<p>或反組譯已編好的執行檔：</p>
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>app.exe<span class="w"> </span>.<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>go<span class="w"> </span>tool<span class="w"> </span>objdump<span class="w"> </span>-s<span class="w"> </span><span class="s2">&quot;main.sum&quot;</span><span class="w"> </span>app.exe
+</code></pre></div>
+
+<h3 id="5-看連結器留下了什麼">⑤ 看連結器留下了什麼<a class="headerlink" href="#5-看連結器留下了什麼" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>nm<span class="w"> </span>app.exe
+</code></pre></div>
+
+<p>會列出所有符號。你可以驗證「死碼消除」確實發生了 —— 沒被用到的匯出函式不會出現在清單裡。</p>
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>nm<span class="w"> </span>app.exe<span class="w"> </span><span class="p">|</span><span class="w"> </span>findstr<span class="w"> </span><span class="s2">&quot;runtime.gcStart&quot;</span>
+</code></pre></div>
+
+<hr />
+<h2 id="為什麼-go-編譯這麼快">為什麼 Go 編譯這麼快<a class="headerlink" href="#為什麼-go-編譯這麼快" title="Permanent link">#</a></h2>
+<p>這是 Go 最常被稱讚的特性，原因不只一個：</p>
+<ol>
+<li><strong>沒有標頭檔。</strong> C/C++ 的每個 <code>.cpp</code> 都要重新剖析成千上萬行標頭。Go 讀的是預先算好的 export data，是二進位摘要不是原始碼。</li>
+<li><strong>相依圖是 DAG 且明確。</strong> 不允許循環 import，讓編譯順序可以確定，也讓平行編譯與快取變簡單。</li>
+<li><strong>未使用的 import 是編譯錯誤。</strong> 這條常被抱怨的規則，實際上保證了相依圖不會因為疏忽而膨脹。</li>
+<li><strong>最佳化刻意節制。</strong> Go 編譯器不做 LLVM 那種等級的積極最佳化。它選擇「編譯快 + 產出夠好」，而不是「編譯慢 + 產出極致」。這是明確的取捨。</li>
+<li><strong>語法設計對剖析友善。</strong> 分號自動插入規則、沒有無限前瞻的語法歧義，讓剖析器可以單次掃描完成。</li>
+</ol>
+<div class="admonition note">
+<p class="admonition-title">「夠好」有多好？</p>
+<p>Go 產生的機器碼通常比 <code>gcc -O2</code> 慢個 10–30%（依工作負載差異很大）。如果你真的需要壓榨最後那點效能，可以試 <code>gccgo</code>（用 GCC 後端）或針對熱點寫組合語言。但絕大多數服務的瓶頸在 I/O 與記憶體配置，不在指令品質。</p>
+</div>
+<p>下一節開始，我們從第一個階段——詞法與語法分析——細看。</p></article><nav class='pager'><a class='prev' href='toolbox.html'><span>上一節</span><strong>0.2 打開黑盒子的工具箱</strong></a><a class='next' href='parser.html'><span>下一節</span><strong>1.2 詞法與語法分析</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#go-build-只是個總指揮'>go build 只是個總指揮</a></li><li><a href='#編譯器的六個階段'>編譯器的六個階段</a><ul><li><a href='#各階段一句話'>各階段一句話</a></li></ul></li><li><a href='#前端與後端的分界ir'>前端與後端的分界：IR</a></li><li><a href='#一個套件一個編譯單位'>一個套件一個編譯單位</a></li><li><a href='#把中間產物-dump-出來'>把中間產物 dump 出來</a><ul><li><a href='#1-看語法樹'>① 看語法樹</a></li><li><a href='#2-看型別檢查結果'>② 看型別檢查結果</a></li><li><a href='#3-看-ssa-的每一個-pass最強的一招'>③ 看 SSA 的每一個 pass（最強的一招）</a></li><li><a href='#4-看最終機器碼'>④ 看最終機器碼</a></li><li><a href='#5-看連結器留下了什麼'>⑤ 看連結器留下了什麼</a></li></ul></li><li><a href='#為什麼-go-編譯這麼快'>為什麼 Go 編譯這麼快</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

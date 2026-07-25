@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0.1 分層心智模型與用語約定 — Go 底層原理筆記</title>
+<meta name="description" content="在鑽進原始碼之前，先把「編譯期／連結期／執行期」這三層分清楚，並約定全書使用的台灣術語。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part' open>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li class='active'><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>開始之前</p><h1><span class='h1num'>0.1</span>分層心智模型與用語約定</h1><p class='lede'>在鑽進原始碼之前，先把「編譯期／連結期／執行期」這三層分清楚，並約定全書使用的台灣術語。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="為什麼要先分層">為什麼要先分層<a class="headerlink" href="#為什麼要先分層" title="Permanent link">#</a></h2>
+<p>初學 Go 的人問「slice 為什麼會擴容」，得到的答案常常混在一起：有人講 <code>growslice</code> 這個 runtime 函式，有人講編譯器如何把 <code>append</code> 改寫成呼叫，有人講記憶體配置器怎麼挑 size class。三個答案都對，但它們屬於<strong>三個不同的階段</strong>。</p>
+<p>把階段分清楚，之後每讀到一個機制，你都可以先問自己一句：「這件事是誰做的、什麼時候做的？」答案幾乎總是落在下面三格之一。</p>
+<figure class="diagram"><svg viewBox="0 0 720 300" role="img" aria-label="Go 程式從原始碼到執行的三個階段"><rect class="d-box-a" x="10" y="40" width="215" height="130" rx="8"/><text class="d-t-a" x="26" y="64">編譯期 compile time</text><text class="d-t-s" x="26" y="88">go build / go tool compile</text><text class="d-t-m" x="26" y="112">.go → AST → IR → SSA → .o</text><text class="d-t-s" x="26" y="134">型別檢查、逃逸分析、內聯</text><text class="d-t-s" x="26" y="152">語法糖改寫成 runtime 呼叫</text><rect class="d-box" x="252" y="40" width="185" height="130" rx="8"/><text class="d-t-b" x="268" y="64">連結期 link time</text><text class="d-t-s" x="268" y="88">go tool link</text><text class="d-t-m" x="268" y="112">.o + runtime.a → 執行檔</text><text class="d-t-s" x="268" y="134">符號解析、去除死碼</text><text class="d-t-s" x="268" y="152">寫入型別中繼資料</text><rect class="d-box-o" x="464" y="40" width="246" height="130" rx="8"/><text class="d-t-b" x="480" y="64">執行期 run time</text><text class="d-t-s" x="480" y="88">你的程式 + Go runtime</text><text class="d-t-m" x="480" y="112">排程器、GC、記憶體配置器</text><text class="d-t-s" x="480" y="134">goroutine 建立與切換</text><text class="d-t-s" x="480" y="152">堆疊成長、系統呼叫代理</text><path class="d-line-a" d="M225 105 L248 105" marker-end="url(#ar1)"/><path class="d-line-a" d="M437 105 L460 105" marker-end="url(#ar1)"/><defs><marker id="ar1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor" style="fill:var(--accent)"/></marker></defs><line class="d-dash" x1="10" y1="205" x2="710" y2="205"/><text class="d-t-s" x="10" y="235">以 append 為例：</text><text class="d-t-s" x="10" y="256">① 編譯期把 s = append(s, x) 改寫成「檢查容量 → 不夠就呼叫 runtime.growslice」的指令序列；</text><text class="d-t-s" x="10" y="276">② 連結期把 growslice 的位址填進去；③ 執行期 growslice 真的去跟記憶體配置器要一塊新記憶體。</text></svg><figcaption><b>三個階段。</b>絕大多數「Go 為什麼這樣運作」的問題，都可以先定位到其中一格。編譯器做的是<b>靜態改寫</b>，runtime 做的是<b>動態決策</b>；兩者的分工線，就是理解 Go 的主軸。</figcaption></figure>
+
+<h3 id="一句話分工">一句話分工<a class="headerlink" href="#一句話分工" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>階段</th>
+<th>誰在做</th>
+<th>典型工作</th>
+<th>你可以怎麼觀察</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>編譯期</td>
+<td><code>cmd/compile</code></td>
+<td>型別檢查、把語法糖展開、決定變數配置在堆疊還是堆積</td>
+<td><code>go build -gcflags="-m"</code>、<code>-S</code></td>
+</tr>
+<tr>
+<td>連結期</td>
+<td><code>cmd/link</code></td>
+<td>合併目標檔、去除沒用到的符號、產生型別中繼資料</td>
+<td><code>go tool nm</code>、<code>-ldflags="-w"</code></td>
+</tr>
+<tr>
+<td>執行期</td>
+<td><code>runtime</code> 套件</td>
+<td>排程 goroutine、配置與回收記憶體、代理系統呼叫</td>
+<td><code>GODEBUG</code>、<code>pprof</code>、<code>trace</code></td>
+</tr>
+</tbody>
+</table>
+<p>Go 的一個重要設計取向是：<strong>盡量把工作往編譯期推</strong>。沒有虛擬機、沒有 JIT、沒有執行期的位元組碼解譯。<code>runtime</code> 只是一個被靜態連結進你程式的普通函式庫，它跟你的程式碼跑在同一顆執行檔裡，用同一套呼叫慣例。</p>
+<div class="admonition note">
+<p class="admonition-title">runtime 不是虛擬機</p>
+<p>很多從 Java 或 Python 過來的人，會把 Go 的 <code>runtime</code> 想像成 JVM 那樣的虛擬機。它不是。<code>runtime</code> 是一包用 Go 和組合語言寫成的程式碼，被連結器塞進你的執行檔。你寫的 <code>main</code> 並不是程式進入點，真正的進入點是 runtime 的組合語言啟動程式碼，它把排程器與記憶體系統準備好之後，才把 <code>main.main</code> 當成第一個 goroutine 跑起來。</p>
+</div>
+<hr />
+<h2 id="全書用語約定">全書用語約定<a class="headerlink" href="#全書用語約定" title="Permanent link">#</a></h2>
+<p>這份筆記用台灣的技術用語。原始文獻大量使用中國大陸的譯法，有些字面相同但意思差很多（最經典的是「堆」），有些在台灣根本不通行。以下是全書一致採用的對照表。</p>
+<h3 id="一定要注意的四組詞">一定要注意的四組詞<a class="headerlink" href="#一定要注意的四組詞" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>大陸常見用法</th>
+<th>本書用語</th>
+<th>說明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>协程</td>
+<td><strong>goroutine</strong></td>
+<td>不譯。它既不是 coroutine（沒有對稱的 yield 語意），也不是 green thread（有搶佔）。硬要翻成「協程」反而誤導。</td>
+</tr>
+<tr>
+<td>线程</td>
+<td><strong>執行緒</strong>（thread）</td>
+<td>作業系統排程的單位。Go 裡對應 GMP 的 <strong>M</strong>。</td>
+</tr>
+<tr>
+<td>进程</td>
+<td><strong>行程</strong>（process）</td>
+<td>作業系統的資源容器。</td>
+</tr>
+<tr>
+<td>技术栈</td>
+<td><strong>技術組合</strong>／<strong>技術堆疊</strong></td>
+<td>這是最容易誤讀的一個。中文語境的「栈」是 stack，但「技术栈」指的是 tech stack（一整套工具與框架），跟記憶體的 stack 沒有關係。本書談記憶體時一律用「堆疊」，談工具組合時用「技術組合」。</td>
+</tr>
+</tbody>
+</table>
+<p>「堆」與「栈」在大陸用法裡分別是 heap 與 stack，但在台灣「堆疊」慣指 stack。為了避免歧義，本書<strong>一律加註英文</strong>：</p>
+<ul>
+<li><strong>堆疊（stack）</strong> —— 後進先出的那塊記憶體，每個 goroutine 各有一份，函式回傳就自動釋放。</li>
+<li><strong>堆積（heap）</strong> —— GC 管理的共用記憶體區，逃逸的物件會配置在這裡。</li>
+</ul>
+<h3 id="完整對照表">完整對照表<a class="headerlink" href="#完整對照表" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>大陸用語</th>
+<th>本書用語</th>
+<th>英文</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>内存</td>
+<td>記憶體</td>
+<td>memory</td>
+</tr>
+<tr>
+<td>指针</td>
+<td>指標</td>
+<td>pointer</td>
+</tr>
+<tr>
+<td>数组</td>
+<td>陣列</td>
+<td>array</td>
+</tr>
+<tr>
+<td>切片</td>
+<td>slice（切片）</td>
+<td>slice</td>
+</tr>
+<tr>
+<td>哈希表／散列表</td>
+<td>雜湊表</td>
+<td>hash table</td>
+</tr>
+<tr>
+<td>键值对</td>
+<td>鍵值對</td>
+<td>key-value pair</td>
+</tr>
+<tr>
+<td>队列</td>
+<td>佇列</td>
+<td>queue</td>
+</tr>
+<tr>
+<td>链表</td>
+<td>鏈結串列</td>
+<td>linked list</td>
+</tr>
+<tr>
+<td>接口</td>
+<td>介面</td>
+<td>interface</td>
+</tr>
+<tr>
+<td>函数</td>
+<td>函式</td>
+<td>function</td>
+</tr>
+<tr>
+<td>变量</td>
+<td>變數</td>
+<td>variable</td>
+</tr>
+<tr>
+<td>对象</td>
+<td>物件</td>
+<td>object</td>
+</tr>
+<tr>
+<td>实现</td>
+<td>實作</td>
+<td>implementation</td>
+</tr>
+<tr>
+<td>默认</td>
+<td>預設</td>
+<td>default</td>
+</tr>
+<tr>
+<td>缓存</td>
+<td>快取</td>
+<td>cache</td>
+</tr>
+<tr>
+<td>缓冲区</td>
+<td>緩衝區</td>
+<td>buffer</td>
+</tr>
+<tr>
+<td>调度器</td>
+<td>排程器</td>
+<td>scheduler</td>
+</tr>
+<tr>
+<td>抢占</td>
+<td>搶佔</td>
+<td>preemption</td>
+</tr>
+<tr>
+<td>阻塞</td>
+<td>阻塞</td>
+<td>blocking</td>
+</tr>
+<tr>
+<td>并发／并行</td>
+<td>並行／平行</td>
+<td>concurrency / parallelism</td>
+</tr>
+<tr>
+<td>自旋</td>
+<td>自旋</td>
+<td>spinning</td>
+</tr>
+<tr>
+<td>信号</td>
+<td>訊號</td>
+<td>signal</td>
+</tr>
+<tr>
+<td>字节</td>
+<td>位元組</td>
+<td>byte</td>
+</tr>
+<tr>
+<td>位</td>
+<td>位元</td>
+<td>bit</td>
+</tr>
+<tr>
+<td>溢出</td>
+<td>溢位</td>
+<td>overflow</td>
+</tr>
+<tr>
+<td>全局</td>
+<td>全域</td>
+<td>global</td>
+</tr>
+<tr>
+<td>局部</td>
+<td>區域</td>
+<td>local</td>
+</tr>
+<tr>
+<td>递归</td>
+<td>遞迴</td>
+<td>recursion</td>
+</tr>
+<tr>
+<td>遍历</td>
+<td>走訪／迭代</td>
+<td>iterate</td>
+</tr>
+<tr>
+<td>拷贝</td>
+<td>複製</td>
+<td>copy</td>
+</tr>
+<tr>
+<td>序列化</td>
+<td>序列化</td>
+<td>serialization</td>
+</tr>
+<tr>
+<td>优化</td>
+<td>最佳化</td>
+<td>optimization</td>
+</tr>
+<tr>
+<td>内联</td>
+<td>內聯</td>
+<td>inlining</td>
+</tr>
+<tr>
+<td>逃逸分析</td>
+<td>逃逸分析</td>
+<td>escape analysis</td>
+</tr>
+<tr>
+<td>垃圾回收</td>
+<td>垃圾回收</td>
+<td>garbage collection</td>
+</tr>
+<tr>
+<td>屏障</td>
+<td>屏障</td>
+<td>barrier</td>
+</tr>
+<tr>
+<td>断言</td>
+<td>斷言</td>
+<td>assertion</td>
+</tr>
+<tr>
+<td>元数据</td>
+<td>中繼資料</td>
+<td>metadata</td>
+</tr>
+<tr>
+<td>位图</td>
+<td>點陣圖／位元圖</td>
+<td>bitmap</td>
+</tr>
+<tr>
+<td>句柄</td>
+<td>handle</td>
+<td>handle</td>
+</tr>
+</tbody>
+</table>
+<h3 id="不翻譯的詞">不翻譯的詞<a class="headerlink" href="#不翻譯的詞" title="Permanent link">#</a></h3>
+<p>以下詞彙在台灣的工程現場幾乎都直接講英文，本書保留原文：</p>
+<p><code>goroutine</code>、<code>channel</code>、<code>slice</code>、<code>map</code>、<code>struct</code>、<code>interface</code>（提到 Go 的型別時）、<code>panic</code>、<code>recover</code>、<code>defer</code>、<code>GC</code>、<code>runtime</code>、<code>compiler</code>（討論 <code>cmd/compile</code> 這個具體程式時）、<code>mutex</code>、<code>spinlock</code>、<code>cache line</code>、<code>false sharing</code>、<code>GMP</code>、<code>P</code>／<code>M</code>／<code>G</code>。</p>
+<hr />
+<h2 id="並行不等於平行">並行不等於平行<a class="headerlink" href="#並行不等於平行" title="Permanent link">#</a></h2>
+<p>這兩個詞在中文裡常被混用，但在 Go 的語境下必須分開。</p>
+<ul>
+<li><strong>並行（concurrency）</strong>：程式的<strong>結構</strong>。它被拆成多個可以獨立推進的工作。就算只有一顆 CPU，只要這些工作可以交錯執行，就是並行。</li>
+<li><strong>平行（parallelism）</strong>：程式的<strong>執行方式</strong>。多個工作在同一瞬間真的同時在跑，需要多顆 CPU 核心。</li>
+</ul>
+<p>Go 提供的是並行的<strong>語言結構</strong>（goroutine 與 channel），至於能不能平行執行，取決於 <code>GOMAXPROCS</code> 與機器上有幾顆核心。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// GOMAXPROCS 決定「最多有幾個 goroutine 能真正同時執行」</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;邏輯 CPU 數：&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">NumCPU</span><span class="p">())</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;GOMAXPROCS：&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GOMAXPROCS</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span><span class="w"> </span><span class="c1">// 傳 0 表示只查詢不修改</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="admonition version">
+<p class="admonition-title">Go 1.25 起：GOMAXPROCS 會看容器限制</p>
+<p>Go 1.25 之前，<code>GOMAXPROCS</code> 預設等於<strong>整台機器</strong>的邏輯 CPU 數，完全不管容器設了多少 CPU limit。在 Kubernetes 上這會造成嚴重問題：Pod 限制 2 核，Go 卻開 64 個 P，結果被 CFS 節流（throttling）到延遲飆高。</p>
+<p>Go 1.25 起，Linux 上的 runtime 會讀取 cgroup 的 CPU 頻寬限制，若該限制低於邏輯 CPU 數，就以限制值為準；而且它會<strong>定期重新檢查</strong>，因為編排系統可能在執行中調整 limit。注意它看的是 CPU <strong>limit</strong>，不是 CPU <strong>request</strong>。</p>
+<p>這代表 <code>uber-go/automaxprocs</code> 這類函式庫在 Go 1.25+ 已不再必要（前提是你的 <code>go.mod</code> 宣告了 <code>go 1.25</code> 以上）。</p>
+</div>
+<hr />
+<h2 id="怎麼讀這份筆記">怎麼讀這份筆記<a class="headerlink" href="#怎麼讀這份筆記" title="Permanent link">#</a></h2>
+<p>三種讀法都可以：</p>
+<ol>
+<li><strong>從頭讀到尾。</strong> 章節有刻意排序：先建立編譯器的概念（Part 1），才有辦法理解為什麼 <code>for-range</code> 會被改寫、為什麼 <code>defer</code> 有三種實作。再進資料結構（Part 2）與語言核心（Part 3），最後才是 runtime（Part 5、6）。</li>
+<li><strong>按問題查。</strong> 右上角的搜尋（快捷鍵 <kbd>/</kbd>）會搜全文。想知道「map 為什麼不能取位址」就搜 <code>map</code>。</li>
+<li><strong>對照原始碼讀。</strong> 每一節提到 runtime 函式時，都會標注原始碼路徑，例如 <code>runtime/slice.go</code>。你的機器上就有一份：路徑是 <code>$(go env GOROOT)/src/</code>。</li>
+</ol>
+<p>下一節先把工具準備好——沒有工具，所有的說明都只能是「聽說」。</p></article><nav class='pager'><span></span><a class='next' href='toolbox.html'><span>下一節</span><strong>0.2 打開黑盒子的工具箱</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#為什麼要先分層'>為什麼要先分層</a><ul><li><a href='#一句話分工'>一句話分工</a></li></ul></li><li><a href='#全書用語約定'>全書用語約定</a><ul><li><a href='#一定要注意的四組詞'>一定要注意的四組詞</a></li><li><a href='#完整對照表'>完整對照表</a></li><li><a href='#不翻譯的詞'>不翻譯的詞</a></li></ul></li><li><a href='#並行不等於平行'>並行不等於平行</a></li><li><a href='#怎麼讀這份筆記'>怎麼讀這份筆記</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

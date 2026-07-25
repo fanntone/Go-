@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3.3 反射 reflect — Go 底層原理筆記</title>
+<meta name="description" content="reflect.Type 與 reflect.Value 怎麼從介面來、可設定性（settability）的三個條件、struct tag 的解析，以及反射的真實成本。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li class='active'><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>語言核心</p><h1><span class='h1num'>3.3</span>反射 reflect</h1><p class='lede'>reflect.Type 與 reflect.Value 怎麼從介面來、可設定性（settability）的三個條件、struct tag 的解析，以及反射的真實成本。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="反射的三條定律">反射的三條定律<a class="headerlink" href="#反射的三條定律" title="Permanent link">#</a></h2>
+<p>Rob Pike 在 2011 年的一篇文章裡整理了三條規則，到現在仍然是理解 <code>reflect</code> 最好的框架。</p>
+<p><strong>① 從介面值可以得到反射物件。</strong>
+<strong>② 從反射物件可以還原成介面值。</strong>
+<strong>③ 要修改反射物件，它必須是「可設定的（settable）」。</strong></p>
+<p>第三條是絕大多數 <code>reflect</code> 錯誤的來源。</p>
+<hr />
+<h2 id="定律一介面-反射物件">定律一：介面 → 反射物件<a class="headerlink" href="#定律一介面-反射物件" title="Permanent link">#</a></h2>
+<p><code>reflect.TypeOf</code> 與 <code>reflect.ValueOf</code> 的參數型別都是 <code>any</code>。這不是巧合——<strong>反射的輸入永遠是一個介面值</strong>，它拆的就是上一節講的 <code>eface</code> 兩欄位結構。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;reflect&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">x</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mf">3.14</span>
+
+<span class="w">    </span><span class="nx">t</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">TypeOf</span><span class="p">(</span><span class="nx">x</span><span class="p">)</span><span class="w">  </span><span class="c1">// 拿的是 eface 的 _type 欄位</span>
+<span class="w">    </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="nx">x</span><span class="p">)</span><span class="w"> </span><span class="c1">// 拿的是整個 eface</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">t</span><span class="p">)</span><span class="w">             </span><span class="c1">// float64</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">t</span><span class="p">.</span><span class="nx">Kind</span><span class="p">())</span><span class="w">      </span><span class="c1">// float64</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span><span class="w">             </span><span class="c1">// 3.14</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">.</span><span class="nx">Kind</span><span class="p">())</span><span class="w">      </span><span class="c1">// float64</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">.</span><span class="nx">Float</span><span class="p">())</span><span class="w">     </span><span class="c1">// 3.14</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">.</span><span class="nx">Type</span><span class="p">()</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nx">t</span><span class="p">)</span><span class="w"> </span><span class="c1">// true</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="type-與-kind-的差別"><code>Type</code> 與 <code>Kind</code> 的差別<a class="headerlink" href="#type-與-kind-的差別" title="Permanent link">#</a></h3>
+<p>這兩個很容易混淆，但差別很重要：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;reflect&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Celsius</span><span class="w"> </span><span class="kt">float64</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">Point</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">X</span><span class="p">,</span><span class="w"> </span><span class="nx">Y</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="p">[]</span><span class="kt">any</span><span class="p">{</span>
+<span class="w">        </span><span class="nx">Celsius</span><span class="p">(</span><span class="mf">36.5</span><span class="p">),</span>
+<span class="w">        </span><span class="nx">Point</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">},</span>
+<span class="w">        </span><span class="o">&amp;</span><span class="nx">Point</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">},</span>
+<span class="w">        </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">},</span>
+<span class="w">        </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">{},</span>
+<span class="w">        </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="p">),</span>
+<span class="w">        </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{},</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">t</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">TypeOf</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%-20s Kind=%-10s\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">String</span><span class="p">(),</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">Kind</span><span class="p">())</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>main.Celsius         Kind=float64   
+main.Point           Kind=struct    
+*main.Point          Kind=ptr       
+[]int                Kind=slice     
+map[string]int       Kind=map       
+chan int             Kind=chan      
+func()               Kind=func      
+</code></pre></div>
+
+<ul>
+<li><strong><code>Type</code></strong> 是完整的型別身分，包含套件路徑與名稱。<code>Celsius</code> 與 <code>float64</code> 是不同的 <code>Type</code>。</li>
+<li><strong><code>Kind</code></strong> 是底層的分類，只有 26 種（<code>Bool</code>、<code>Int</code>…<code>Struct</code>、<code>Ptr</code>、<code>Slice</code>…）。<code>Celsius</code> 的 Kind 就是 <code>Float64</code>。</li>
+</ul>
+<p>寫通用程式碼時<strong>幾乎總是用 <code>Kind</code> 分支</strong>，因為你不可能列舉所有可能的具名型別。</p>
+<hr />
+<h2 id="定律二反射物件-介面">定律二：反射物件 → 介面<a class="headerlink" href="#定律二反射物件-介面" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;reflect&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+
+<span class="w">    </span><span class="c1">// Interface() 回傳 any，要自己斷言</span>
+<span class="w">    </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">v</span><span class="p">.</span><span class="nx">Interface</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">n</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">i</span><span class="p">.(</span><span class="kt">int</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">n</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="c1">// 43</span>
+
+<span class="w">    </span><span class="c1">// 也有型別特定的取值方法（更快，但 Kind 不對會 panic）</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">.</span><span class="nx">Int</span><span class="p">())</span><span class="w"> </span><span class="c1">// 42</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><code>Value.Interface()</code> 是反射與一般程式碼之間的橋。注意它回傳 <code>any</code>，會有裝箱成本。</p>
+<hr />
+<h2 id="定律三可設定性">定律三：可設定性<a class="headerlink" href="#定律三可設定性" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;reflect&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">x</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mf">3.14</span>
+
+<span class="w">    </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="nx">x</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">.</span><span class="nx">CanSet</span><span class="p">())</span><span class="w"> </span><span class="c1">// false</span>
+
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;panic:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nb">recover</span><span class="p">())</span><span class="w"> </span><span class="p">}()</span>
+<span class="w">    </span><span class="nx">v</span><span class="p">.</span><span class="nx">SetFloat</span><span class="p">(</span><span class="mf">2.71</span><span class="p">)</span><span class="w"> </span><span class="c1">// panic</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>false
+panic: reflect: reflect.Value.SetFloat using unaddressable value
+</code></pre></div>
+
+<h3 id="為什麼不能設定">為什麼不能設定<a class="headerlink" href="#為什麼不能設定" title="Permanent link">#</a></h3>
+<p>因為 <code>reflect.ValueOf(x)</code> 拿到的是 <strong><code>x</code> 的一份複本</strong>。<code>ValueOf</code> 的參數是 <code>any</code>，傳進去的當下就已經複製了。就算能修改，改到的也是那份複本，原本的 <code>x</code> 完全不受影響——這種靜默失效比 panic 糟糕，所以 <code>reflect</code> 直接禁止。</p>
+<h3 id="正確做法傳指標再-elem">正確做法：傳指標，再 <code>Elem()</code><a class="headerlink" href="#正確做法傳指標再-elem" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;reflect&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">x</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mf">3.14</span>
+
+<span class="w">    </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">x</span><span class="p">)</span><span class="w"> </span><span class="c1">// Kind 是 Ptr</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">p</span><span class="p">.</span><span class="nx">CanSet</span><span class="p">())</span><span class="w">  </span><span class="c1">// false —— 指標本身仍是複本</span>
+
+<span class="w">    </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">p</span><span class="p">.</span><span class="nx">Elem</span><span class="p">()</span><span class="w">            </span><span class="c1">// 解參照，指向真正的 x</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">.</span><span class="nx">CanSet</span><span class="p">())</span><span class="w">  </span><span class="c1">// true</span>
+
+<span class="w">    </span><span class="nx">v</span><span class="p">.</span><span class="nx">SetFloat</span><span class="p">(</span><span class="mf">2.71</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">x</span><span class="p">)</span><span class="w"> </span><span class="c1">// 2.71 ← 原本的變數真的被改了</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="可設定的三個條件">可設定的三個條件<a class="headerlink" href="#可設定的三個條件" title="Permanent link">#</a></h3>
+<p>一個 <code>reflect.Value</code> 要可設定，必須同時滿足：</p>
+<ol>
+<li><strong>可定址（addressable）</strong> —— 透過指標的 <code>Elem()</code>、slice 的元素、可定址 struct 的欄位取得。</li>
+<li><strong>不是未匯出的欄位</strong> —— 小寫開頭的欄位即使可定址也不能設定。</li>
+<li><strong>不是從 map 直接取出的元素</strong> —— map 元素不可定址（原因見 <a href="map.html#不能取-map-元素的位址">map</a>）。</li>
+</ol>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;reflect&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">User</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="c1">// 匯出</span>
+<span class="w">    </span><span class="nx">age</span><span class="w">  </span><span class="kt">int</span><span class="w">    </span><span class="c1">// 未匯出</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">u</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">User</span><span class="p">{</span><span class="s">&quot;小明&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">30</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">u</span><span class="p">).</span><span class="nx">Elem</span><span class="p">()</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">.</span><span class="nx">Field</span><span class="p">(</span><span class="mi">0</span><span class="p">).</span><span class="nx">CanSet</span><span class="p">())</span><span class="w"> </span><span class="c1">// true  —— Name</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">.</span><span class="nx">Field</span><span class="p">(</span><span class="mi">1</span><span class="p">).</span><span class="nx">CanSet</span><span class="p">())</span><span class="w"> </span><span class="c1">// false —— age 未匯出</span>
+
+<span class="w">    </span><span class="nx">v</span><span class="p">.</span><span class="nx">Field</span><span class="p">(</span><span class="mi">0</span><span class="p">).</span><span class="nx">SetString</span><span class="p">(</span><span class="s">&quot;小華&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">u</span><span class="p">)</span><span class="w"> </span><span class="c1">// {小華 30}</span>
+
+<span class="w">    </span><span class="c1">// slice 元素可設定</span>
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">sv</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span><span class="w"> </span><span class="c1">// 注意：不需要傳 &amp;s</span>
+<span class="w">    </span><span class="nx">sv</span><span class="p">.</span><span class="nx">Index</span><span class="p">(</span><span class="mi">0</span><span class="p">).</span><span class="nx">SetInt</span><span class="p">(</span><span class="mi">99</span><span class="p">)</span><span class="w">   </span><span class="c1">// slice 的元素本來就可定址</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span><span class="w">           </span><span class="c1">// [99 2 3]</span>
+
+<span class="w">    </span><span class="c1">// map 元素不可設定</span>
+<span class="w">    </span><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="s">&quot;a&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">mv</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="nx">m</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">mv</span><span class="p">.</span><span class="nx">MapIndex</span><span class="p">(</span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="s">&quot;a&quot;</span><span class="p">)).</span><span class="nx">CanSet</span><span class="p">())</span><span class="w"> </span><span class="c1">// false</span>
+<span class="w">    </span><span class="c1">// 要改 map 只能整個 SetMapIndex</span>
+<span class="w">    </span><span class="nx">mv</span><span class="p">.</span><span class="nx">SetMapIndex</span><span class="p">(</span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="s">&quot;a&quot;</span><span class="p">),</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="mi">99</span><span class="p">))</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">m</span><span class="p">)</span><span class="w"> </span><span class="c1">// map[a:99]</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>注意 slice 那個例子：<strong>不需要傳 <code>&amp;s</code></strong>。因為 slice 標頭裡的 <code>array</code> 指標指向的元素本來就在別的地方，<code>Index(i)</code> 拿到的是真正的元素位址。</p>
+<hr />
+<h2 id="struct-tag反射最常見的用途">struct tag：反射最常見的用途<a class="headerlink" href="#struct-tag反射最常見的用途" title="Permanent link">#</a></h2>
+<p>struct tag 是附在欄位後面的字串字面值，編譯器完全不解讀它，只是原封不動存進型別中繼資料。真正解讀它的是使用反射的函式庫。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;reflect&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">User</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ID</span><span class="w">    </span><span class="kt">int</span><span class="w">    </span><span class="s">`json:&quot;id&quot; db:&quot;user_id&quot; validate:&quot;required&quot;`</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w">  </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;name,omitempty&quot; db:&quot;name&quot; validate:&quot;min=2,max=50&quot;`</span>
+<span class="w">    </span><span class="nx">Email</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;email&quot; db:&quot;email&quot; validate:&quot;email&quot;`</span>
+<span class="w">    </span><span class="nx">pw</span><span class="w">    </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;-&quot;`</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">t</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">TypeOf</span><span class="p">(</span><span class="nx">User</span><span class="p">{})</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">NumField</span><span class="p">();</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">f</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">Field</span><span class="p">(</span><span class="nx">i</span><span class="p">)</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%-6s exported=%-5v json=%-16q db=%-10q validate=%q\n&quot;</span><span class="p">,</span>
+<span class="w">            </span><span class="nx">f</span><span class="p">.</span><span class="nx">Name</span><span class="p">,</span>
+<span class="w">            </span><span class="nx">f</span><span class="p">.</span><span class="nx">IsExported</span><span class="p">(),</span>
+<span class="w">            </span><span class="nx">f</span><span class="p">.</span><span class="nx">Tag</span><span class="p">.</span><span class="nx">Get</span><span class="p">(</span><span class="s">&quot;json&quot;</span><span class="p">),</span>
+<span class="w">            </span><span class="nx">f</span><span class="p">.</span><span class="nx">Tag</span><span class="p">.</span><span class="nx">Get</span><span class="p">(</span><span class="s">&quot;db&quot;</span><span class="p">),</span>
+<span class="w">            </span><span class="nx">f</span><span class="p">.</span><span class="nx">Tag</span><span class="p">.</span><span class="nx">Get</span><span class="p">(</span><span class="s">&quot;validate&quot;</span><span class="p">),</span>
+<span class="w">        </span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>ID     exported=true  json=&quot;id&quot;             db=&quot;user_id&quot;  validate=&quot;required&quot;
+Name   exported=true  json=&quot;name,omitempty&quot; db=&quot;name&quot;     validate=&quot;min=2,max=50&quot;
+Email  exported=true  json=&quot;email&quot;          db=&quot;email&quot;    validate=&quot;email&quot;
+pw     exported=false json=&quot;-&quot;              db=&quot;&quot;         validate=&quot;&quot;
+</code></pre></div>
+
+<h3 id="tag-的格式規則">tag 的格式規則<a class="headerlink" href="#tag-的格式規則" title="Permanent link">#</a></h3>
+<p>慣例格式是 <code>`key1:"value1" key2:"value2"`</code>：</p>
+<ul>
+<li>鍵與值之間<strong>不能有空格</strong>（<code>json: "id"</code> 是錯的，<code>Get("json")</code> 會回傳空字串）。</li>
+<li>多組 tag 之間用<strong>一個空格</strong>分隔。</li>
+<li>值本身用雙引號包起來。</li>
+<li>格式錯誤<strong>不會有編譯錯誤</strong>，只會安靜地失效。</li>
+</ul>
+<div class="admonition tip">
+<p class="admonition-title">用 <code>go vet</code> 抓 tag 錯誤</p>
+<p><code>go vet</code> 的 <code>structtag</code> 檢查會抓出格式錯誤與重複的 tag 鍵：</p>
+<p><code>bash
+go vet ./...</code></p>
+<p>這是少數能在編譯期抓到 tag 問題的方法，建議放進 CI。</p>
+</div>
+<hr />
+<h2 id="反射的成本">反射的成本<a class="headerlink" href="#反射的成本" title="Permanent link">#</a></h2>
+<p>反射慢，但慢多少？做個實測：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;reflect&quot;</span>
+<span class="w">    </span><span class="s">&quot;testing&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">User</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w"> </span><span class="kt">string</span>
+<span class="w">    </span><span class="nx">Age</span><span class="w">  </span><span class="kt">int</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">direct</span><span class="p">(</span><span class="nx">u</span><span class="w"> </span><span class="o">*</span><span class="nx">User</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nx">u</span><span class="p">.</span><span class="nx">Name</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">viaReflect</span><span class="p">(</span><span class="nx">u</span><span class="w"> </span><span class="o">*</span><span class="nx">User</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="nx">u</span><span class="p">).</span><span class="nx">Elem</span><span class="p">().</span><span class="nx">Field</span><span class="p">(</span><span class="mi">0</span><span class="p">).</span><span class="nx">String</span><span class="p">()</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">viaReflectCached</span><span class="p">(</span><span class="nx">v</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">Value</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">v</span><span class="p">.</span><span class="nx">Field</span><span class="p">(</span><span class="mi">0</span><span class="p">).</span><span class="nx">String</span><span class="p">()</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">u</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">User</span><span class="p">{</span><span class="s">&quot;小明&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">30</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">cached</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="nx">u</span><span class="p">).</span><span class="nx">Elem</span><span class="p">()</span>
+
+<span class="w">    </span><span class="nx">bench</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">name</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">f</span><span class="w"> </span><span class="kd">func</span><span class="p">())</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">r</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">testing</span><span class="p">.</span><span class="nx">Benchmark</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">b</span><span class="p">.</span><span class="nx">ReportAllocs</span><span class="p">()</span>
+<span class="w">            </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">b</span><span class="p">.</span><span class="nx">N</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="nx">f</span><span class="p">()</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">})</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%-18s %s  %s\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">name</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">MemString</span><span class="p">())</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">bench</span><span class="p">(</span><span class="s">&quot;direct&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">direct</span><span class="p">(</span><span class="nx">u</span><span class="p">)</span><span class="w"> </span><span class="p">})</span>
+<span class="w">    </span><span class="nx">bench</span><span class="p">(</span><span class="s">&quot;reflect&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">viaReflect</span><span class="p">(</span><span class="nx">u</span><span class="p">)</span><span class="w"> </span><span class="p">})</span>
+<span class="w">    </span><span class="nx">bench</span><span class="p">(</span><span class="s">&quot;reflect(cached)&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">viaReflectCached</span><span class="p">(</span><span class="nx">cached</span><span class="p">)</span><span class="w"> </span><span class="p">})</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>典型結果：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>direct             1000000000    0.29 ns/op       0 B/op    0 allocs/op
+reflect              38412561   31.2  ns/op       0 B/op    0 allocs/op
+reflect(cached)     215043210    5.6  ns/op       0 B/op    0 allocs/op
+</code></pre></div>
+
+<p>約 <strong>100 倍</strong>的差距。但注意第三行：<strong>如果把 <code>reflect.Value</code> 快取起來重複使用，成本降到 20 倍</strong>。</p>
+<h3 id="成本來自哪裡">成本來自哪裡<a class="headerlink" href="#成本來自哪裡" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>來源</th>
+<th>說明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>裝箱</td>
+<td><code>ValueOf(x)</code> 的參數是 <code>any</code>，值型別要配置</td>
+</tr>
+<tr>
+<td>型別檢查</td>
+<td>每個操作都要驗證 Kind 對不對</td>
+</tr>
+<tr>
+<td>無法內聯</td>
+<td>反射呼叫是動態的，編譯器優化不了</td>
+</tr>
+<tr>
+<td>額外的間接層</td>
+<td>每次 <code>Field(i)</code> 都要算偏移量</td>
+</tr>
+<tr>
+<td><code>Value.Call</code> 特別貴</td>
+<td>要打包參數成 <code>[]Value</code>、動態建立堆疊影格</td>
+</tr>
+</tbody>
+</table>
+<h3 id="怎麼降低成本">怎麼降低成本<a class="headerlink" href="#怎麼降低成本" title="Permanent link">#</a></h3>
+<p><strong>① 快取 <code>reflect.Type</code> 的分析結果。</strong> 這是所有正經反射函式庫（<code>encoding/json</code>、ORM、驗證器）的標準做法：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;reflect&quot;</span>
+<span class="w">    </span><span class="s">&quot;sync&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">fieldInfo</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Index</span><span class="w"> </span><span class="kt">int</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w">  </span><span class="kt">string</span>
+<span class="w">    </span><span class="nx">JSON</span><span class="w">  </span><span class="kt">string</span>
+<span class="p">}</span>
+
+<span class="kd">var</span><span class="w"> </span><span class="nx">cache</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">Map</span><span class="w"> </span><span class="c1">// reflect.Type → []fieldInfo</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">fieldsOf</span><span class="p">(</span><span class="nx">t</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">Type</span><span class="p">)</span><span class="w"> </span><span class="p">[]</span><span class="nx">fieldInfo</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">cache</span><span class="p">.</span><span class="nx">Load</span><span class="p">(</span><span class="nx">t</span><span class="p">);</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">v</span><span class="p">.([]</span><span class="nx">fieldInfo</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">out</span><span class="w"> </span><span class="p">[]</span><span class="nx">fieldInfo</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">NumField</span><span class="p">();</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">f</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">Field</span><span class="p">(</span><span class="nx">i</span><span class="p">)</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">f</span><span class="p">.</span><span class="nx">IsExported</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">continue</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">out</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">out</span><span class="p">,</span><span class="w"> </span><span class="nx">fieldInfo</span><span class="p">{</span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">f</span><span class="p">.</span><span class="nx">Name</span><span class="p">,</span><span class="w"> </span><span class="nx">f</span><span class="p">.</span><span class="nx">Tag</span><span class="p">.</span><span class="nx">Get</span><span class="p">(</span><span class="s">&quot;json&quot;</span><span class="p">)})</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">cache</span><span class="p">.</span><span class="nx">Store</span><span class="p">(</span><span class="nx">t</span><span class="p">,</span><span class="w"> </span><span class="nx">out</span><span class="p">)</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">out</span>
+<span class="p">}</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">User</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;name&quot;`</span>
+<span class="w">    </span><span class="nx">Age</span><span class="w">  </span><span class="kt">int</span><span class="w">    </span><span class="s">`json:&quot;age&quot;`</span>
+<span class="w">    </span><span class="nx">pw</span><span class="w">   </span><span class="kt">string</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">t</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">TypeOf</span><span class="p">(</span><span class="nx">User</span><span class="p">{})</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">fieldsOf</span><span class="p">(</span><span class="nx">t</span><span class="p">))</span><span class="w"> </span><span class="c1">// 第一次：走反射</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">fieldsOf</span><span class="p">(</span><span class="nx">t</span><span class="p">))</span><span class="w"> </span><span class="c1">// 第二次：查快取</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>型別分析（欄位數、tag、偏移量）只需要做一次，之後每個實例都能重用。</p>
+<p><strong>② 考慮改用程式碼生成。</strong> 如果反射是你的效能瓶頸，<code>go:generate</code> 加上程式碼產生器可以完全消除反射。這是 <code>easyjson</code>、<code>protobuf-go</code>、<code>sqlc</code> 這類工具的做法。詳見 <a href="codegen.html">程式碼生成</a>。</p>
+<p><strong>③ 泛型能取代部分反射用途。</strong> 以前要用反射處理「任意型別的 slice」，現在用泛型就好，而且是編譯期展開：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// 以前</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">Map</span><span class="p">(</span><span class="nx">in</span><span class="w"> </span><span class="kt">any</span><span class="p">,</span><span class="w"> </span><span class="nx">f</span><span class="w"> </span><span class="kt">any</span><span class="p">)</span><span class="w"> </span><span class="kt">any</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* 一大堆反射 */</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">// 現在</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">Map</span><span class="p">[</span><span class="nx">T</span><span class="p">,</span><span class="w"> </span><span class="nx">U</span><span class="w"> </span><span class="kt">any</span><span class="p">](</span><span class="nx">in</span><span class="w"> </span><span class="p">[]</span><span class="nx">T</span><span class="p">,</span><span class="w"> </span><span class="nx">f</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">T</span><span class="p">)</span><span class="w"> </span><span class="nx">U</span><span class="p">)</span><span class="w"> </span><span class="p">[]</span><span class="nx">U</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">out</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="nx">U</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">in</span><span class="p">))</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">in</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">out</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">f</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">out</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<hr />
+<h2 id="動態呼叫函式">動態呼叫函式<a class="headerlink" href="#動態呼叫函式" title="Permanent link">#</a></h2>
+<p><code>reflect</code> 可以呼叫任意函式，這是 RPC 框架與依賴注入容器的基礎。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;reflect&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">Greet</span><span class="p">(</span><span class="nx">name</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">times</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">times</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;times 必須為正數，得到 %d&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">times</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">out</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">&quot;&quot;</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">times</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">out</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="s">&quot;Hello, &quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nx">name</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot;! &quot;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">out</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">fn</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="nx">Greet</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">t</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">fn</span><span class="p">.</span><span class="nx">Type</span><span class="p">()</span>
+
+<span class="w">    </span><span class="c1">// 先看看簽章</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;參數 %d 個，回傳 %d 個\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">NumIn</span><span class="p">(),</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">NumOut</span><span class="p">())</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">NumIn</span><span class="p">();</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;  in[%d]: %s\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">In</span><span class="p">(</span><span class="nx">i</span><span class="p">))</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 呼叫</span>
+<span class="w">    </span><span class="nx">args</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="nx">reflect</span><span class="p">.</span><span class="nx">Value</span><span class="p">{</span>
+<span class="w">        </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="s">&quot;Go&quot;</span><span class="p">),</span>
+<span class="w">        </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="mi">2</span><span class="p">),</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">results</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">fn</span><span class="p">.</span><span class="nx">Call</span><span class="p">(</span><span class="nx">args</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">results</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">String</span><span class="p">())</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">results</span><span class="p">[</span><span class="mi">1</span><span class="p">].</span><span class="nx">Interface</span><span class="p">();</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;錯誤:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 錯誤路徑</span>
+<span class="w">    </span><span class="nx">bad</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">fn</span><span class="p">.</span><span class="nx">Call</span><span class="p">([]</span><span class="nx">reflect</span><span class="p">.</span><span class="nx">Value</span><span class="p">{</span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="s">&quot;Go&quot;</span><span class="p">),</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="mi">0</span><span class="p">)})</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;錯誤:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">bad</span><span class="p">[</span><span class="mi">1</span><span class="p">].</span><span class="nx">Interface</span><span class="p">())</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>參數 2 個，回傳 2 個
+  in[0]: string
+  in[1]: int
+Hello, Go! Hello, Go! 
+錯誤: times 必須為正數，得到 0
+</code></pre></div>
+
+<div class="admonition danger">
+<p class="admonition-title"><code>Call</code> 的每個細節都會 panic</p>
+<p>參數數量不對、型別不對、<code>Value</code> 不合法——全部都是 panic 而非回傳錯誤。使用 <code>reflect.Call</code> 的程式碼<strong>必須</strong>包在 <code>recover</code> 裡，或事先做完整的簽章驗證。</p>
+<p>另外 <code>Call</code> 每次都會配置一個 <code>[]Value</code> 給參數、一個給回傳值，成本大約是直接呼叫的數百倍。</p>
+</div>
+<hr />
+<h2 id="什麼時候該用反射">什麼時候該用反射<a class="headerlink" href="#什麼時候該用反射" title="Permanent link">#</a></h2>
+<p>反射是強大但昂貴的工具。判斷準則：<strong>當型別資訊只有在執行期才知道時</strong>。</p>
+<p><strong>適合的場景：</strong></p>
+<table>
+<thead>
+<tr>
+<th>場景</th>
+<th>例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>序列化／反序列化</td>
+<td><code>encoding/json</code>、YAML、protobuf</td>
+</tr>
+<tr>
+<td>ORM 與資料庫映射</td>
+<td>把 <code>sql.Rows</code> 掃進任意 struct</td>
+</tr>
+<tr>
+<td>設定檔綁定</td>
+<td><code>viper</code>、環境變數 → struct</td>
+</tr>
+<tr>
+<td>驗證框架</td>
+<td>依 tag 檢查欄位</td>
+</tr>
+<tr>
+<td>依賴注入容器</td>
+<td>依型別自動組裝</td>
+</tr>
+<tr>
+<td>測試輔助</td>
+<td><code>reflect.DeepEqual</code>、產生假資料</td>
+</tr>
+<tr>
+<td>泛型無法表達的多型</td>
+<td>需要走訪任意 struct 的欄位</td>
+</tr>
+</tbody>
+</table>
+<p><strong>不適合的場景：</strong></p>
+<ul>
+<li><strong>有具體型別可用時。</strong> 直接寫，不要為了「通用」而反射。</li>
+<li><strong>熱路徑。</strong> 100 倍的差距在迴圈裡會非常明顯。</li>
+<li><strong>泛型能解決的問題。</strong> Go 1.18 之後，很多以前需要反射的通用容器與演算法都能用泛型表達。</li>
+<li><strong>只是想少寫幾行 if。</strong> 可讀性的損失遠大於收益。</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">反射會讓連結器的死碼消除失效</p>
+<p>如果程式使用了 <code>reflect.Value.Method</code> 或 <code>reflect.Type.Method</code>，連結器無法判斷哪些方法會被呼叫，只好<strong>保留所有型別的所有方法</strong>。這會讓執行檔明顯變大。</p>
+<p>大量使用反射的框架，產出的執行檔常常比預期大好幾 MB，原因就在這裡。</p>
+</div>
+<h3 id="reflectdeepequal-的注意事項"><code>reflect.DeepEqual</code> 的注意事項<a class="headerlink" href="#reflectdeepequal-的注意事項" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;reflect&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">a</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="w">          </span><span class="c1">// nil</span>
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{}</span><span class="w">         </span><span class="c1">// 空但非 nil</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">reflect</span><span class="p">.</span><span class="nx">DeepEqual</span><span class="p">(</span><span class="nx">a</span><span class="p">,</span><span class="w"> </span><span class="nx">b</span><span class="p">))</span><span class="w"> </span><span class="c1">// false ← 注意！</span>
+
+<span class="w">    </span><span class="nx">m1</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">][]</span><span class="kt">int</span><span class="p">{</span><span class="s">&quot;x&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">}}</span>
+<span class="w">    </span><span class="nx">m2</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">][]</span><span class="kt">int</span><span class="p">{</span><span class="s">&quot;x&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">}}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">reflect</span><span class="p">.</span><span class="nx">DeepEqual</span><span class="p">(</span><span class="nx">m1</span><span class="p">,</span><span class="w"> </span><span class="nx">m2</span><span class="p">))</span><span class="w"> </span><span class="c1">// true</span>
+
+<span class="w">    </span><span class="c1">// 函式永遠不相等（除非兩者都是 nil）</span>
+<span class="w">    </span><span class="nx">f</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">reflect</span><span class="p">.</span><span class="nx">DeepEqual</span><span class="p">(</span><span class="nx">f</span><span class="p">,</span><span class="w"> </span><span class="nx">f</span><span class="p">))</span><span class="w"> </span><span class="c1">// false</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><code>DeepEqual</code> 在測試裡很方便，但有幾個陷阱：nil slice ≠ 空 slice、函式永遠不等、<code>time.Time</code> 因為內部有單調時鐘欄位可能誤判。</p>
+<p>測試中建議改用 <code>github.com/google/go-cmp/cmp</code>，它的錯誤訊息會直接指出差異在哪，也支援自訂比較規則。</p>
+<hr />
+<p>Part 3 結束。下一部分回到語言表層，看那些「看起來像語法、其實是編譯器改寫」的關鍵字。</p></article><nav class='pager'><a class='prev' href='interface.html'><span>上一節</span><strong>3.2 介面 interface</strong></a><a class='next' href='for-range.html'><span>下一節</span><strong>4.1 for 與 range</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#反射的三條定律'>反射的三條定律</a></li><li><a href='#定律一介面-反射物件'>定律一：介面 → 反射物件</a><ul><li><a href='#type-與-kind-的差別'>Type 與 Kind 的差別</a></li></ul></li><li><a href='#定律二反射物件-介面'>定律二：反射物件 → 介面</a></li><li><a href='#定律三可設定性'>定律三：可設定性</a><ul><li><a href='#為什麼不能設定'>為什麼不能設定</a></li><li><a href='#正確做法傳指標再-elem'>正確做法：傳指標，再 Elem()</a></li><li><a href='#可設定的三個條件'>可設定的三個條件</a></li></ul></li><li><a href='#struct-tag反射最常見的用途'>struct tag：反射最常見的用途</a><ul><li><a href='#tag-的格式規則'>tag 的格式規則</a></li></ul></li><li><a href='#反射的成本'>反射的成本</a><ul><li><a href='#成本來自哪裡'>成本來自哪裡</a></li><li><a href='#怎麼降低成本'>怎麼降低成本</a></li></ul></li><li><a href='#動態呼叫函式'>動態呼叫函式</a></li><li><a href='#什麼時候該用反射'>什麼時候該用反射</a><ul><li><a href='#reflectdeepequal-的注意事項'>reflect.DeepEqual 的注意事項</a></li></ul></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

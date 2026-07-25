@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>6.2 垃圾回收器 — Go 底層原理筆記</title>
+<meta name="description" content="三色標記與寫入屏障、GC 的四個階段、GOGC 與 GOMEMLIMIT 怎麼調，以及 Go 1.26 預設啟用的 Green Tea GC。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li class='active'><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>記憶體管理</p><h1><span class='h1num'>6.2</span>垃圾回收器</h1><p class='lede'>三色標記與寫入屏障、GC 的四個階段、GOGC 與 GOMEMLIMIT 怎麼調，以及 Go 1.26 預設啟用的 Green Tea GC。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="go-的-gc-是什麼類型">Go 的 GC 是什麼類型<a class="headerlink" href="#go-的-gc-是什麼類型" title="Permanent link">#</a></h2>
+<p>一句話描述：<strong>並行、三色標記清除、非分代、非壓縮、精確</strong>。</p>
+<p>逐項拆解：</p>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>意義</th>
+<th>取捨</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>並行（concurrent）</strong></td>
+<td>標記階段與使用者程式同時執行</td>
+<td>STW 極短（通常 &lt; 1 ms），但需要寫入屏障</td>
+</tr>
+<tr>
+<td><strong>三色標記清除</strong></td>
+<td>mark-sweep 演算法的變體</td>
+<td>成熟可靠，實作相對簡單</td>
+</tr>
+<tr>
+<td><strong>非分代</strong></td>
+<td>不區分新生代／老年代</td>
+<td>少了分代假設的收益，但也省下 write barrier 的分代簿記</td>
+</tr>
+<tr>
+<td><strong>非壓縮</strong></td>
+<td>不搬移物件</td>
+<td>指標永遠有效，cgo 與 unsafe 好處理；代價是可能有碎片</td>
+</tr>
+<tr>
+<td><strong>精確（precise）</strong></td>
+<td>明確知道每個字組是不是指標</td>
+<td>不會誤保留垃圾；靠編譯器產生的型別中繼資料</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">為什麼不做分代 GC</p>
+<p>「多數物件很快就死」的分代假設在很多語言成立。Go 團隊的判斷是：</p>
+<ol>
+<li>Go 的<strong>逃逸分析</strong>已經把大量短命物件留在堆疊上，這些物件根本不進 GC 的視野。分代 GC 的主要收益已經被吃掉了。</li>
+<li>分代需要更複雜的寫入屏障（記錄跨代指標），會拖慢使用者程式碼。</li>
+<li>Go 的設計目標是<strong>低延遲</strong>而非高吞吐。分代主要優化吞吐。</li>
+</ol>
+<p>這個決定曾被討論多次，目前的結論仍是不做。</p>
+</div>
+<hr />
+<h2 id="三色標記">三色標記<a class="headerlink" href="#三色標記" title="Permanent link">#</a></h2>
+<p>演算法的核心是把所有物件分成三類：</p>
+<table>
+<thead>
+<tr>
+<th>顏色</th>
+<th>意義</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>⚪ <strong>白色</strong></td>
+<td>尚未被掃描到。標記結束時仍是白色的 = 垃圾</td>
+</tr>
+<tr>
+<td>⚫ <strong>灰色</strong></td>
+<td>已知存活，但它指向的物件還沒檢查完</td>
+</tr>
+<tr>
+<td>⚫ <strong>黑色</strong></td>
+<td>已知存活，而且它指向的物件都已經加入灰色集合</td>
+</tr>
+</tbody>
+</table>
+<p>流程：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>1. 全部物件初始為白色
+2. 把「根物件」（全域變數、各 goroutine 的堆疊、暫存器）塗成灰色
+3. while 灰色集合不為空:
+       取出一個灰色物件 x
+       把 x 指向的所有白色物件塗成灰色
+       把 x 塗成黑色
+4. 剩下的白色物件全部回收
+</code></pre></div>
+
+<figure class="diagram"><svg viewBox="0 0 700 300" role="img" aria-label="三色標記的過程"><text class="d-t-b" x="15" y="20">初始：根物件變灰</text><circle cx="60" cy="55" r="18" style="fill:var(--bg-sunken);stroke:var(--fg-soft);stroke-width:2"/><text class="d-t-m d-mid" x="60" y="60">root</text><circle cx="150" cy="45" r="16" style="fill:var(--bg);stroke:var(--line-strong);stroke-width:2"/><text class="d-t-m d-mid" x="150" y="50">A</text><circle cx="150" cy="95" r="16" style="fill:var(--bg);stroke:var(--line-strong);stroke-width:2"/><text class="d-t-m d-mid" x="150" y="100">B</text><circle cx="230" cy="45" r="16" style="fill:var(--bg);stroke:var(--line-strong);stroke-width:2"/><text class="d-t-m d-mid" x="230" y="50">C</text><circle cx="230" cy="95" r="16" style="fill:var(--bg);stroke:var(--line-strong);stroke-width:2"/><text class="d-t-m d-mid" x="230" y="100">D</text><path class="d-line" d="M78 50 L132 46"/><path class="d-line" d="M78 62 L132 91"/><path class="d-line" d="M166 45 L212 45"/><path class="d-line" d="M166 95 L212 95"/><text class="d-t-b" x="290" y="20">掃描中</text><circle cx="335" cy="55" r="18" style="fill:var(--fg);stroke:var(--fg);stroke-width:2"/><text class="d-t-m d-mid" x="335" y="60" style="fill:var(--bg)">root</text><circle cx="425" cy="45" r="16" style="fill:var(--fg-faint);stroke:var(--fg-soft);stroke-width:2"/><text class="d-t-m d-mid" x="425" y="50" style="fill:var(--bg)">A</text><circle cx="425" cy="95" r="16" style="fill:var(--fg-faint);stroke:var(--fg-soft);stroke-width:2"/><text class="d-t-m d-mid" x="425" y="100" style="fill:var(--bg)">B</text><circle cx="505" cy="45" r="16" style="fill:var(--bg);stroke:var(--line-strong);stroke-width:2"/><text class="d-t-m d-mid" x="505" y="50">C</text><circle cx="505" cy="95" r="16" style="fill:var(--bg);stroke:var(--line-strong);stroke-width:2"/><text class="d-t-m d-mid" x="505" y="100">D</text><path class="d-line" d="M353 50 L407 46"/><path class="d-line" d="M353 62 L407 91"/><path class="d-line" d="M441 45 L487 45"/><path class="d-line" d="M441 95 L487 95"/><text class="d-t-b" x="565" y="20">完成</text><circle cx="600" cy="55" r="18" style="fill:var(--fg);stroke:var(--fg);stroke-width:2"/><text class="d-t-m d-mid" x="600" y="60" style="fill:var(--bg)">root</text><circle cx="660" cy="45" r="16" style="fill:var(--fg);stroke:var(--fg);stroke-width:2"/><text class="d-t-m d-mid" x="660" y="50" style="fill:var(--bg)">A</text><circle cx="660" cy="95" r="16" style="fill:var(--fg);stroke:var(--fg);stroke-width:2"/><text class="d-t-m d-mid" x="660" y="100" style="fill:var(--bg)">B</text><path class="d-line" d="M618 50 L644 46"/><path class="d-line" d="M618 62 L644 91"/><rect x="15" y="130" width="180" height="24" rx="4" style="fill:var(--bg);stroke:var(--line-strong);stroke-width:2"/><text class="d-t-s" x="205" y="147">白色 = 尚未掃描，最後回收</text><rect x="15" y="160" width="180" height="24" rx="4" style="fill:var(--fg-faint);stroke:var(--fg-soft);stroke-width:2"/><text class="d-t-s" x="205" y="177">灰色 = 存活，但子節點還沒處理</text><rect x="15" y="190" width="180" height="24" rx="4" style="fill:var(--fg);stroke:var(--fg);stroke-width:2"/><text class="d-t-s" x="205" y="207">黑色 = 存活，且子節點都已入列</text><line class="d-dash" x1="15" y1="232" x2="685" y2="232"/><text class="d-t-s" x="15" y="256">問題：標記期間使用者程式碼還在跑，它可能把指標搬來搬去，讓已經掃過的黑色物件指向一個白色物件，</text><text class="d-t-s" x="15" y="278">而該白色物件的其他參照又被刪除 —— 這個物件就會被誤判為垃圾。解法是「寫入屏障」。</text></svg><figcaption><b>三色不變式。</b>演算法要維持的性質是：<b>不存在「黑色物件直接指向白色物件」而該白色物件沒有其他灰色路徑可達</b>。破壞這個性質就會誤刪存活物件。</figcaption></figure>
+
+<hr />
+<h2 id="寫入屏障">寫入屏障<a class="headerlink" href="#寫入屏障" title="Permanent link">#</a></h2>
+<p>並行標記的根本挑戰：<strong>使用者程式碼在標記期間會修改指標</strong>。</p>
+<p>考慮這個序列：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>1. GC 掃描完物件 A（塗黑），A.next = nil
+2. 使用者程式碼執行：A.next = B（B 是白色）
+3. 使用者程式碼執行：C.ref = nil（C 原本是唯一指向 B 的灰色物件）
+4. GC 掃描結束 → B 仍是白色 → 被回收
+5. 但 A.next 還指著 B → 存取已釋放的記憶體 → 災難
+</code></pre></div>
+
+<p><strong>寫入屏障（write barrier）</strong> 是編譯器插在每個指標寫入前的一小段程式碼，用來攔截這種情況。</p>
+<p>Go 從 1.8 起使用<strong>混合寫入屏障（hybrid write barrier）</strong>，結合了兩種經典策略：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>writePointer(slot, ptr):
+    shade(*slot)      // Yuasa 式：把「被覆蓋掉的舊值」塗灰
+    if 目前在標記階段 &amp;&amp; 目前 goroutine 的堆疊是黑色:
+        shade(ptr)    // Dijkstra 式：把「新寫入的值」也塗灰
+    *slot = ptr
+</code></pre></div>
+
+<ul>
+<li><code>shade(*slot)</code> 保護「即將失去參照的物件」——如果 B 原本被 A 指著，現在要被覆蓋，先把 B 塗灰保住它。</li>
+<li><code>shade(ptr)</code> 保護「新建立的參照」。</li>
+</ul>
+<div class="admonition version">
+<p class="admonition-title">Go 1.8：混合屏障消除了堆疊的重新掃描</p>
+<p>Go 1.8 之前用純 Dijkstra 屏障，但<strong>堆疊上的寫入沒有屏障</strong>（每次寫區域變數都插屏障太慢）。代價是標記結束時必須 <strong>STW 重新掃描所有 goroutine 的堆疊</strong>，這個 STW 可能長達 10–100 毫秒。</p>
+<p>混合屏障讓堆疊在第一次掃描後就能永久標記為黑色，不需要重新掃描。<strong>STW 時間從數十毫秒降到數百微秒</strong>——這是 Go GC 延遲史上最大的一次改善。</p>
+</div>
+<p><strong>寫入屏障的成本</strong>：標記階段的每次指標寫入都多幾道指令。這是「並行 GC」的固定稅。非標記階段時屏障會被關閉（透過一個全域旗標），成本接近零。</p>
+<div class="admonition tip">
+<p class="admonition-title">這解釋了一個效能現象</p>
+<p>如果你的資料結構有大量指標且頻繁修改（例如一棵常變動的樹），GC 期間的效能會明顯下降。</p>
+<p>對策：改用<strong>索引取代指標</strong>。用 <code>[]Node</code> 加 <code>int32</code> 索引取代 <code>*Node</code>，寫入屏障完全消失，GC 掃描也快得多（一整塊 <code>[]Node</code> 如果不含指標，GC 直接跳過）。</p>
+</div>
+<hr />
+<h2 id="四個階段">四個階段<a class="headerlink" href="#四個階段" title="Permanent link">#</a></h2>
+<figure class="diagram"><svg viewBox="0 0 700 340" role="img" aria-label="GC 的四個階段與 STW 時間"><rect class="d-box-d" x="15" y="14" width="140" height="74" rx="6"/><text class="d-t-b d-mid" x="85" y="36">① Mark Setup</text><text class="d-t-a d-mid" x="85" y="56">STW</text><text class="d-t-s d-mid" x="85" y="74">開啟寫入屏障</text><rect class="d-box-a" x="163" y="14" width="240" height="74" rx="6"/><text class="d-t-b d-mid" x="283" y="36">② Marking（並行）</text><text class="d-t-s d-mid" x="283" y="56">背景 worker 用約 25% 的 CPU 標記</text><text class="d-t-s d-mid" x="283" y="74">配置太快的 goroutine 要「協助標記」</text><rect class="d-box-d" x="411" y="14" width="140" height="74" rx="6"/><text class="d-t-b d-mid" x="481" y="36">③ Mark Termination</text><text class="d-t-a d-mid" x="481" y="56">STW</text><text class="d-t-s d-mid" x="481" y="74">收尾、關閉屏障</text><rect class="d-box-o" x="559" y="14" width="126" height="74" rx="6"/><text class="d-t-b d-mid" x="622" y="36">④ Sweep</text><text class="d-t-s d-mid" x="622" y="56">並行 + 延遲</text><text class="d-t-s d-mid" x="622" y="74">配置時順便清</text><text class="d-t-s d-mid" x="85" y="108">&lt; 100 µs</text><text class="d-t-s d-mid" x="283" y="108">數毫秒到數秒（依堆積大小）</text><text class="d-t-s d-mid" x="481" y="108">&lt; 100 µs</text><text class="d-t-s d-mid" x="622" y="108">攤提</text><line class="d-dash" x1="15" y1="132" x2="685" y2="132"/><text class="d-t-b" x="15" y="158">關鍵設計：只有兩段極短的 STW</text><text class="d-t-s" x="15" y="182">GC 的絕大部分工作（標記與清除）都跟使用者程式碼並行。兩段 STW 只做「開關屏障」與「確認標記完成」這類必須原子完成的事。</text><text class="d-t-s" x="15" y="204">目標是把 STW 控制在 100 微秒以內，而且不隨堆積大小成長 —— 這是 Go 相對於早期 JVM GC 的最大優勢。</text><rect class="d-box-w" x="15" y="226" width="670" height="98" rx="6"/><text class="d-t-b" x="30" y="248">Pacer：決定「什麼時候開始 GC」</text><text class="d-t-s" x="30" y="270">目標：讓 GC 在堆積達到 目標值 = 存活量 × (1 + GOGC/100) 時「剛好」完成</text><text class="d-t-s" x="30" y="290">太早開始 → GC 跑太頻繁，浪費 CPU　·　太晚開始 → 堆積超標，甚至 OOM</text><text class="d-t-s" x="30" y="310">Pacer 依上一輪的標記速率與目前的配置速率，反饋調整下一輪的觸發點。GOMEMLIMIT 會加入一個硬性上界。</text></svg><figcaption><b>四階段與 pacer。</b>`gctrace=1` 輸出裡的 `0.015+0.42+0.003 ms clock` 就對應階段 ①②③ 的時間。健康的服務裡，第一段與第三段應該都在數十到數百微秒。</figcaption></figure>
+
+<h3 id="協助標記mutator-assist">協助標記（mutator assist）<a class="headerlink" href="#協助標記mutator-assist" title="Permanent link">#</a></h3>
+<p>如果使用者程式碼配置得比 GC 標記得還快，堆積會在 GC 完成前就超過目標。解法是：<strong>讓配置者自己幫忙標記</strong>。</p>
+<div class="hl" data-lang="text"><pre><span></span><code>每次配置時：
+    assistBytes -= 配置的大小
+    if assistBytes &lt; 0:
+        這個 goroutine 必須先幫忙標記一些物件，才能繼續配置
+</code></pre></div>
+
+<p><strong>這是為什麼在 GC 期間，配置密集的程式碼會明顯變慢。</strong> 你的 goroutine 被徵召去做 GC 的工作了。</p>
+<p>如果你在 trace 裡看到大量的 <code>GC (assist)</code> 事件，代表配置速率超過了 GC 的處理能力——降低配置量或提高 <code>GOGC</code>。</p>
+<hr />
+<h2 id="gogc-與-gomemlimit"><code>GOGC</code> 與 <code>GOMEMLIMIT</code><a class="headerlink" href="#gogc-與-gomemlimit" title="Permanent link">#</a></h2>
+<h3 id="gogc以百分比控制"><code>GOGC</code>：以百分比控制<a class="headerlink" href="#gogc以百分比控制" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="text"><pre><span></span><code>下次 GC 的目標堆積 = 上次 GC 後的存活量 × (1 + GOGC/100)
+</code></pre></div>
+
+<p>預設 <code>GOGC=100</code>，意思是「堆積成長到存活量的兩倍時觸發 GC」。</p>
+<table>
+<thead>
+<tr>
+<th>設定</th>
+<th>行為</th>
+<th>適合</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GOGC=50</code></td>
+<td>存活量的 1.5 倍就 GC</td>
+<td>記憶體吃緊，願意用 CPU 換</td>
+</tr>
+<tr>
+<td><code>GOGC=100</code></td>
+<td>預設，2 倍</td>
+<td>大多數情況</td>
+</tr>
+<tr>
+<td><code>GOGC=400</code></td>
+<td>5 倍才 GC</td>
+<td>CPU 密集、記憶體充裕</td>
+</tr>
+<tr>
+<td><code>GOGC=off</code></td>
+<td>完全關閉</td>
+<td>短命的批次工具（跑完就結束）</td>
+</tr>
+</tbody>
+</table>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GOGC</span><span class="o">=</span><span class="m">200</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
+</code></pre></div>
+
+<p>或在程式裡：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="s">&quot;runtime/debug&quot;</span>
+
+<span class="nx">debug</span><span class="p">.</span><span class="nx">SetGCPercent</span><span class="p">(</span><span class="mi">200</span><span class="p">)</span>
+</code></pre></div>
+
+<h3 id="gomemlimit軟性記憶體上限"><code>GOMEMLIMIT</code>：軟性記憶體上限<a class="headerlink" href="#gomemlimit軟性記憶體上限" title="Permanent link">#</a></h3>
+<div class="admonition version">
+<p class="admonition-title">Go 1.19 起：解決容器 OOM 的正解</p>
+<p><code>GOGC</code> 是<strong>相對</strong>的，它不知道你的容器只有 512 MB。如果存活量因為某次流量尖峰漲到 300 MB，GC 目標就變成 600 MB —— 超過容器限制，直接被 OOM Killer 殺掉。</p>
+<p><code>GOMEMLIMIT</code> 設定一個<strong>軟性上限</strong>：接近它時，GC 會更積極地運作（即使還沒到 <code>GOGC</code> 的門檻）。</p>
+</div>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GOMEMLIMIT</span><span class="o">=</span>400MiB<span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
+</code></pre></div>
+
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="s">&quot;runtime/debug&quot;</span>
+
+<span class="nx">debug</span><span class="p">.</span><span class="nx">SetMemoryLimit</span><span class="p">(</span><span class="mi">400</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">20</span><span class="p">)</span><span class="w"> </span><span class="c1">// 400 MiB</span>
+</code></pre></div>
+
+<p><strong>它是「軟性」的：</strong> Go 會盡力不超過，但如果存活物件本身就超過限制，它不會殺掉你的程式——只會持續地跑 GC（可能陷入 GC 死亡螺旋，CPU 被 GC 吃光）。</p>
+<h3 id="推薦的容器設定">推薦的容器設定<a class="headerlink" href="#推薦的容器設定" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="text"><pre><span></span><code>容器記憶體 limit:  512 MiB
+GOMEMLIMIT:        450MiB      ← 留約 10-15% 給非堆積用量
+GOGC:              100 或 off
+</code></pre></div>
+
+<p>為什麼要留 10–15%？因為 <code>GOMEMLIMIT</code> 涵蓋的是 <strong>Go runtime 管理的記憶體總量</strong>（堆積 + 堆疊 + runtime 內部結構），但不包含：</p>
+<ul>
+<li>cgo 配置的記憶體</li>
+<li>執行檔本身與作業系統的映射</li>
+<li>檔案系統快取</li>
+</ul>
+<div class="admonition tip">
+<p class="admonition-title"><code>GOGC=off</code> + <code>GOMEMLIMIT</code> 的組合</p>
+<p>這個組合在某些服務上效果很好：</p>
+<p><code>bash
+GOGC=off GOMEMLIMIT=450MiB ./app</code></p>
+<p>意思是「不要因為堆積成長而 GC，只在接近記憶體上限時才 GC」。這讓 GC 次數降到最低（省 CPU），同時保證不會 OOM。</p>
+<p><strong>適合</strong>：記憶體用量穩定可預測的服務。
+<strong>不適合</strong>：存活集大小變化劇烈的服務——可能長時間維持在高記憶體水位。</p>
+</div>
+<hr />
+<h2 id="green-tea-gc">Green Tea GC<a class="headerlink" href="#green-tea-gc" title="Permanent link">#</a></h2>
+<div class="admonition version">
+<p class="admonition-title">Go 1.25 實驗，Go 1.26 預設啟用</p>
+<p>這是近年 GC 最大的一次改動。</p>
+<p><strong>問題</strong>：傳統的標記過程把堆積當成一張扁平的指標圖，一次追一個指標。這對現代 CPU 非常不友善——每次追指標都可能是一次快取未命中，而且無法預取、無法平行化。掃描小物件時，<strong>記憶體延遲</strong>而非計算是瓶頸。</p>
+<p><strong>Green Tea 的做法</strong>：改變掃描的組織方式，讓 CPU <strong>一次處理記憶體上相鄰的一批物件</strong>，而不是照指標圖的順序跳來跳去。相關資料被一起載入快取，快取命中率大幅提高，也更容易利用 CPU 的平行能力。</p>
+<p><strong>效果</strong>：官方回報在<strong>大量使用 GC 的真實程式</strong>上，GC 開銷降低 <strong>10%–40%</strong>。</p>
+<p><strong>對你的影響</strong>：升級到 Go 1.26 就自動生效，不需要改任何程式碼。想關掉（不建議）：</p>
+<p><code>bash
+GOEXPERIMENT=nogreenteagc go build .</code></p>
+<p>這個 opt-out 預計在 Go 1.27 移除。</p>
+</div>
+<p>其他 Go 1.26 的記憶體相關改進：</p>
+<ul>
+<li>cgo 呼叫的基礎開銷降低約 <strong>30%</strong></li>
+<li>64 位元平台上，runtime 會在啟動時<strong>隨機化堆積基底位址</strong>（安全強化，讓 cgo 場景下的位址預測更困難）</li>
+<li>編譯器能在更多情況下把 slice 的底層陣列配置在堆疊上</li>
+</ul>
+<hr />
+<h2 id="讀-gctrace">讀 <code>gctrace</code><a class="headerlink" href="#讀-gctrace" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">gctrace</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>gc 12 @2.345s 3%: 0.021+15+0.008 ms clock, 0.17+2.1/29/0.42+0.068 ms cpu, 82-&gt;84-&gt;41 MB, 84 MB goal, 0 MB stacks, 0 MB globals, 8 P
+</code></pre></div>
+
+<p>完整拆解：</p>
+<table>
+<thead>
+<tr>
+<th>片段</th>
+<th>意義</th>
+<th>該注意什麼</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gc 12</code></td>
+<td>第 12 次 GC</td>
+<td>頻率太高 = 配置太多或 <code>GOGC</code> 太低</td>
+</tr>
+<tr>
+<td><code>@2.345s</code></td>
+<td>程式啟動後的時間</td>
+<td></td>
+</tr>
+<tr>
+<td><code>3%</code></td>
+<td>至今 GC 佔用的 CPU 總比例</td>
+<td><strong>超過 10% 就該調校</strong></td>
+</tr>
+<tr>
+<td><code>0.021+15+0.008 ms clock</code></td>
+<td>STW① + 並行標記 + STW③</td>
+<td><strong>兩端的 STW 是延遲關鍵，應 &lt; 1 ms</strong></td>
+</tr>
+<tr>
+<td><code>0.17+2.1/29/0.42+0.068 ms cpu</code></td>
+<td>各階段的 CPU 時間（含所有核心）</td>
+<td>中間三段是 assist / background / idle</td>
+</tr>
+<tr>
+<td><code>82-&gt;84-&gt;41 MB</code></td>
+<td>GC 開始 → 結束 → 存活</td>
+<td>第三個數字是真正的「存活集大小」</td>
+</tr>
+<tr>
+<td><code>84 MB goal</code></td>
+<td>這次 GC 的目標</td>
+<td></td>
+</tr>
+<tr>
+<td><code>0 MB stacks</code></td>
+<td>goroutine 堆疊總量</td>
+<td>大量 goroutine 時會很可觀</td>
+</tr>
+<tr>
+<td><code>8 P</code></td>
+<td>使用的 P 數量</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>三個健康指標：</strong></p>
+<ol>
+<li><strong>STW 時間</strong> —— 第一與第三段應該都 &lt; 1 ms。持續超過代表堆疊很多或有異常。</li>
+<li><strong>GC CPU 比例</strong> —— 應該 &lt; 10%。超過表示配置速率太高。</li>
+<li><strong>存活集（第三個數字）</strong> —— 持續成長 = 記憶體洩漏。</li>
+</ol>
+<hr />
+<h2 id="調校流程">調校流程<a class="headerlink" href="#調校流程" title="Permanent link">#</a></h2>
+<p>遇到 GC 相關的效能問題，按這個順序處理：</p>
+<h3 id="第一步先量測">第一步：先量測<a class="headerlink" href="#第一步先量測" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">gctrace</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>./app<span class="w"> </span><span class="m">2</span>&gt;gc.log
+</code></pre></div>
+
+<p>確認問題類型：</p>
+<table>
+<thead>
+<tr>
+<th>症狀</th>
+<th>可能原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GC 頻繁（每秒好幾次）</td>
+<td>配置速率太高</td>
+</tr>
+<tr>
+<td>STW 時間長（&gt; 5 ms）</td>
+<td>goroutine 太多、堆疊太大、或有超大物件</td>
+</tr>
+<tr>
+<td>GC CPU 比例高（&gt; 15%）</td>
+<td>配置速率太高，或存活集太大</td>
+</tr>
+<tr>
+<td>記憶體只增不減</td>
+<td>洩漏，不是 GC 問題</td>
+</tr>
+</tbody>
+</table>
+<h3 id="第二步減少配置最有效">第二步：減少配置（最有效）<a class="headerlink" href="#第二步減少配置最有效" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-bench<span class="o">=</span>.<span class="w"> </span>-memprofile<span class="o">=</span>mem.out
+go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </span>-sample_index<span class="o">=</span>alloc_space<span class="w"> </span>-http<span class="o">=</span>:8081<span class="w"> </span>mem.out
+</code></pre></div>
+
+<p>找出配置量最大的幾個地方，用 <a href="allocator.html#減少配置的實用清單">記憶體配置器</a> 那節的清單處理。</p>
+<p><strong>這幾乎總是收益最大的一步。</strong> 調參數只是把問題往後推，減少配置才是根治。</p>
+<h3 id="第三步才調參數">第三步：才調參數<a class="headerlink" href="#第三步才調參數" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="c1"># 記憶體充裕、想降低 GC CPU</span>
+<span class="nv">GOGC</span><span class="o">=</span><span class="m">200</span>
+
+<span class="c1"># 容器環境、要避免 OOM</span>
+<span class="nv">GOMEMLIMIT</span><span class="o">=</span>450MiB
+
+<span class="c1"># 短命的 CLI 工具</span>
+<span class="nv">GOGC</span><span class="o">=</span>off
+</code></pre></div>
+
+<h3 id="第四步考慮架構層面">第四步：考慮架構層面<a class="headerlink" href="#第四步考慮架構層面" title="Permanent link">#</a></h3>
+<ul>
+<li><strong>物件池化</strong> —— <code>sync.Pool</code> 處理高頻的大物件</li>
+<li><strong>索引取代指標</strong> —— <code>[]Node</code> + <code>int32</code> 取代 <code>*Node</code>，消除寫入屏障與掃描成本</li>
+<li><strong>值型別取代指標型別</strong> —— <code>[]Item</code> 而非 <code>[]*Item</code></li>
+<li><strong><code>unsafe</code> 手動管理</strong> —— 極端情況才考慮，風險很高</li>
+</ul>
+<hr />
+<h2 id="常見誤解">常見誤解<a class="headerlink" href="#常見誤解" title="Permanent link">#</a></h2>
+<p><strong>「GC 會壓縮記憶體、消除碎片。」</strong> Go 的 GC <strong>不搬移物件</strong>。碎片靠 size class 機制減輕，但不會被消除。</p>
+<p><strong>「呼叫 <code>runtime.GC()</code> 可以優化效能。」</strong> 相反。它會強制一次完整的 STW GC，通常讓事情更糟。只在基準測試裡建立乾淨起點時才用。</p>
+<p><strong>「記憶體用完就 OOM，跟 GC 無關。」</strong> 有關。GC 太晚觸發是容器 OOM 的常見原因，這正是 <code>GOMEMLIMIT</code> 要解決的問題。</p>
+<p><strong>「<code>HeapAlloc</code> 就是我的程式用了多少記憶體。」</strong> 不是。作業系統看到的 RSS 包含 <code>HeapIdle</code>（Go 取得但沒用的部分）、goroutine 堆疊、runtime 結構。RSS 通常比 <code>HeapAlloc</code> 大不少。</p>
+<p><strong>「GC 停頓會隨堆積變大而變長。」</strong> 標記<strong>總時間</strong>會，但 <strong>STW 時間</strong>不會（那是 Go GC 的核心設計目標）。堆積 100 GB 的服務，STW 仍應維持在數百微秒。</p>
+<hr />
+<p>下一節是 Part 6 的最後一節：goroutine 的堆疊怎麼從 2 KB 長到需要的大小。</p></article><nav class='pager'><a class='prev' href='allocator.html'><span>上一節</span><strong>6.1 記憶體配置器</strong></a><a class='next' href='stack.html'><span>下一節</span><strong>6.3 堆疊記憶體管理</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#go-的-gc-是什麼類型'>Go 的 GC 是什麼類型</a></li><li><a href='#三色標記'>三色標記</a></li><li><a href='#寫入屏障'>寫入屏障</a></li><li><a href='#四個階段'>四個階段</a><ul><li><a href='#協助標記mutator-assist'>協助標記（mutator assist）</a></li></ul></li><li><a href='#gogc-與-gomemlimit'>GOGC 與 GOMEMLIMIT</a><ul><li><a href='#gogc以百分比控制'>GOGC：以百分比控制</a></li><li><a href='#gomemlimit軟性記憶體上限'>GOMEMLIMIT：軟性記憶體上限</a></li><li><a href='#推薦的容器設定'>推薦的容器設定</a></li></ul></li><li><a href='#green-tea-gc'>Green Tea GC</a></li><li><a href='#讀-gctrace'>讀 gctrace</a></li><li><a href='#調校流程'>調校流程</a><ul><li><a href='#第一步先量測'>第一步：先量測</a></li><li><a href='#第二步減少配置最有效'>第二步：減少配置（最有效）</a></li><li><a href='#第三步才調參數'>第三步：才調參數</a></li><li><a href='#第四步考慮架構層面'>第四步：考慮架構層面</a></li></ul></li><li><a href='#常見誤解'>常見誤解</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

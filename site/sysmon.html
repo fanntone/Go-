@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5.7 系統監控 sysmon — Go 底層原理筆記</title>
+<meta name="description" content="那條不需要 P 就能執行的監控執行緒，它負責搶佔、回收系統呼叫中的 P、強制 GC 與歸還記憶體。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li class='active'><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>並行</p><h1><span class='h1num'>5.7</span>系統監控 sysmon</h1><p class='lede'>那條不需要 P 就能執行的監控執行緒，它負責搶佔、回收系統呼叫中的 P、強制 GC 與歸還記憶體。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="一條特別的執行緒">一條特別的執行緒<a class="headerlink" href="#一條特別的執行緒" title="Permanent link">#</a></h2>
+<p><code>sysmon</code> 是 Go runtime 在啟動時建立的一條<strong>專用執行緒</strong>，它有兩個特殊之處：</p>
+<ol>
+<li><strong>不需要 P 就能執行。</strong> 一般的 M 必須持有 P 才能跑 Go 程式碼，<code>sysmon</code> 是例外——它在 <code>g0</code> 系統堆疊上執行純 runtime 邏輯。</li>
+<li><strong>不會被搶佔。</strong> 它是「監工」，如果自己也被排程管理就沒意義了。</li>
+</ol>
+<p>這個設計讓它成為整個 runtime 的<strong>安全網</strong>：即使所有 P 都被佔滿、所有 M 都阻塞，<code>sysmon</code> 仍然在跑。</p>
+<div class="hl" data-lang="text"><pre><span></span><code>runtime.main()
+    ↓
+newm(sysmon, nil, -1)   ← 建立不綁 P 的 M
+    ↓
+sysmon() 進入無限迴圈
+</code></pre></div>
+
+<hr />
+<h2 id="巡邏節奏">巡邏節奏<a class="headerlink" href="#巡邏節奏" title="Permanent link">#</a></h2>
+<p><code>sysmon</code> 的迴圈間隔是<strong>自適應</strong>的：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>delay = 20 微秒（起始）
+
+for {
+    if 閒置已久 {
+        delay *= 2
+        if delay &gt; 10 毫秒 {
+            delay = 10 毫秒   // 上限
+        }
+    }
+    usleep(delay)
+
+    ... 執行各項檢查 ...
+
+    if 有發現需要處理的事 {
+        delay = 20 微秒       // 重置成高頻
+    }
+}
+</code></pre></div>
+
+<p><strong>忙碌時每 20 微秒巡一次，閒置時降到每 10 毫秒一次。</strong> 這讓 <code>sysmon</code> 在系統閒置時幾乎不消耗 CPU（對筆電電池與雲端帳單都有幫助），忙碌時又能及時反應。</p>
+<hr />
+<h2 id="五項工作">五項工作<a class="headerlink" href="#五項工作" title="Permanent link">#</a></h2>
+<figure class="diagram"><svg viewBox="0 0 700 400" role="img" aria-label="sysmon 的五項工作"><rect class="d-box-a" x="15" y="14" width="670" height="40" rx="6"/><text class="d-t-b d-mid" x="350" y="32">sysmon —— 不綁 P、不被搶佔、20 微秒到 10 毫秒自適應巡邏</text><text class="d-t-s d-mid" x="350" y="48">runtime/proc.go</text><rect class="d-box-o" x="15" y="68" width="330" height="72" rx="6"/><text class="d-t-b" x="28" y="90">① 搶佔執行過久的 G</text><text class="d-t-s" x="28" y="110">發現某個 G 在 _Grunning 超過 10 毫秒</text><text class="d-t-s" x="28" y="128">→ 發送 SIGURG 觸發非同步搶佔</text><rect class="d-box-o" x="355" y="68" width="330" height="72" rx="6"/><text class="d-t-b" x="368" y="90">② 回收阻塞在系統呼叫的 P</text><text class="d-t-s" x="368" y="110">P 處於 _Psyscall 超過 20 微秒</text><text class="d-t-s" x="368" y="128">→ handoffp：把 P 交給別的 M 繼續用</text><rect class="d-box-w" x="15" y="152" width="330" height="72" rx="6"/><text class="d-t-b" x="28" y="174">③ 輪詢網路 netpoll</text><text class="d-t-s" x="28" y="194">距離上次 netpoll 超過 10 毫秒</text><text class="d-t-s" x="28" y="212">→ 呼叫 netpoll(0)，喚醒 I/O 就緒的 G</text><rect class="d-box-w" x="355" y="152" width="330" height="72" rx="6"/><text class="d-t-b" x="368" y="174">④ 強制 GC</text><text class="d-t-s" x="368" y="194">距離上次 GC 超過 2 分鐘</text><text class="d-t-s" x="368" y="212">→ 觸發一次，避免低配置率的程式永不 GC</text><rect class="d-box" x="15" y="236" width="670" height="72" rx="6"/><text class="d-t-b" x="28" y="258">⑤ 歸還閒置記憶體給作業系統</text><text class="d-t-s" x="28" y="278">scavenger：找出長時間沒用的 span，用 madvise(MADV_FREE / MADV_DONTNEED) 告訴 OS 可以回收</text><text class="d-t-s" x="28" y="296">這是「RSS 在 GC 之後不會立刻下降」的原因 —— 歸還是漸進的</text><line class="d-dash" x1="15" y1="326" x2="685" y2="326"/><text class="d-t-s" x="15" y="350">沒有 sysmon 會怎樣？緊密迴圈永遠不讓出 CPU（GC 也做不了）、阻塞的系統呼叫拖住 P、</text><text class="d-t-s" x="15" y="372">閒置服務的記憶體永遠不歸還、低配置率的程式從不 GC。它是 runtime 的安全網。</text></svg><figcaption><b>五項職責。</b>共通點是：這些都是「沒有人會主動去做，但一定要有人做」的工作。把它們集中在一條不受排程約束的執行緒上，是最可靠的安排。</figcaption></figure>
+
+<hr />
+<h2 id="逐項細看">逐項細看<a class="headerlink" href="#逐項細看" title="Permanent link">#</a></h2>
+<h3 id="1-搶佔執行過久的-goroutine">① 搶佔執行過久的 goroutine<a class="headerlink" href="#1-搶佔執行過久的-goroutine" title="Permanent link">#</a></h3>
+<p><code>retake()</code> 走過所有 P，檢查它們正在執行的 G：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>如果 P 狀態是 _Prunning 且該 G 已執行超過 forcePreemptNS（10 毫秒）:
+    preemptone(p)
+        → 設定 g.stackguard0 = stackPreempt（協作式：下次函式呼叫時讓出）
+        → 發送 SIGURG 給該 M（非同步式：立刻中斷）
+</code></pre></div>
+
+<p>沒有這一項，下面的程式在 <code>GOMAXPROCS=1</code> 時會永遠卡住：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GOMAXPROCS</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="c1">// 沒有函式呼叫、沒有 channel 操作</span>
+<span class="w">    </span><span class="p">}()</span>
+
+<span class="w">    </span><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="mi">50</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;sysmon 讓我印得出來&quot;</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>run<span class="w"> </span>main.go<span class="w">                              </span><span class="c1"># 正常印出</span>
+<span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">asyncpreemptoff</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go<span class="w">    </span><span class="c1"># 卡死</span>
+</code></pre></div>
+
+<p>第二個指令會卡住——關掉非同步搶佔後，<code>sysmon</code> 只能設定 <code>stackguard0</code>，但那個空迴圈永遠不會呼叫函式，檢查點永遠不會被觸發。</p>
+<div class="admonition version">
+<p class="admonition-title">這在 Go 1.14 之前是真實的問題</p>
+<p>Go 1.13 及之前沒有非同步搶佔。任何純運算的緊密迴圈都可能：</p>
+<ul>
+<li>卡住整個 GC（STW 階段要等所有 G 到達安全點）</li>
+<li>在 <code>GOMAXPROCS=1</code> 時餓死其他所有 goroutine</li>
+</ul>
+<p>當時的建議是「在長迴圈裡插入 <code>runtime.Gosched()</code>」。Go 1.14 之後不再需要。</p>
+</div>
+<h3 id="2-回收系統呼叫中的-p">② 回收系統呼叫中的 P<a class="headerlink" href="#2-回收系統呼叫中的-p" title="Permanent link">#</a></h3>
+<p>當 M 進入系統呼叫時，它持有的 P 會被標記為 <code>_Psyscall</code>。如果系統呼叫很快回來（大部分情況），M 直接拿回 P，零成本。</p>
+<p>如果超過 <strong>20 微秒</strong>（<code>sysmonSyscallThreshold</code>）還沒回來，<code>sysmon</code> 就介入：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>handoffp(p):
+    如果 P 的本地佇列有工作，或全域佇列非空，或有到期的計時器:
+        startm(p)   // 找一個閒置的 M（或建立新的）來接手這個 P
+    否則:
+        把 P 放進閒置列表
+</code></pre></div>
+
+<p><strong>這是「一個 goroutine 阻塞在檔案讀取，不會拖累其他 goroutine」的機制。</strong></p>
+<p>代價是可能建立新的執行緒。大量並行的阻塞式系統呼叫會讓執行緒數量膨脹——這就是 <a href="netpoller.html#為什麼檔案-io-不走-netpoller">netpoller</a> 那節提到的檔案 I/O 問題。</p>
+<h3 id="3-輪詢網路">③ 輪詢網路<a class="headerlink" href="#3-輪詢網路" title="Permanent link">#</a></h3>
+<p>如果距離上次 <code>netpoll</code> 超過 10 毫秒，<code>sysmon</code> 主動呼叫一次。</p>
+<p>正常情況下排程器的 <code>findRunnable()</code> 就會做這件事。但如果所有 P 都很忙（一直有工作可做，從不進入 <code>findRunnable</code> 的閒置分支），網路事件就可能被延誤。<code>sysmon</code> 保證至少每 10 毫秒檢查一次。</p>
+<h3 id="4-強制-gc">④ 強制 GC<a class="headerlink" href="#4-強制-gc" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="text"><pre><span></span><code>如果 距離上次 GC 超過 forcegcperiod（2 分鐘）:
+    喚醒 forcegchelper goroutine 觸發 GC
+</code></pre></div>
+
+<p>GC 平常由<strong>堆積成長</strong>觸發（達到 <code>GOGC</code> 設定的目標）。但如果程式幾乎不配置記憶體，這個條件永遠不成立。</p>
+<p>那為什麼還要 GC？因為：</p>
+<ul>
+<li>有些 finalizer 需要執行</li>
+<li>需要一個時機來歸還記憶體給 OS</li>
+<li>堆積上可能有已死但佔著空間的物件</li>
+</ul>
+<p>2 分鐘是個保底頻率。</p>
+<h3 id="5-歸還記憶體scavenging">⑤ 歸還記憶體（scavenging）<a class="headerlink" href="#5-歸還記憶體scavenging" title="Permanent link">#</a></h3>
+<p>這一項最常被誤解，值得多說一點。</p>
+<p><strong>GC 回收的是「Go 堆積裡的物件」，不是「還給作業系統的記憶體」。</strong> 物件被回收後，那塊空間回到 Go 的記憶體池（<code>mheap</code>）等待重用，作業系統看到的 RSS 完全沒變。</p>
+<p>scavenger 負責第二步：找出長時間沒被使用的記憶體頁，告訴作業系統可以拿走。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">printMem</span><span class="p">(</span><span class="nx">label</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">MemStats</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">ReadMemStats</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">m</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%-14s HeapAlloc=%4d MB  HeapIdle=%4d MB  HeapReleased=%4d MB\n&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">label</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapAlloc</span><span class="o">&gt;&gt;</span><span class="mi">20</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapIdle</span><span class="o">&gt;&gt;</span><span class="mi">20</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapReleased</span><span class="o">&gt;&gt;</span><span class="mi">20</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">printMem</span><span class="p">(</span><span class="s">&quot;啟動&quot;</span><span class="p">)</span>
+
+<span class="w">    </span><span class="c1">// 配置 200 MB</span>
+<span class="w">    </span><span class="nx">data</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([][]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="mi">200</span><span class="p">)</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">data</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">data</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="o">&lt;&lt;</span><span class="mi">20</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">printMem</span><span class="p">(</span><span class="s">&quot;配置後&quot;</span><span class="p">)</span>
+
+<span class="w">    </span><span class="c1">// 全部釋放並強制 GC</span>
+<span class="w">    </span><span class="nx">data</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">nil</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GC</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">printMem</span><span class="p">(</span><span class="s">&quot;GC 後&quot;</span><span class="p">)</span>
+
+<span class="w">    </span><span class="c1">// 等 scavenger 工作</span>
+<span class="w">    </span><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="mi">3</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GC</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">printMem</span><span class="p">(</span><span class="s">&quot;等待 3 秒後&quot;</span><span class="p">)</span>
+
+<span class="w">    </span><span class="c1">// 明確要求立刻歸還</span>
+<span class="w">    </span><span class="nx">debugFreeOSMemory</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">printMem</span><span class="p">(</span><span class="s">&quot;FreeOSMemory 後&quot;</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">debugFreeOSMemory</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 等同 debug.FreeOSMemory()</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GC</span><span class="p">()</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>三個關鍵指標：</p>
+<table>
+<thead>
+<tr>
+<th>指標</th>
+<th>意義</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>HeapAlloc</code></td>
+<td>目前存活物件佔用的位元組</td>
+</tr>
+<tr>
+<td><code>HeapIdle</code></td>
+<td>已從 OS 取得但目前沒在用的位元組</td>
+</tr>
+<tr>
+<td><code>HeapReleased</code></td>
+<td>已經歸還給 OS 的位元組（<code>HeapIdle</code> 的子集）</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>HeapIdle</code> 高而 <code>HeapReleased</code> 低 = 記憶體被 Go 佔著但沒用。</strong> 這是「Go 程式看起來很吃記憶體」的常見原因。</p>
+<div class="admonition version">
+<p class="admonition-title">Go 1.16：預設改用 MADV_DONTNEED</p>
+<p>在 Linux 上，歸還記憶體有兩種方式：</p>
+<ul>
+<li><strong><code>MADV_FREE</code></strong>（Go 1.12–1.15 預設）：告訴核心「這些頁可以回收，但我可能還會用」。核心在記憶體壓力大時才真的回收。<strong>RSS 不會立刻下降</strong>，讓監控看起來很嚇人。</li>
+<li><strong><code>MADV_DONTNEED</code></strong>（Go 1.16 起預設）：立刻歸還，RSS 馬上下降。代價是下次要用時會有 page fault。</li>
+</ul>
+<p>Go 1.16 改回 <code>MADV_DONTNEED</code>，主要理由是「使用者看得懂的記憶體數字」比那一點效能重要。想切回舊行為：<code>GODEBUG=madvdontneed=0</code>。</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title"><code>debug.FreeOSMemory()</code> 的正確用途</p>
+<p>```go
+import "runtime/debug"</p>
+<p>debug.FreeOSMemory() // 立刻 GC + 盡可能歸還記憶體
+```</p>
+<p>它會<strong>強制一次完整的 STW GC</strong>，代價不小。適合的場景只有一個：<strong>程式剛完成一個明確的大型階段</strong>（例如批次任務跑完、大量資料匯入結束），你知道接下來會安靜一段時間。</p>
+<p>絕對不要放在請求處理路徑或定時任務裡。</p>
+</div>
+<hr />
+<h2 id="觀察-sysmon-的效果">觀察 sysmon 的效果<a class="headerlink" href="#觀察-sysmon-的效果" title="Permanent link">#</a></h2>
+<h3 id="看搶佔">看搶佔<a class="headerlink" href="#看搶佔" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">schedtrace</span><span class="o">=</span><span class="m">1000</span>,scheddetail<span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
+</code></pre></div>
+
+<p><code>scheddetail=1</code> 會列出每個 G 的狀態。反覆執行可以看到長時間執行的 G 被切換出去。</p>
+<h3 id="看記憶體歸還">看記憶體歸還<a class="headerlink" href="#看記憶體歸還" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">gctrace</span><span class="o">=</span><span class="m">1</span>,scavtrace<span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>scav 1 KiB work (0 KiB bg, 1 KiB eager), 4 KiB total, 0.00% util
+</code></pre></div>
+
+<p><code>scavtrace=1</code> 會在每次 scavenge 事件時印一行。</p>
+<h3 id="看執行緒膨脹">看執行緒膨脹<a class="headerlink" href="#看執行緒膨脹" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime/pprof&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Tick</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;執行緒總數:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">pprof</span><span class="p">.</span><span class="nx">Lookup</span><span class="p">(</span><span class="s">&quot;threadcreate&quot;</span><span class="p">).</span><span class="nx">Count</span><span class="p">())</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}()</span>
+
+<span class="w">    </span><span class="c1">// ... 你的工作 ...</span>
+<span class="w">    </span><span class="k">select</span><span class="w"> </span><span class="p">{}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>如果這個數字持續成長，代表有大量阻塞的系統呼叫。</p>
+<hr />
+<h2 id="一張總結表">一張總結表<a class="headerlink" href="#一張總結表" title="Permanent link">#</a></h2>
+<p><code>sysmon</code> 解決的問題與對應機制：</p>
+<table>
+<thead>
+<tr>
+<th>問題</th>
+<th>沒有 sysmon 會怎樣</th>
+<th>sysmon 的處理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>goroutine 霸佔 CPU</td>
+<td>其他 G 餓死、GC 卡住</td>
+<td>10ms 後強制搶佔</td>
+</tr>
+<tr>
+<td>系統呼叫阻塞 M</td>
+<td>那個 P 上的其他 G 全部停擺</td>
+<td>20µs 後把 P 交接出去</td>
+</tr>
+<tr>
+<td>所有 P 都很忙</td>
+<td>網路事件被延誤</td>
+<td>每 10ms 主動 netpoll</td>
+</tr>
+<tr>
+<td>程式不配置記憶體</td>
+<td>永遠不 GC，finalizer 不執行</td>
+<td>每 2 分鐘強制一次</td>
+</tr>
+<tr>
+<td>記憶體用完不歸還</td>
+<td>RSS 只增不減</td>
+<td>scavenger 漸進歸還</td>
+</tr>
+</tbody>
+</table>
+<p><strong>共通模式：所有這些都是「沒有明確的觸發者，但一定要發生」的事。</strong> 把它們交給一條獨立於排程系統之外的執行緒，是最穩健的設計。</p>
+<hr />
+<p>Part 5 到此結束。你已經看過 Go 並行模型的完整圖像：從 <code>context</code> 的取消傳播、<code>sync</code> 的同步原語、計時器與 channel，到 GMP 排程器、netpoller 與 sysmon。</p>
+<p>Part 6 換到記憶體：物件配置在哪裡、GC 怎麼找出垃圾、goroutine 的堆疊怎麼長大。</p></article><nav class='pager'><a class='prev' href='netpoller.html'><span>上一節</span><strong>5.6 網路輪詢器 netpoller</strong></a><a class='next' href='allocator.html'><span>下一節</span><strong>6.1 記憶體配置器</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#一條特別的執行緒'>一條特別的執行緒</a></li><li><a href='#巡邏節奏'>巡邏節奏</a></li><li><a href='#五項工作'>五項工作</a></li><li><a href='#逐項細看'>逐項細看</a><ul><li><a href='#1-搶佔執行過久的-goroutine'>① 搶佔執行過久的 goroutine</a></li><li><a href='#2-回收系統呼叫中的-p'>② 回收系統呼叫中的 P</a></li><li><a href='#3-輪詢網路'>③ 輪詢網路</a></li><li><a href='#4-強制-gc'>④ 強制 GC</a></li><li><a href='#5-歸還記憶體scavenging'>⑤ 歸還記憶體（scavenging）</a></li></ul></li><li><a href='#觀察-sysmon-的效果'>觀察 sysmon 的效果</a><ul><li><a href='#看搶佔'>看搶佔</a></li><li><a href='#看記憶體歸還'>看記憶體歸還</a></li><li><a href='#看執行緒膨脹'>看執行緒膨脹</a></li></ul></li><li><a href='#一張總結表'>一張總結表</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

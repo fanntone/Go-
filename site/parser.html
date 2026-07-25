@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1.2 詞法與語法分析 — Go 底層原理筆記</title>
+<meta name="description" content="token 是怎麼切出來的、分號為什麼會自動插入、語法樹長什麼樣子，以及 Go 語法設計背後對編譯速度的考量。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li class='active'><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>編譯器</p><h1><span class='h1num'>1.2</span>詞法與語法分析</h1><p class='lede'>token 是怎麼切出來的、分號為什麼會自動插入、語法樹長什麼樣子，以及 Go 語法設計背後對編譯速度的考量。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="兩個階段一個目標">兩個階段，一個目標<a class="headerlink" href="#兩個階段一個目標" title="Permanent link">#</a></h2>
+<p>編譯器拿到的是一串位元組。要把它變成有結構的東西，需要兩步：</p>
+<ol>
+<li><strong>詞法分析（lexing／scanning）</strong> —— 把字元串切成有意義的最小單位 <strong>token</strong>。<code>total += n</code> 會變成 <code>[IDENT "total"] [ADD_ASSIGN] [IDENT "n"]</code>。</li>
+<li><strong>語法分析（parsing）</strong> —— 依照語言文法，把 token 串組成一棵<strong>抽象語法樹（AST）</strong>。</li>
+</ol>
+<p>在 Go 編譯器裡，這兩件事都由 <code>cmd/compile/internal/syntax</code> 完成。標準庫還有一套幾乎平行的實作 <code>go/scanner</code> 與 <code>go/parser</code>，是給工具程式（<code>gofmt</code>、<code>go vet</code>、IDE）用的。兩套的行為一致，但編譯器那套為了速度做了更多手工最佳化。</p>
+<figure class="diagram"><svg viewBox="0 0 700 250" role="img" aria-label="從原始碼到語法樹"><rect class="d-box" x="15" y="20" width="150" height="86" rx="8"/><text class="d-t-s" x="28" y="42">原始碼（位元組）</text><text class="d-t-m" x="28" y="66">total := 0</text><text class="d-t-m" x="28" y="86">total += n</text><path class="d-line-a" d="M165 63 L205 63" marker-end="url(#ar4)"/><text class="d-t-s d-mid" x="185" y="54">scanner</text><rect class="d-box" x="209" y="20" width="180" height="86" rx="8"/><text class="d-t-s" x="222" y="42">token 串流</text><text class="d-t-m" x="222" y="64">IDENT DEFINE INT ;</text><text class="d-t-m" x="222" y="84">IDENT ADD_ASSIGN IDENT ;</text><path class="d-line-a" d="M389 63 L429 63" marker-end="url(#ar4)"/><text class="d-t-s d-mid" x="409" y="54">parser</text><rect class="d-box-a" x="433" y="20" width="250" height="86" rx="8"/><text class="d-t-s" x="446" y="42">語法樹（syntax AST）</text><text class="d-t-m" x="446" y="64">AssignStmt{Op: Def, Lhs, Rhs}</text><text class="d-t-m" x="446" y="84">AssignStmt{Op: Add, Lhs, Rhs}</text><defs><marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--accent)"/></marker></defs><line class="d-dash" x1="15" y1="130" x2="683" y2="130"/><text class="d-t-s" x="15" y="156">scanner 只認得「字元怎麼組成 token」——它不知道 total 是變數還是函式，也不檢查型別。</text><text class="d-t-s" x="15" y="178">parser 只認得「token 怎麼組成句子」——它會擋掉 if x { } else 缺 body，但不會擋 if 條件不是 bool。</text><text class="d-t-s" x="15" y="200">兩者都不做型別檢查。「x 是 int 不能當 string 用」這種錯誤要等到下一階段才會被發現。</text><text class="d-t-s" x="15" y="228">分號是 scanner 自動補的（見下節），不是你漏寫了。</text></svg><figcaption><b>職責分工。</b>把「認字」與「認句子」分開，是編譯器設計的通則。這也解釋了為什麼有些錯誤訊息會一次冒出一堆——語法分析失敗後，parser 需要「復原」到下一個看起來安全的位置繼續，中間可能誤報。</figcaption></figure>
+
+<hr />
+<h2 id="詞法分析token-是什麼">詞法分析：token 是什麼<a class="headerlink" href="#詞法分析token-是什麼" title="Permanent link">#</a></h2>
+<p>Go 的 token 分成四類：</p>
+<table>
+<thead>
+<tr>
+<th>類別</th>
+<th>例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>識別字（identifier）</strong></td>
+<td><code>total</code>、<code>fmt</code>、<code>Println</code>、<code>_</code></td>
+</tr>
+<tr>
+<td><strong>關鍵字（keyword）</strong></td>
+<td>共 25 個：<code>break</code> <code>case</code> <code>chan</code> <code>const</code> <code>continue</code> <code>default</code> <code>defer</code> <code>else</code> <code>fallthrough</code> <code>for</code> <code>func</code> <code>go</code> <code>goto</code> <code>if</code> <code>import</code> <code>interface</code> <code>map</code> <code>package</code> <code>range</code> <code>return</code> <code>select</code> <code>struct</code> <code>switch</code> <code>type</code> <code>var</code></td>
+</tr>
+<tr>
+<td><strong>運算子與標點</strong></td>
+<td><code>+</code> <code>-</code> <code>:=</code> <code>&lt;-</code> <code>...</code> <code>{</code> <code>}</code> 等</td>
+</tr>
+<tr>
+<td><strong>字面值（literal）</strong></td>
+<td><code>42</code>、<code>3.14</code>、<code>'A'</code>、<code>"hello"</code>、<code>`raw`</code></td>
+</tr>
+</tbody>
+</table>
+<p>值得注意的是<strong>哪些東西不是關鍵字</strong>：</p>
+<ul>
+<li><code>int</code>、<code>string</code>、<code>bool</code>、<code>byte</code>、<code>rune</code>、<code>error</code> —— 這些是<strong>預先宣告的識別字</strong>，不是關鍵字。所以 <code>int := 5</code> 在語法上完全合法（雖然是自找麻煩）。</li>
+<li><code>true</code>、<code>false</code>、<code>nil</code>、<code>iota</code> —— 同上，都是可以被遮蔽的識別字。</li>
+<li><code>make</code>、<code>new</code>、<code>len</code>、<code>cap</code>、<code>append</code>、<code>copy</code>、<code>delete</code>、<code>panic</code>、<code>recover</code> —— <strong>內建函式</strong>，也不是關鍵字。</li>
+</ul>
+<p>自己驗證一下：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 完全合法：把預先宣告的識別字遮蔽掉</span>
+<span class="w">    </span><span class="kc">true</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">&quot;我不是布林值&quot;</span>
+<span class="w">    </span><span class="nx">len</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">42</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nx">len</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>我不是布林值 42
+</code></pre></div>
+
+<div class="admonition warning">
+<p class="admonition-title">能做不代表該做</p>
+<p>上面的程式碼會通過編譯，但 <code>go vet</code> 不會警告，而後面任何想用真正 <code>len()</code> 的程式碼都會爆炸。這只是用來說明「關鍵字」與「預先宣告識別字」的差別。</p>
+</div>
+<p>用標準庫的 scanner 自己跑一次，看得最清楚：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;go/scanner&quot;</span>
+<span class="w">    </span><span class="s">&quot;go/token&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">src</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="nb">byte</span><span class="p">(</span><span class="s">&quot;total := 0\nfor _, n := range nums {\n\ttotal += n\n}\n&quot;</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">fset</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">token</span><span class="p">.</span><span class="nx">NewFileSet</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">file</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">fset</span><span class="p">.</span><span class="nx">AddFile</span><span class="p">(</span><span class="s">&quot;demo.go&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">fset</span><span class="p">.</span><span class="nx">Base</span><span class="p">(),</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">src</span><span class="p">))</span>
+
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">s</span><span class="w"> </span><span class="nx">scanner</span><span class="p">.</span><span class="nx">Scanner</span>
+<span class="w">    </span><span class="nx">s</span><span class="p">.</span><span class="nx">Init</span><span class="p">(</span><span class="nx">file</span><span class="p">,</span><span class="w"> </span><span class="nx">src</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">pos</span><span class="p">,</span><span class="w"> </span><span class="nx">tok</span><span class="p">,</span><span class="w"> </span><span class="nx">lit</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">Scan</span><span class="p">()</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">tok</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nx">token</span><span class="p">.</span><span class="nx">EOF</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">break</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%-12s %-10s %q\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">fset</span><span class="p">.</span><span class="nx">Position</span><span class="p">(</span><span class="nx">pos</span><span class="p">),</span><span class="w"> </span><span class="nx">tok</span><span class="p">,</span><span class="w"> </span><span class="nx">lit</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>demo.go:1:1   IDENT      &quot;total&quot;
+demo.go:1:7   :=         &quot;&quot;
+demo.go:1:10  INT        &quot;0&quot;
+demo.go:1:11  ;          &quot;\n&quot;
+demo.go:2:1   for        &quot;&quot;
+demo.go:2:5   IDENT      &quot;_&quot;
+demo.go:2:6   ,          &quot;&quot;
+demo.go:2:8   IDENT      &quot;n&quot;
+demo.go:2:10  :=         &quot;&quot;
+demo.go:2:13  range      &quot;&quot;
+demo.go:2:19  IDENT      &quot;nums&quot;
+demo.go:2:24  {          &quot;&quot;
+demo.go:2:25  ;          &quot;\n&quot;
+demo.go:3:9   IDENT      &quot;total&quot;
+demo.go:3:15  +=         &quot;&quot;
+demo.go:3:18  IDENT      &quot;n&quot;
+demo.go:3:19  ;          &quot;\n&quot;
+demo.go:4:1   }          &quot;&quot;
+demo.go:4:2   ;          &quot;\n&quot;
+</code></pre></div>
+
+<p>看到那些 <code>;</code> 了嗎？原始碼裡一個分號都沒有。</p>
+<hr />
+<h2 id="分號自動插入">分號自動插入<a class="headerlink" href="#分號自動插入" title="Permanent link">#</a></h2>
+<p>Go 的文法其實<strong>要求</strong>用分號結束陳述式，就像 C 一樣。你不用寫，是因為 scanner 幫你插了。規則寫在 Go 語言規格裡，只有兩條：</p>
+<p><strong>規則一：</strong> 當一行的最後一個 token 是下列其中之一時，在換行處自動插入分號。</p>
+<ul>
+<li>識別字</li>
+<li>字面值（整數、浮點數、虛數、字元、字串）</li>
+<li>關鍵字 <code>break</code>、<code>continue</code>、<code>fallthrough</code>、<code>return</code></li>
+<li>運算子 <code>++</code>、<code>--</code></li>
+<li>右括號 <code>)</code>、<code>]</code>、<code>}</code></li>
+</ul>
+<p><strong>規則二：</strong> 為了讓一行的陳述式能寫在同一行，在 <code>)</code> 或 <code>}</code> 之前可以省略分號。</p>
+<p>這兩條規則造成了 Go 最著名的一個「不可協商」：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✓ 正確</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">good</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;hi&quot;</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="c1">// ✗ 編譯錯誤</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">bad</span><span class="p">()</span>
+<span class="p">{</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;hi&quot;</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>第二種寫法為什麼壞掉？因為 <code>func bad()</code> 這一行的最後一個 token 是 <code>)</code>，符合規則一，scanner 會插入分號變成 <code>func bad();</code> —— 一個沒有函式本體的宣告。下一行的 <code>{</code> 就變成孤兒了。</p>
+<p>同樣的道理也適用於：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 這樣寫，return 後面會被插分號，變成回傳零值</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">broken</span><span class="p">()</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span>
+<span class="w">        </span><span class="mi">42</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>以及跨行的複合字面值必須留下逗號：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✓ 最後一個元素後面的逗號不能省</span>
+<span class="nx">nums</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span>
+<span class="w">    </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">    </span><span class="mi">2</span><span class="p">,</span>
+<span class="w">    </span><span class="mi">3</span><span class="p">,</span><span class="w">   </span><span class="c1">// ← 這個逗號是必要的</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><code>3</code> 後面如果沒有逗號，scanner 會依規則一插入分號（<code>3</code> 是字面值），而 <code>{...}</code> 裡不能出現分號。</p>
+<div class="admonition note">
+<p class="admonition-title">這其實是刻意的</p>
+<p>Go 團隊很清楚這會惹惱一部分人。他們的理由是：<strong>排版風格不應該是團隊要吵架的事</strong>。用文法強制一種寫法，加上 <code>gofmt</code> 統一格式，就沒得吵了。這跟 Go 沒有三元運算子、沒有可選參數，是同一種設計哲學。</p>
+</div>
+<hr />
+<h2 id="語法分析從-ebnf-到樹">語法分析：從 EBNF 到樹<a class="headerlink" href="#語法分析從-ebnf-到樹" title="Permanent link">#</a></h2>
+<p>Go 的文法用 <strong>EBNF</strong> 描述。例如陳述式的定義大致是：</p>
+<div class="hl" data-lang="ebnf"><pre><span></span><code><span class="k">Statement </span><span class="o">=</span>
+    <span class="k">Declaration </span><span class="p">|</span> <span class="k">LabeledStmt </span><span class="p">|</span> <span class="k">SimpleStmt </span><span class="p">|</span>
+    <span class="k">GoStmt </span><span class="p">|</span> <span class="k">ReturnStmt </span><span class="p">|</span> <span class="k">BreakStmt </span><span class="p">|</span> <span class="k">ContinueStmt </span><span class="p">|</span> <span class="k">GotoStmt </span><span class="p">|</span>
+    <span class="k">FallthroughStmt </span><span class="p">|</span> <span class="k">Block </span><span class="p">|</span> <span class="k">IfStmt </span><span class="p">|</span> <span class="k">SwitchStmt </span><span class="p">|</span> <span class="k">SelectStmt </span><span class="p">|</span>
+    <span class="k">ForStmt </span><span class="p">|</span> <span class="k">DeferStmt </span><span class="p">.</span>
+
+<span class="k">IfStmt </span><span class="o">=</span> <span class="s2">&quot;if&quot;</span> <span class="p">[</span> <span class="k">SimpleStmt </span><span class="s2">&quot;;&quot;</span> <span class="p">]</span> <span class="k">Expression Block</span>
+         <span class="p">[</span> <span class="s2">&quot;else&quot;</span> <span class="p">(</span> <span class="k">IfStmt </span><span class="p">|</span> <span class="k">Block </span><span class="p">)</span> <span class="p">]</span> <span class="p">.</span>
+</code></pre></div>
+
+<p>Go 的 parser 是<strong>手寫的遞迴下降（recursive descent）剖析器</strong>，不是 yacc/bison 這類工具產生的。</p>
+<div class="admonition version">
+<p class="admonition-title">從 yacc 到手寫</p>
+<p>早期的 Go 編譯器（<code>gc</code>，用 C 寫的）確實用 yacc 產生 parser。Go 1.5 編譯器自舉（用 Go 重寫自己）時仍保留了轉譯過來的 yacc 產物。後來在 Go 1.8 前後，<code>cmd/compile/internal/syntax</code> 導入了全新的手寫遞迴下降 parser，速度快了數倍，錯誤訊息也好很多。</p>
+<p>手寫 parser 的優勢在於：能給出「你是不是想寫 X？」這種貼心的錯誤訊息，也能在遇到錯誤時做更聰明的復原。代價是文法一改就要動手改程式碼。</p>
+</div>
+<p>遞迴下降的意思是：文法裡每一條產生式，對應剖析器裡一個函式。看到 <code>if</code> 就呼叫 <code>parseIfStmt()</code>，它內部再呼叫 <code>parseExpr()</code> 與 <code>parseBlock()</code>，如此遞迴下去。</p>
+<h3 id="看看樹長什麼樣">看看樹長什麼樣<a class="headerlink" href="#看看樹長什麼樣" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;go/ast&quot;</span>
+<span class="w">    </span><span class="s">&quot;go/parser&quot;</span>
+<span class="w">    </span><span class="s">&quot;go/token&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">src</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">`package demo</span>
+
+<span class="s">func abs(x int) int {</span>
+<span class="s">    if x &lt; 0 {</span>
+<span class="s">        return -x</span>
+<span class="s">    }</span>
+<span class="s">    return x</span>
+<span class="s">}</span>
+<span class="s">`</span>
+<span class="w">    </span><span class="nx">fset</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">token</span><span class="p">.</span><span class="nx">NewFileSet</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">f</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">parser</span><span class="p">.</span><span class="nx">ParseFile</span><span class="p">(</span><span class="nx">fset</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;demo.go&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">src</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nb">panic</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">ast</span><span class="p">.</span><span class="nx">Print</span><span class="p">(</span><span class="nx">fset</span><span class="p">,</span><span class="w"> </span><span class="nx">f</span><span class="p">.</span><span class="nx">Decls</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>輸出（大幅節錄，保留骨架）：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>*ast.FuncDecl {
+    Name: *ast.Ident { Name: &quot;abs&quot; }
+    Type: *ast.FuncType {
+        Params:  *ast.FieldList { ... x int ... }
+        Results: *ast.FieldList { ... int ... }
+    }
+    Body: *ast.BlockStmt {
+        List: []ast.Stmt (len = 2) {
+            0: *ast.IfStmt {
+                Cond: *ast.BinaryExpr { X: x, Op: &lt;, Y: 0 }
+                Body: *ast.BlockStmt {
+                    List: [ *ast.ReturnStmt { Results: [ *ast.UnaryExpr{Op: -, X: x} ] } ]
+                }
+            }
+            1: *ast.ReturnStmt { Results: [ *ast.Ident { Name: &quot;x&quot; } ] }
+        }
+    }
+}
+</code></pre></div>
+
+<p>注意這棵樹裡<strong>完全沒有型別資訊</strong>。<code>x</code> 只是一個名字，parser 不知道它是 <code>int</code>；<code>x &lt; 0</code> 只是一個二元運算式，parser 不知道 <code>&lt;</code> 對這兩個運算元合不合法。這些是下一階段的工作。</p>
+<div class="admonition tip">
+<p class="admonition-title">AST 不只給編譯器用</p>
+<p><code>go/ast</code> 是整個 Go 工具生態的基礎。<code>gofmt</code> 是「剖析成 AST 再依標準規則印回去」；<code>go vet</code>、<code>staticcheck</code>、<code>golangci-lint</code> 都是在 AST（加上型別資訊）上跑分析；IDE 的重新命名、跳到定義也是。</p>
+<p>寫自訂 linter 或程式碼產生器時，<code>go/ast</code> + <code>golang.org/x/tools/go/packages</code> 是標準組合。</p>
+</div>
+<hr />
+<h2 id="語法設計如何服務編譯速度">語法設計如何服務編譯速度<a class="headerlink" href="#語法設計如何服務編譯速度" title="Permanent link">#</a></h2>
+<p>Go 的一些「奇怪」語法選擇，回頭看都跟剖析效率有關。</p>
+<h3 id="型別寫在名字後面">型別寫在名字後面<a class="headerlink" href="#型別寫在名字後面" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">var</span><span class="w"> </span><span class="nx">x</span><span class="w"> </span><span class="kt">int</span><span class="w">              </span><span class="c1">// Go</span>
+<span class="kt">int</span><span class="w"> </span><span class="nx">x</span><span class="p">;</span><span class="w">                 </span><span class="c1">// C</span>
+</code></pre></div>
+
+<p>C 的宣告語法出了名地難剖析，因為 <code>a * b;</code> 可能是「宣告一個指向 b 的指標」也可能是「a 乘以 b」，要看 <code>a</code> 是不是型別名——但那是<strong>語意</strong>資訊，剖析器不該需要。這就是有名的 <strong>lexer hack</strong>。</p>
+<p>Go 把型別放後面，<code>var</code> / <code>func</code> / <code>type</code> 這些關鍵字一出現就知道接下來要剖析什麼，剖析器不需要查符號表。</p>
+<h3 id="複合字面值的歧義與-if-的限制">複合字面值的歧義與 <code>if</code> 的限制<a class="headerlink" href="#複合字面值的歧義與-if-的限制" title="Permanent link">#</a></h3>
+<p>這條規則常讓人踩坑：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 編譯錯誤</span>
+<span class="k">if</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nx">Point</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">}</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// ...</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>因為剖析 <code>if</code> 的條件式時，遇到 <code>{</code> 剖析器無法判斷這是「複合字面值的開頭」還是「if 主體的開頭」。Go 的解法是明確規定：在 <code>if</code>、<code>for</code>、<code>switch</code> 的條件位置，複合字面值必須加括號：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✓ 正確</span>
+<span class="k">if</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="p">(</span><span class="nx">Point</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">})</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// ...</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="沒有前向宣告但也沒有循環">沒有前向宣告，但也沒有循環<a class="headerlink" href="#沒有前向宣告但也沒有循環" title="Permanent link">#</a></h3>
+<p>同一個套件內的所有檔案一起剖析，所以順序無所謂；套件之間禁止循環，所以相依圖是 DAG。這兩條加起來，讓「先剖析誰」永遠有明確答案。</p>
+<hr />
+<h2 id="錯誤訊息怎麼讀">錯誤訊息怎麼讀<a class="headerlink" href="#錯誤訊息怎麼讀" title="Permanent link">#</a></h2>
+<p>理解了兩階段的分工，錯誤訊息就好讀了。</p>
+<table>
+<thead>
+<tr>
+<th>訊息</th>
+<th>階段</th>
+<th>真正的原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>syntax error: unexpected newline, expected {</code></td>
+<td>parser</td>
+<td>通常是 <code>{</code> 換行了</td>
+</tr>
+<tr>
+<td><code>syntax error: unexpected semicolon or newline before {</code></td>
+<td>parser</td>
+<td>同上，分號自動插入造成的</td>
+</tr>
+<tr>
+<td><code>expected declaration, found 'IDENT' xxx</code></td>
+<td>parser</td>
+<td>在函式外面寫了陳述式</td>
+</tr>
+<tr>
+<td><code>undefined: xxx</code></td>
+<td>types2</td>
+<td>語法沒問題，是名字找不到</td>
+</tr>
+<tr>
+<td><code>cannot use x (variable of type int) as string value</code></td>
+<td>types2</td>
+<td>型別不合</td>
+</tr>
+<tr>
+<td><code>declared and not used: x</code></td>
+<td>types2</td>
+<td>未使用的區域變數</td>
+</tr>
+</tbody>
+</table>
+<p>只要看到 <code>syntax error</code>，就知道問題在標點符號、括號、換行位置，跟型別完全無關。</p>
+<p>下一節進入型別檢查——Go 的型別系統怎麼運作，以及泛型是怎麼被實例化的。</p></article><nav class='pager'><a class='prev' href='pipeline.html'><span>上一節</span><strong>1.1 編譯流程總覽</strong></a><a class='next' href='typecheck.html'><span>下一節</span><strong>1.3 型別檢查與泛型實例化</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#兩個階段一個目標'>兩個階段，一個目標</a></li><li><a href='#詞法分析token-是什麼'>詞法分析：token 是什麼</a></li><li><a href='#分號自動插入'>分號自動插入</a></li><li><a href='#語法分析從-ebnf-到樹'>語法分析：從 EBNF 到樹</a><ul><li><a href='#看看樹長什麼樣'>看看樹長什麼樣</a></li></ul></li><li><a href='#語法設計如何服務編譯速度'>語法設計如何服務編譯速度</a><ul><li><a href='#型別寫在名字後面'>型別寫在名字後面</a></li><li><a href='#複合字面值的歧義與-if-的限制'>複合字面值的歧義與 if 的限制</a></li><li><a href='#沒有前向宣告但也沒有循環'>沒有前向宣告，但也沒有循環</a></li></ul></li><li><a href='#錯誤訊息怎麼讀'>錯誤訊息怎麼讀</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

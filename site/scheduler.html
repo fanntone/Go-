@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5.5 GMP 排程器 — Go 底層原理筆記</title>
+<meta name="description" content="G、M、P 三者的分工、工作竊取、hand-off、非同步搶佔，以及 GOMAXPROCS 該怎麼設。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li class='active'><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>並行</p><h1><span class='h1num'>5.5</span>GMP 排程器</h1><p class='lede'>G、M、P 三者的分工、工作竊取、hand-off、非同步搶佔，以及 GOMAXPROCS 該怎麼設。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="為什麼需要自己的排程器">為什麼需要自己的排程器<a class="headerlink" href="#為什麼需要自己的排程器" title="Permanent link">#</a></h2>
+<p>作業系統已經有排程器了，為什麼 Go 還要再做一層？</p>
+<p>因為<strong>執行緒（thread）太貴</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>項目</th>
+<th>OS 執行緒</th>
+<th>goroutine</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>初始堆疊</td>
+<td>通常 1–8 MB（虛擬位址）</td>
+<td><strong>2 KB</strong>，需要時自動成長</td>
+</tr>
+<tr>
+<td>建立成本</td>
+<td>微秒級（要進核心）</td>
+<td>奈秒級（純使用者空間）</td>
+</tr>
+<tr>
+<td>切換成本</td>
+<td>1–2 微秒（陷入核心、換頁表、清 TLB）</td>
+<td>約 100–200 奈秒（只換幾個暫存器）</td>
+</tr>
+<tr>
+<td>實務上限</td>
+<td>數千個</td>
+<td><strong>數百萬個</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Go 的策略是<strong>兩層排程</strong>：OS 排程 M（執行緒），Go runtime 排程 G（goroutine）到 M 上。這叫 <strong>M:N 排程</strong>——M 個 goroutine 對應 N 個執行緒。</p>
+<hr />
+<h2 id="gmp-三個角色">G、M、P 三個角色<a class="headerlink" href="#gmp-三個角色" title="Permanent link">#</a></h2>
+<figure class="diagram"><svg viewBox="0 0 700 400" role="img" aria-label="GMP 模型的整體結構"><rect class="d-box-w" x="15" y="14" width="670" height="66" rx="7"/><text class="d-t-b" x="30" y="36">全域執行佇列 global run queue（有鎖）</text><rect class="d-box" x="30" y="46" width="70" height="24" rx="3"/><text class="d-t-m d-mid" x="65" y="63">G</text><rect class="d-box" x="106" y="46" width="70" height="24" rx="3"/><text class="d-t-m d-mid" x="141" y="63">G</text><rect class="d-box" x="182" y="46" width="70" height="24" rx="3"/><text class="d-t-m d-mid" x="217" y="63">G</text><text class="d-t-s" x="270" y="63">P 的本地佇列空了、或每 61 次排程一定會來這裡拿一個（避免飢餓）</text><rect class="d-box-a" x="15" y="96" width="215" height="150" rx="7"/><text class="d-t-b d-mid" x="122" y="118">P0　（processor）</text><text class="d-t-s d-mid" x="122" y="136">執行 Go 程式碼的「許可證」</text><rect class="d-box" x="28" y="146" width="189" height="52" rx="4"/><text class="d-t-s" x="38" y="164">本地執行佇列（最多 256 個，無鎖）</text><text class="d-t-m" x="38" y="188">runnext → G　|　G　G　G</text><rect class="d-box" x="28" y="204" width="189" height="32" rx="4"/><text class="d-t-s" x="38" y="224">mcache　·　timers 堆積　·　deferpool</text><rect class="d-box-a" x="242" y="96" width="215" height="150" rx="7"/><text class="d-t-b d-mid" x="349" y="118">P1</text><text class="d-t-s d-mid" x="349" y="136">數量 = GOMAXPROCS</text><rect class="d-box" x="255" y="146" width="189" height="52" rx="4"/><text class="d-t-m" x="265" y="176">G　G</text><rect class="d-box" x="255" y="204" width="189" height="32" rx="4"/><text class="d-t-s" x="265" y="224">mcache　·　timers　·　deferpool</text><rect class="d-box" x="470" y="96" width="215" height="150" rx="7"/><text class="d-t-b d-mid" x="577" y="118">P2 …</text><text class="d-t-s d-mid" x="577" y="176">（空佇列 → 會去竊取）</text><path class="d-line-a" d="M470 170 L450 170" marker-end="url(#ar18)"/><text class="d-t-a" x="300" y="266">工作竊取：隨機挑一個 P，偷走它一半的 G</text><rect class="d-box-o" x="15" y="284" width="130" height="60" rx="6"/><text class="d-t-b d-mid" x="80" y="306">M0（執行緒）</text><text class="d-t-s d-mid" x="80" y="326">綁定 P0，跑 G</text><rect class="d-box-o" x="155" y="284" width="130" height="60" rx="6"/><text class="d-t-b d-mid" x="220" y="306">M1</text><text class="d-t-s d-mid" x="220" y="326">綁定 P1，跑 G</text><rect class="d-box-d" x="295" y="284" width="180" height="60" rx="6"/><text class="d-t-b d-mid" x="385" y="306">M2</text><text class="d-t-s d-mid" x="385" y="326">阻塞在系統呼叫，已交出 P</text><rect class="d-box" x="485" y="284" width="200" height="60" rx="6"/><text class="d-t-b d-mid" x="585" y="306">M3、M4 …（閒置）</text><text class="d-t-s d-mid" x="585" y="326">在 sched.midle 待命，可被喚醒</text><path class="d-line" d="M80 284 L100 250" marker-end="url(#ar18b)"/><path class="d-line" d="M220 284 L300 250" marker-end="url(#ar18b)"/><defs><marker id="ar18" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--accent)"/></marker><marker id="ar18b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--line-strong)"/></marker></defs><text class="d-t-s" x="15" y="372">M 必須持有一個 P 才能執行 Go 程式碼。M 的數量可以遠多於 P（預設上限 10000），但同時執行 Go 程式碼的只有 GOMAXPROCS 個。</text><text class="d-t-s" x="15" y="392">P 是關鍵的中間層：它讓「執行緒」與「可執行工作」解耦，使得 M 阻塞時 P 能立刻轉交給別的 M。</text></svg><figcaption><b>GMP 的三層結構。</b>G 是工作、M 是工人、P 是工作臺。工人必須站在工作臺前才能幹活；工作臺數量固定（<code>GOMAXPROCS</code>），這就限制了同時執行的 Go 程式碼量。工人去倉庫（系統呼叫）時會把工作臺讓出來給別人。</figcaption></figure>
+
+<h3 id="g-goroutine">G — goroutine<a class="headerlink" href="#g-goroutine" title="Permanent link">#</a></h3>
+<p>一個 <code>g</code> 結構（<code>runtime/runtime2.go</code>）包含：</p>
+<ul>
+<li><strong><code>stack</code></strong> —— 這個 goroutine 的堆疊範圍（起始與結束位址）</li>
+<li><strong><code>sched</code></strong> —— 被切換出去時，暫存器的快照（PC、SP、BP 等）</li>
+<li><strong><code>atomicstatus</code></strong> —— 目前狀態</li>
+<li><strong><code>m</code></strong> —— 目前在哪個 M 上執行（沒在執行時是 nil）</li>
+<li><strong><code>_defer</code> / <code>_panic</code></strong> —— 這個 goroutine 的 defer 與 panic 鏈</li>
+</ul>
+<p>主要狀態：</p>
+<table>
+<thead>
+<tr>
+<th>狀態</th>
+<th>意義</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>_Grunnable</code></td>
+<td>在執行佇列裡，等著被執行</td>
+</tr>
+<tr>
+<td><code>_Grunning</code></td>
+<td>正在某個 M 上執行</td>
+</tr>
+<tr>
+<td><code>_Gsyscall</code></td>
+<td>正在執行系統呼叫</td>
+</tr>
+<tr>
+<td><code>_Gwaiting</code></td>
+<td>阻塞中（等 channel、鎖、計時器、網路）</td>
+</tr>
+<tr>
+<td><code>_Gdead</code></td>
+<td>已結束，或剛建立還沒初始化</td>
+</tr>
+</tbody>
+</table>
+<h3 id="m-machineos-執行緒">M — machine（OS 執行緒）<a class="headerlink" href="#m-machineos-執行緒" title="Permanent link">#</a></h3>
+<p><code>m</code> 對應一個真正的作業系統執行緒。關鍵欄位：</p>
+<ul>
+<li><strong><code>g0</code></strong> —— 一個特殊的 goroutine，擁有較大的<strong>系統堆疊</strong>。排程、GC、堆疊成長等 runtime 工作都在 <code>g0</code> 上執行。</li>
+<li><strong><code>curg</code></strong> —— 目前正在執行的使用者 goroutine。</li>
+<li><strong><code>p</code></strong> —— 目前綁定的 P。</li>
+</ul>
+<p>M 的數量由 runtime 動態管理，預設上限 10000（<code>runtime.SetMaxThreads</code> 可調）。<strong>達到上限會直接 crash</strong>，這通常代表程式有大量阻塞的系統呼叫。</p>
+<h3 id="p-processor處理器">P — processor（處理器）<a class="headerlink" href="#p-processor處理器" title="Permanent link">#</a></h3>
+<p>P 是 Go 1.1 引入的關鍵抽象，它代表「執行 Go 程式碼所需的資源」：</p>
+<ul>
+<li><strong>本地執行佇列</strong> —— 最多 256 個 G，加上一個 <code>runnext</code> 插槽</li>
+<li><strong><code>mcache</code></strong> —— 這個 P 專屬的記憶體配置快取（見 <a href="allocator.html">記憶體配置器</a>）</li>
+<li><strong><code>timers</code></strong> —— 這個 P 的計時器堆積</li>
+<li><strong><code>deferpool</code></strong> —— <code>_defer</code> 記錄的重用池</li>
+</ul>
+<p>P 的數量等於 <code>GOMAXPROCS</code>，<strong>這決定了同時能執行多少 Go 程式碼</strong>。</p>
+<div class="admonition note">
+<p class="admonition-title">為什麼要有 P？</p>
+<p>Go 1.0 只有 G 和 M，用一把全域鎖保護全域執行佇列。問題是：</p>
+<ol>
+<li>全域鎖競爭嚴重，多核心無法擴展。</li>
+<li>每個 M 都需要自己的記憶體快取，但 M 可能有上千個 → 記憶體浪費。</li>
+<li>M 阻塞在系統呼叫時，它持有的資源沒辦法給別人用。</li>
+</ol>
+<p>引入 P 之後：本地佇列消除了大部分鎖競爭；<code>mcache</code> 掛在 P 上（數量固定且少）；M 阻塞時可以把 P 交給別的 M。</p>
+</div>
+<hr />
+<h2 id="排程迴圈">排程迴圈<a class="headerlink" href="#排程迴圈" title="Permanent link">#</a></h2>
+<p>每個 M 的主迴圈（<code>runtime.schedule</code>）：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>schedule():
+    ① 每 61 次排程，強制從全域佇列拿一個 G
+       （避免全域佇列裡的 G 被本地佇列餓死）
+
+    ② 從 P 的 runnext 拿（最近被喚醒的，快取最熱）
+
+    ③ 從 P 的本地佇列拿
+
+    ④ 本地空了 → findRunnable():
+         a. 再試一次本地佇列
+         b. 從全域佇列拿一批（拿 1/GOMAXPROCS 的量）
+         c. 檢查 netpoll（有沒有網路 I/O 完成）
+         d. 隨機挑其他 P 偷一半的 G（最多嘗試 4 輪）
+         e. 檢查其他 P 的到期計時器
+         f. 都沒有 → 把 P 還回去，M 進入休眠
+
+    ⑤ execute(g)：切換到那個 goroutine 執行
+</code></pre></div>
+
+<h3 id="為什麼是-61">為什麼是 61<a class="headerlink" href="#為什麼是-61" title="Permanent link">#</a></h3>
+<p>第 ① 步的「每 61 次」是一個經驗常數。理由：</p>
+<ul>
+<li>如果<strong>永遠優先本地佇列</strong>，全域佇列裡的 G 可能永遠不被執行（飢餓）。</li>
+<li>如果<strong>每次都檢查全域佇列</strong>，就要每次都拿全域鎖，效能崩潰。</li>
+</ul>
+<p>61 是質數，可以避免跟其他週期性行為（例如 GC 週期、計時器週期）產生共振。這是排程器設計裡常見的手法。</p>
+<h3 id="runnext-的作用"><code>runnext</code> 的作用<a class="headerlink" href="#runnext-的作用" title="Permanent link">#</a></h3>
+<p>當一個 goroutine 喚醒另一個（例如 channel 交遞），被喚醒的那個會被放進 <code>runnext</code> 而非佇列尾端。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">ch</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="nx">v</span><span class="w">  </span><span class="c1">// 喚醒等待的接收者 → 放進 runnext</span>
+</code></pre></div>
+
+<p>理由是<strong>快取局部性</strong>：剛被喚醒的 goroutine 要處理的資料，很可能還在 CPU 快取裡。立刻執行它比排到隊尾更有效率。</p>
+<p>這也讓「乒乓式」的 goroutine 通訊（A 送給 B，B 處理完送回 A）非常快。</p>
+<hr />
+<h2 id="工作竊取">工作竊取<a class="headerlink" href="#工作竊取" title="Permanent link">#</a></h2>
+<p>當一個 P 的本地佇列空了，它不會閒著——會去偷別人的。</p>
+<div class="hl" data-lang="text"><pre><span></span><code>for i := 0; i &lt; 4; i++ {          // 最多 4 輪
+    for enum := randomOrder() {   // 隨機順序走訪所有 P
+        if 目標 P 有 G {
+            偷走它佇列裡「一半」的 G
+            return
+        }
+    }
+}
+</code></pre></div>
+
+<p>三個細節：</p>
+<ol>
+<li><strong>隨機順序</strong> —— 避免所有閒置的 P 都去偷同一個 P，造成鎖競爭熱點。</li>
+<li><strong>偷一半</strong> —— 偷太少會馬上又要再偷；偷太多會讓被偷的 P 反過來變空。一半是經典的平衡點。</li>
+<li><strong>從佇列頭偷</strong> —— 被偷的 P 從尾端取用（LIFO，快取熱），小偷從頭端拿（FIFO，最舊的），減少衝突。</li>
+</ol>
+<hr />
+<h2 id="系統呼叫的處理">系統呼叫的處理<a class="headerlink" href="#系統呼叫的處理" title="Permanent link">#</a></h2>
+<p>這是 P 這層抽象最能發揮價值的地方。</p>
+<figure class="diagram"><svg viewBox="0 0 700 330" role="img" aria-label="系統呼叫時的 P 交接"><text class="d-t-b" x="15" y="20">情況一：快速系統呼叫（&lt; 20 微秒）</text><rect class="d-box-o" x="15" y="30" width="200" height="54" rx="5"/><text class="d-t-s d-mid" x="115" y="52">M 持有 P，執行 G</text><text class="d-t-s d-mid" x="115" y="72">狀態 → _Gsyscall</text><path class="d-line" d="M215 57 L250 57" marker-end="url(#ar19)"/><rect class="d-box-w" x="254" y="30" width="200" height="54" rx="5"/><text class="d-t-s d-mid" x="354" y="52">進入系統呼叫</text><text class="d-t-s d-mid" x="354" y="72">P 進入 _Psyscall，仍掛在 M 上</text><path class="d-line" d="M454 57 L490 57" marker-end="url(#ar19)"/><rect class="d-box-o" x="494" y="30" width="191" height="54" rx="5"/><text class="d-t-s d-mid" x="589" y="52">很快回來，直接拿回 P</text><text class="d-t-s d-mid" x="589" y="72">零成本，沒有交接</text><text class="d-t-b" x="15" y="122">情況二：慢系統呼叫（sysmon 偵測到超過 20 微秒）</text><rect class="d-box-o" x="15" y="132" width="160" height="54" rx="5"/><text class="d-t-s d-mid" x="95" y="154">M 阻塞在系統呼叫</text><text class="d-t-s d-mid" x="95" y="174">（例如讀檔案）</text><path class="d-line-a" d="M175 159 L210 159" marker-end="url(#ar19a)"/><rect class="d-box-d" x="214" y="132" width="200" height="54" rx="5"/><text class="d-t-s d-mid" x="314" y="154">sysmon 執行 handoffp</text><text class="d-t-s d-mid" x="314" y="174">把 P 從 M 身上摘下來</text><path class="d-line-a" d="M414 159 L450 159" marker-end="url(#ar19a)"/><rect class="d-box-a" x="454" y="132" width="231" height="54" rx="5"/><text class="d-t-s d-mid" x="569" y="154">交給閒置的 M（或新建一個）</text><text class="d-t-s d-mid" x="569" y="174">P 上的其他 G 繼續執行</text><text class="d-t-s" x="15" y="212">系統呼叫回來後，原本的 M 會嘗試拿回一個 P：先要原本那個 → 再要任何閒置的 → 都沒有就把 G 丟進全域佇列，M 去睡覺。</text><line class="d-dash" x1="15" y1="234" x2="685" y2="234"/><text class="d-t-b" x="15" y="258">情況三：網路 I/O —— 根本不阻塞執行緒</text><text class="d-t-s" x="15" y="280">net 套件的 socket 都是非阻塞模式。讀不到資料時，G 被掛到 netpoller（epoll/kqueue/IOCP）並 gopark，</text><text class="d-t-s" x="15" y="300">M 立刻去跑別的 G。資料就緒時 netpoller 把 G 設回 _Grunnable。全程沒有執行緒被浪費。</text><text class="d-t-s" x="15" y="322">→ 這就是 Go 能用少數執行緒處理數萬條連線的原因。詳見「網路輪詢器」一節。</text></svg><figcaption><b>三種 I/O 的差別。</b>網路 I/O 完全不阻塞執行緒（走 netpoller）；檔案 I/O 與大部分 syscall 會阻塞，但 P 會被交接出去；快速的系統呼叫則不做交接以省下成本。</figcaption></figure>
+
+<div class="admonition warning">
+<p class="admonition-title">檔案 I/O 仍會佔用執行緒</p>
+<p>在 Linux 上，一般的檔案讀寫<strong>無法</strong>用 epoll 做非阻塞（epoll 對常規檔案永遠回報「就緒」）。所以 <code>os.File</code> 的讀寫會真的阻塞 M。</p>
+<p>如果你的程式同時做大量檔案 I/O，執行緒數量會膨脹。用 <code>runtime.NumGoroutine()</code> 與 <code>/debug/pprof/threadcreate</code> 觀察，必要時自己限制並行度。</p>
+</div>
+<hr />
+<h2 id="搶佔">搶佔<a class="headerlink" href="#搶佔" title="Permanent link">#</a></h2>
+<p>早期的 Go 是<strong>合作式</strong>排程：goroutine 只在特定的「安全點」（函式呼叫、channel 操作、系統呼叫）才會讓出 CPU。這有個致命問題：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GOMAXPROCS</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="c1">// 只有一個 P</span>
+
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="c1">// 沒有任何函式呼叫的緊密迴圈</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}()</span>
+
+<span class="w">    </span><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="mi">10</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;我印得出來嗎？&quot;</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="admonition version">
+<p class="admonition-title">Go 1.14：非同步搶佔</p>
+<p><strong>Go 1.13 及之前</strong>：上面的程式會卡死。那個空迴圈永遠不會讓出 CPU，<code>main</code> 永遠印不出東西。而且 GC 也無法進行（要等所有 goroutine 到達安全點）。</p>
+<p><strong>Go 1.14 起</strong>：runtime 用<strong>訊號</strong>實作非同步搶佔。<code>sysmon</code> 發現某個 G 執行超過 <strong>10 毫秒</strong>，就向它所在的 M 發送 <code>SIGURG</code>。訊號處理常式把 G 的執行流導向 <code>asyncPreempt</code>，強制它讓出。</p>
+<p>所以現在上面的程式會正常印出訊息。</p>
+</div>
+<h3 id="搶佔的兩種形式">搶佔的兩種形式<a class="headerlink" href="#搶佔的兩種形式" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>形式</th>
+<th>觸發時機</th>
+<th>機制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>協作式</strong></td>
+<td>函式呼叫的堆疊檢查點</td>
+<td>把 <code>g.stackguard0</code> 設成特殊值 <code>stackPreempt</code>，函式序言的檢查會失敗，進而讓出</td>
+</tr>
+<tr>
+<td><strong>非同步</strong></td>
+<td><code>sysmon</code> 偵測到執行超過 10ms</td>
+<td>發送 <code>SIGURG</code> 訊號，在訊號處理常式中注入呼叫</td>
+</tr>
+</tbody>
+</table>
+<p>非同步搶佔並非隨時可行——runtime 必須確定當下的暫存器狀態是「可安全掃描」的（GC 需要知道哪些暫存器裝著指標）。做不到時會退回等待安全點。</p>
+<h3 id="觀察搶佔">觀察搶佔<a class="headerlink" href="#觀察搶佔" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">asyncpreemptoff</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
+</code></pre></div>
+
+<p>關掉非同步搶佔後，上面那個空迴圈的例子又會卡死。這可以用來驗證某個問題是否與搶佔有關。</p>
+<hr />
+<h2 id="gomaxprocs-該設多少"><code>GOMAXPROCS</code> 該設多少<a class="headerlink" href="#gomaxprocs-該設多少" title="Permanent link">#</a></h2>
+<h3 id="預設值">預設值<a class="headerlink" href="#預設值" title="Permanent link">#</a></h3>
+<div class="admonition version">
+<p class="admonition-title">Go 1.25：容器感知</p>
+<p><strong>Go 1.24 及之前</strong>：預設 = 整台機器的邏輯 CPU 數（<code>runtime.NumCPU()</code>），<strong>完全忽略容器的 CPU limit</strong>。</p>
+<p>這在 Kubernetes 上是嚴重問題。假設節點有 64 核、Pod limit 是 2 核：Go 會開 64 個 P，同時想跑 64 個 goroutine。Linux CFS 會在配額用完後<strong>完全暫停</strong>整個 cgroup 直到下個週期——造成幾十毫秒的延遲毛刺。</p>
+<p><strong>Go 1.25 起</strong>：Linux 上的 runtime 會讀取 cgroup 的 CPU 頻寬限制，取「限制值」與「邏輯 CPU 數」的較小者。而且會<strong>定期重新檢查</strong>，因為編排系統可能動態調整 limit。</p>
+<p>注意它看的是 CPU <strong>limit</strong>，不是 CPU <strong>request</strong>。只設 request 不設 limit 的話，行為跟以前一樣。</p>
+<p>這表示 <code>go.uber.org/automaxprocs</code> 在 Go 1.25+ 已不再必要（前提是 <code>go.mod</code> 宣告了 <code>go 1.25</code> 以上）。</p>
+</div>
+<h3 id="什麼時候該手動調整">什麼時候該手動調整<a class="headerlink" href="#什麼時候該手動調整" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">runtime</span><span class="p">.</span><span class="nx">GOMAXPROCS</span><span class="p">(</span><span class="nx">n</span><span class="p">)</span><span class="w"> </span><span class="c1">// 或設定環境變數 GOMAXPROCS=n</span>
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>情境</th>
+<th>建議</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>一般服務（Go 1.25+，有設 CPU limit）</td>
+<td><strong>不要動</strong>，預設是對的</td>
+</tr>
+<tr>
+<td>舊版 Go 在容器裡</td>
+<td>用 <code>automaxprocs</code> 或手動設成 CPU limit</td>
+</tr>
+<tr>
+<td>延遲敏感、想減少排程抖動</td>
+<td>可以試著設小一點（例如 limit 的 80%）並實測</td>
+</tr>
+<tr>
+<td>CPU 密集的批次運算</td>
+<td>等於實體核心數（不要算超執行緒）</td>
+</tr>
+<tr>
+<td>大量檔案 I/O</td>
+<td>提高沒用——瓶頸在阻塞的 M，不在 P</td>
+</tr>
+<tr>
+<td>寫測試要重現競爭</td>
+<td><code>GOMAXPROCS=1</code> 有時反而更容易觸發某些 bug</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition danger">
+<p class="admonition-title"><code>GOMAXPROCS=1</code> 不等於「沒有並行問題」</p>
+<p>很多人以為設成 1 就不用擔心資料競爭。<strong>錯的。</strong> 排程器仍然會在任意的搶佔點切換 goroutine，複合操作（例如 <code>x++</code>）仍然可能被打斷。</p>
+<p><code>GOMAXPROCS=1</code> 只是消除了「真正的平行執行」，沒有消除「交錯執行」。你的鎖還是要好好加。</p>
+</div>
+<hr />
+<h2 id="觀察排程器">觀察排程器<a class="headerlink" href="#觀察排程器" title="Permanent link">#</a></h2>
+<h3 id="godebugschedtrace"><code>GODEBUG=schedtrace</code><a class="headerlink" href="#godebugschedtrace" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">schedtrace</span><span class="o">=</span><span class="m">1000</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>SCHED 1005ms: gomaxprocs=8 idleprocs=5 threads=9 spinningthreads=1 needspinning=0 idlethreads=3 runqueue=2 [0 3 0 1 0 0 0 0]
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>欄位</th>
+<th>意義</th>
+<th>怎麼看</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gomaxprocs</code></td>
+<td>P 的數量</td>
+<td>確認容器感知有沒有生效</td>
+</tr>
+<tr>
+<td><code>idleprocs</code></td>
+<td>閒置的 P</td>
+<td>一直很高 = 並行度不足</td>
+</tr>
+<tr>
+<td><code>threads</code></td>
+<td>M 的總數</td>
+<td>遠大於 gomaxprocs = 有很多阻塞的系統呼叫</td>
+</tr>
+<tr>
+<td><code>spinningthreads</code></td>
+<td>正在找工作的 M</td>
+<td>持續很高 = 工作分佈不均</td>
+</tr>
+<tr>
+<td><code>runqueue</code></td>
+<td>全域佇列長度</td>
+<td>持續成長 = 處理不過來</td>
+</tr>
+<tr>
+<td><code>[...]</code></td>
+<td>每個 P 的本地佇列長度</td>
+<td>分佈不均 = 竊取沒發揮作用</td>
+</tr>
+</tbody>
+</table>
+<h3 id="go-tool-trace"><code>go tool trace</code><a class="headerlink" href="#go-tool-trace" title="Permanent link">#</a></h3>
+<p>比 <code>schedtrace</code> 更精細，能看到時間軸：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">f</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">Create</span><span class="p">(</span><span class="s">&quot;trace.out&quot;</span><span class="p">)</span>
+<span class="nx">trace</span><span class="p">.</span><span class="nx">Start</span><span class="p">(</span><span class="nx">f</span><span class="p">)</span>
+<span class="k">defer</span><span class="w"> </span><span class="nx">trace</span><span class="p">.</span><span class="nx">Stop</span><span class="p">()</span>
+</code></pre></div>
+
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>trace<span class="w"> </span>trace.out
+</code></pre></div>
+
+<p>重點看兩個檢視：</p>
+<ul>
+<li><strong>Scheduler latency profile</strong> —— 從「變成可執行」到「真的開始跑」的延遲。這個數字大代表 P 不夠或有 goroutine 霸佔 CPU。</li>
+<li><strong>Goroutine analysis</strong> —— 每個 goroutine 的時間分佈。「等同步」佔大宗代表鎖或 channel 設計有問題。</li>
+</ul>
+<h3 id="runtimenumgoroutine"><code>runtime.NumGoroutine()</code><a class="headerlink" href="#runtimenumgoroutine" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;log/slog&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">monitor</span><span class="p">(</span><span class="nx">interval</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Duration</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">MemStats</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Tick</span><span class="p">(</span><span class="nx">interval</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">ReadMemStats</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">m</span><span class="p">)</span>
+<span class="w">        </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Info</span><span class="p">(</span><span class="s">&quot;runtime&quot;</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&quot;goroutines&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">NumGoroutine</span><span class="p">(),</span>
+<span class="w">            </span><span class="s">&quot;heap_mb&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapAlloc</span><span class="o">/</span><span class="mi">1024</span><span class="o">/</span><span class="mi">1024</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&quot;gc_count&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">NumGC</span><span class="p">,</span>
+<span class="w">            </span><span class="s">&quot;gomaxprocs&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GOMAXPROCS</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span>
+<span class="w">        </span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="nx">monitor</span><span class="p">(</span><span class="mi">5</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<span class="w">    </span><span class="k">select</span><span class="w"> </span><span class="p">{}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>把 goroutine 數量做成指標推到監控系統</strong>，這是最便宜也最有效的洩漏預警。正常服務的 goroutine 數應該隨負載波動但保持穩定；單調成長就是洩漏。</p>
+<hr />
+<h2 id="常見誤解">常見誤解<a class="headerlink" href="#常見誤解" title="Permanent link">#</a></h2>
+<p><strong>「goroutine 越多越好。」</strong> 不對。每個 goroutine 至少 2 KB 堆疊，而且排程器要管理它們。CPU 密集的工作開超過核心數的 goroutine 只會增加切換開銷。用工作池限制並行度。</p>
+<p><strong>「goroutine 是輕量級執行緒。」</strong> 不精確。它是<strong>使用者空間的協作單位</strong>，跑在執行緒上。它輕量是因為堆疊小、切換不進核心。</p>
+<p><strong>「開 goroutine 就會變快。」</strong> 只有在有真正的並行機會（多核心 CPU 工作、或 I/O 等待）時才成立。純序列的邏輯拆成 goroutine 只會變慢。</p>
+<p><strong>「<code>GOMAXPROCS</code> 越大越好。」</strong> 超過實際可用的 CPU 只會增加切換與快取抖動。在有 CPU limit 的容器裡設太大更是災難。</p>
+<hr />
+<p>下一節談網路輪詢器——Go 能用少數執行緒扛住數萬連線的關鍵。</p></article><nav class='pager'><a class='prev' href='channel.html'><span>上一節</span><strong>5.4 channel</strong></a><a class='next' href='netpoller.html'><span>下一節</span><strong>5.6 網路輪詢器 netpoller</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#為什麼需要自己的排程器'>為什麼需要自己的排程器</a></li><li><a href='#gmp-三個角色'>G、M、P 三個角色</a><ul><li><a href='#g-goroutine'>G — goroutine</a></li><li><a href='#m-machineos-執行緒'>M — machine（OS 執行緒）</a></li><li><a href='#p-processor處理器'>P — processor（處理器）</a></li></ul></li><li><a href='#排程迴圈'>排程迴圈</a><ul><li><a href='#為什麼是-61'>為什麼是 61</a></li><li><a href='#runnext-的作用'>runnext 的作用</a></li></ul></li><li><a href='#工作竊取'>工作竊取</a></li><li><a href='#系統呼叫的處理'>系統呼叫的處理</a></li><li><a href='#搶佔'>搶佔</a><ul><li><a href='#搶佔的兩種形式'>搶佔的兩種形式</a></li><li><a href='#觀察搶佔'>觀察搶佔</a></li></ul></li><li><a href='#gomaxprocs-該設多少'>GOMAXPROCS 該設多少</a><ul><li><a href='#預設值'>預設值</a></li><li><a href='#什麼時候該手動調整'>什麼時候該手動調整</a></li></ul></li><li><a href='#觀察排程器'>觀察排程器</a><ul><li><a href='#godebugschedtrace'>GODEBUG=schedtrace</a></li><li><a href='#go-tool-trace'>go tool trace</a></li><li><a href='#runtimenumgoroutine'>runtime.NumGoroutine()</a></li></ul></li><li><a href='#常見誤解'>常見誤解</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

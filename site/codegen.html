@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7.5 程式碼生成 — Go 底層原理筆記</title>
+<meta name="description" content="go:generate 的運作方式、用 go/ast 與 text/template 寫產生器，以及什麼時候該用它取代反射。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li class='active'><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>標準函式庫與進階主題</p><h1><span class='h1num'>7.5</span>程式碼生成</h1><p class='lede'>go:generate 的運作方式、用 go/ast 與 text/template 寫產生器，以及什麼時候該用它取代反射。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="為什麼需要程式碼生成">為什麼需要程式碼生成<a class="headerlink" href="#為什麼需要程式碼生成" title="Permanent link">#</a></h2>
+<p>Go 刻意不提供巨集（macro）與樣板元編程。當你需要「依型別產生重複的程式碼」時，有三個選項：</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>成本</th>
+<th>型別安全</th>
+<th>適合</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>反射</strong></td>
+<td>執行期慢 100 倍</td>
+<td>執行期才發現錯誤</td>
+<td>型別在編譯期未知</td>
+</tr>
+<tr>
+<td><strong>泛型</strong></td>
+<td>幾乎零成本</td>
+<td>編譯期檢查</td>
+<td>演算法與容器</td>
+</tr>
+<tr>
+<td><strong>程式碼生成</strong></td>
+<td>零執行期成本</td>
+<td>編譯期檢查</td>
+<td>需要走訪 struct 欄位、產生樣板</td>
+</tr>
+</tbody>
+</table>
+<p>泛型解決了很多以前需要生成的場景（通用容器、<code>Map</code>／<code>Filter</code>），但它<strong>不能走訪 struct 的欄位</strong>——這正是序列化、ORM、驗證器需要的能力。這些場景仍然是「反射 vs 生成」的選擇。</p>
+<hr />
+<h2 id="gogenerate-的機制"><code>go:generate</code> 的機制<a class="headerlink" href="#gogenerate-的機制" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">//go:generate stringer -type=Status</span>
+</code></pre></div>
+
+<p>規則很簡單：</p>
+<ol>
+<li><strong>必須是註解，而且 <code>//</code> 後面沒有空格</strong>（<code>// go:generate</code> 不會被辨識）。</li>
+<li><strong>必須在行首</strong>（可以有前導空白，但不能在其他程式碼後面）。</li>
+<li><code>go generate ./...</code> 會掃描所有 <code>.go</code> 檔，依序執行這些指令。</li>
+</ol>
+<div class="admonition warning">
+<p class="admonition-title"><code>go build</code> 不會執行 go:generate</p>
+<p>這是刻意的設計：<strong>生成的程式碼要提交進版控</strong>。</p>
+<p>理由是：
+- 建置不需要額外工具鏈，<code>go build</code> 永遠能跑
+- 程式碼審查時看得到生成結果的變化
+- CI 不需要安裝一堆產生器</p>
+<p>做法是在 CI 加一步檢查「生成結果有沒有過期」：</p>
+<p><code>bash
+go generate ./...
+git diff --exit-code   # 有差異就代表忘了重新生成</code></p>
+</div>
+<h3 id="可用的變數">可用的變數<a class="headerlink" href="#可用的變數" title="Permanent link">#</a></h3>
+<p><code>go generate</code> 會設定幾個環境變數：</p>
+<table>
+<thead>
+<tr>
+<th>變數</th>
+<th>內容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>$GOFILE</code></td>
+<td>目前檔案名稱</td>
+</tr>
+<tr>
+<td><code>$GOLINE</code></td>
+<td>這行指令的行號</td>
+</tr>
+<tr>
+<td><code>$GOPACKAGE</code></td>
+<td>套件名稱</td>
+</tr>
+<tr>
+<td><code>$GOARCH</code> / <code>$GOOS</code></td>
+<td>目標架構與作業系統</td>
+</tr>
+<tr>
+<td><code>$DOLLAR</code></td>
+<td>一個 <code>$</code> 字元（用於需要跳脫時）</td>
+</tr>
+</tbody>
+</table>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">//go:generate echo &quot;處理 $GOFILE（套件 $GOPACKAGE）&quot;</span>
+</code></pre></div>
+
+<hr />
+<h2 id="最常用的產生器stringer">最常用的產生器：<code>stringer</code><a class="headerlink" href="#最常用的產生器stringer" title="Permanent link">#</a></h2>
+<p>為 <code>iota</code> 常數產生 <code>String()</code> 方法。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="c1">//go:generate go run golang.org/x/tools/cmd/stringer@latest -type=Status -linecomment</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Status</span><span class="w"> </span><span class="kt">int</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="nx">StatusPending</span><span class="w"> </span><span class="nx">Status</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">iota</span><span class="w"> </span><span class="c1">// 待處理</span>
+<span class="w">    </span><span class="nx">StatusRunning</span><span class="w">               </span><span class="c1">// 執行中</span>
+<span class="w">    </span><span class="nx">StatusDone</span><span class="w">                  </span><span class="c1">// 已完成</span>
+<span class="w">    </span><span class="nx">StatusFailed</span><span class="w">                </span><span class="c1">// 失敗</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">StatusRunning</span><span class="p">)</span><span class="w">          </span><span class="c1">// 執行中</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%v %d\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">StatusDone</span><span class="p">,</span><span class="w"> </span><span class="nx">StatusDone</span><span class="p">)</span><span class="w"> </span><span class="c1">// 已完成 2</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>generate<span class="w"> </span>./...
+</code></pre></div>
+
+<p>會產生 <code>status_string.go</code>：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// Code generated by &quot;stringer -type=Status -linecomment&quot;; DO NOT EDIT.</span>
+
+<span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;strconv&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">_</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 編譯期斷言：如果常數值改變，這裡會編譯失敗</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">x</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="kd">struct</span><span class="p">{}</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">x</span><span class="p">[</span><span class="nx">StatusPending</span><span class="o">-</span><span class="mi">0</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">x</span><span class="p">[</span><span class="nx">StatusRunning</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">x</span><span class="p">[</span><span class="nx">StatusDone</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">x</span><span class="p">[</span><span class="nx">StatusFailed</span><span class="o">-</span><span class="mi">3</span><span class="p">]</span>
+<span class="p">}</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="nx">_Status_name</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;待處理執行中已完成失敗&quot;</span>
+
+<span class="kd">var</span><span class="w"> </span><span class="nx">_Status_index</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="o">...</span><span class="p">]</span><span class="kt">uint8</span><span class="p">{</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">9</span><span class="p">,</span><span class="w"> </span><span class="mi">18</span><span class="p">,</span><span class="w"> </span><span class="mi">27</span><span class="p">,</span><span class="w"> </span><span class="mi">33</span><span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">i</span><span class="w"> </span><span class="nx">Status</span><span class="p">)</span><span class="w"> </span><span class="nx">String</span><span class="p">()</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="nx">Status</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">_Status_index</span><span class="p">)</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="s">&quot;Status(&quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nx">strconv</span><span class="p">.</span><span class="nx">FormatInt</span><span class="p">(</span><span class="nb">int64</span><span class="p">(</span><span class="nx">i</span><span class="p">),</span><span class="w"> </span><span class="mi">10</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot;)&quot;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">_Status_name</span><span class="p">[</span><span class="nx">_Status_index</span><span class="p">[</span><span class="nx">i</span><span class="p">]:</span><span class="nx">_Status_index</span><span class="p">[</span><span class="nx">i</span><span class="o">+</span><span class="mi">1</span><span class="p">]]</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>三個值得學習的技巧：</p>
+<ol>
+<li><strong><code>// Code generated ... DO NOT EDIT.</code></strong> —— 這是 Go 的<strong>正式慣例</strong>（規範在 <code>go generate</code> 的文件裡）。工具鏈與 linter 會辨識這一行並跳過檢查。</li>
+<li><strong>編譯期斷言</strong> —— 那個 <code>_()</code> 函式確保常數值沒有被改動。改了就編譯失敗，而不是產生錯誤的字串。</li>
+<li><strong>單一字串 + 索引表</strong> —— 比 <code>map[Status]string</code> 快，而且沒有初始化成本、沒有堆積配置。</li>
+</ol>
+<div class="admonition tip">
+<p class="admonition-title">用 <code>go run pkg@version</code> 而不是要求先安裝</p>
+<p><code>go
+//go:generate go run golang.org/x/tools/cmd/stringer@latest -type=Status</code></p>
+<p>這樣任何人 clone 下來就能 <code>go generate</code>，不需要先 <code>go install</code> 一堆工具。版本也可以釘死（把 <code>@latest</code> 換成 <code>@v0.24.0</code>），保證所有人產生的結果一致。</p>
+<p>或者用 <code>tool</code> 指令（Go 1.24+）管理工具相依：</p>
+<p><code>bash
+go get -tool golang.org/x/tools/cmd/stringer</code></p>
+<p>會記錄在 <code>go.mod</code> 的 <code>tool</code> 區塊，之後 <code>go tool stringer</code> 就能執行。</p>
+</div>
+<hr />
+<h2 id="常用的產生器">常用的產生器<a class="headerlink" href="#常用的產生器" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>工具</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>stringer</code></td>
+<td>為 <code>iota</code> 常數產生 <code>String()</code></td>
+</tr>
+<tr>
+<td><code>mockgen</code>（<code>go.uber.org/mock</code>）</td>
+<td>從介面產生測試用的 mock</td>
+</tr>
+<tr>
+<td><code>sqlc</code></td>
+<td>從 SQL 產生型別安全的查詢函式</td>
+</tr>
+<tr>
+<td><code>protoc-gen-go</code></td>
+<td>從 <code>.proto</code> 產生 Go 型別</td>
+</tr>
+<tr>
+<td><code>oapi-codegen</code></td>
+<td>從 OpenAPI 規格產生 client / server</td>
+</tr>
+<tr>
+<td><code>easyjson</code> / <code>ffjson</code></td>
+<td>產生零反射的 JSON 編解碼器</td>
+</tr>
+<tr>
+<td><code>go-enum</code></td>
+<td>從註解產生列舉型別與轉換函式</td>
+</tr>
+<tr>
+<td><code>wire</code></td>
+<td>編譯期的依賴注入</td>
+</tr>
+<tr>
+<td><code>moq</code></td>
+<td>另一種 mock 產生器，輸出較易讀</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="自己寫產生器">自己寫產生器<a class="headerlink" href="#自己寫產生器" title="Permanent link">#</a></h2>
+<p>以「為 struct 產生 setter 方法」為例，完整示範一次。</p>
+<h3 id="第一步解析原始碼">第一步：解析原始碼<a class="headerlink" href="#第一步解析原始碼" title="Permanent link">#</a></h3>
+<p>用 <code>golang.org/x/tools/go/packages</code> 載入套件（它比 <code>go/parser</code> 好，因為會一併載入型別資訊）：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">//go:build ignore</span>
+
+<span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;bytes&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;go/ast&quot;</span>
+<span class="w">    </span><span class="s">&quot;go/format&quot;</span>
+<span class="w">    </span><span class="s">&quot;go/token&quot;</span>
+<span class="w">    </span><span class="s">&quot;log&quot;</span>
+<span class="w">    </span><span class="s">&quot;os&quot;</span>
+<span class="w">    </span><span class="s">&quot;strings&quot;</span>
+<span class="w">    </span><span class="s">&quot;text/template&quot;</span>
+
+<span class="w">    </span><span class="s">&quot;golang.org/x/tools/go/packages&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Field</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w"> </span><span class="kt">string</span>
+<span class="w">    </span><span class="nx">Type</span><span class="w"> </span><span class="kt">string</span>
+<span class="p">}</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Target</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w">   </span><span class="kt">string</span>
+<span class="w">    </span><span class="nx">Fields</span><span class="w"> </span><span class="p">[]</span><span class="nx">Field</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">os</span><span class="p">.</span><span class="nx">Args</span><span class="p">)</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatal</span><span class="p">(</span><span class="s">&quot;用法: gen &lt;套件路徑&gt; &lt;型別名稱&gt;&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">pkgPath</span><span class="p">,</span><span class="w"> </span><span class="nx">typeName</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">Args</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">Args</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span>
+
+<span class="w">    </span><span class="nx">cfg</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">packages</span><span class="p">.</span><span class="nx">Config</span><span class="p">{</span>
+<span class="w">        </span><span class="nx">Mode</span><span class="p">:</span><span class="w"> </span><span class="nx">packages</span><span class="p">.</span><span class="nx">NeedName</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="nx">packages</span><span class="p">.</span><span class="nx">NeedSyntax</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="nx">packages</span><span class="p">.</span><span class="nx">NeedTypes</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="nx">packages</span><span class="p">.</span><span class="nx">NeedTypesInfo</span><span class="p">,</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">pkgs</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">packages</span><span class="p">.</span><span class="nx">Load</span><span class="p">(</span><span class="nx">cfg</span><span class="p">,</span><span class="w"> </span><span class="nx">pkgPath</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">pkgs</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">pkgs</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">Errors</span><span class="p">)</span><span class="w"> </span><span class="p">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatalf</span><span class="p">(</span><span class="s">&quot;載入失敗: %v&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">pkgs</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">Errors</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">pkg</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">pkgs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+<span class="w">    </span><span class="nx">target</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">findStruct</span><span class="p">(</span><span class="nx">pkg</span><span class="p">,</span><span class="w"> </span><span class="nx">typeName</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">target</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatalf</span><span class="p">(</span><span class="s">&quot;找不到 struct %q&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">typeName</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">out</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">render</span><span class="p">(</span><span class="nx">pkg</span><span class="p">.</span><span class="nx">Name</span><span class="p">,</span><span class="w"> </span><span class="nx">target</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">fname</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">ToLower</span><span class="p">(</span><span class="nx">typeName</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot;_setters.go&quot;</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">WriteFile</span><span class="p">(</span><span class="nx">fname</span><span class="p">,</span><span class="w"> </span><span class="nx">out</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="nx">o644</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">log</span><span class="p">.</span><span class="nx">Fatal</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;已產生&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">fname</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">findStruct</span><span class="p">(</span><span class="nx">pkg</span><span class="w"> </span><span class="o">*</span><span class="nx">packages</span><span class="p">.</span><span class="nx">Package</span><span class="p">,</span><span class="w"> </span><span class="nx">name</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="nx">Target</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">found</span><span class="w"> </span><span class="o">*</span><span class="nx">Target</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">file</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">pkg</span><span class="p">.</span><span class="nx">Syntax</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">ast</span><span class="p">.</span><span class="nx">Inspect</span><span class="p">(</span><span class="nx">file</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">n</span><span class="w"> </span><span class="nx">ast</span><span class="p">.</span><span class="nx">Node</span><span class="p">)</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">ts</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">n</span><span class="p">.(</span><span class="o">*</span><span class="nx">ast</span><span class="p">.</span><span class="nx">TypeSpec</span><span class="p">)</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">ok</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nx">ts</span><span class="p">.</span><span class="nx">Name</span><span class="p">.</span><span class="nx">Name</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nx">name</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="k">return</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">            </span><span class="nx">st</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">ts</span><span class="p">.</span><span class="nx">Type</span><span class="p">.(</span><span class="o">*</span><span class="nx">ast</span><span class="p">.</span><span class="nx">StructType</span><span class="p">)</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="k">return</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">            </span><span class="p">}</span>
+
+<span class="w">            </span><span class="nx">t</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Target</span><span class="p">{</span><span class="nx">Name</span><span class="p">:</span><span class="w"> </span><span class="nx">name</span><span class="p">}</span>
+<span class="w">            </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">f</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">st</span><span class="p">.</span><span class="nx">Fields</span><span class="p">.</span><span class="nx">List</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">f</span><span class="p">.</span><span class="nx">Names</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                    </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">id</span><span class="p">.</span><span class="nx">IsExported</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                        </span><span class="k">continue</span>
+<span class="w">                    </span><span class="p">}</span>
+<span class="w">                    </span><span class="nx">t</span><span class="p">.</span><span class="nx">Fields</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">t</span><span class="p">.</span><span class="nx">Fields</span><span class="p">,</span><span class="w"> </span><span class="nx">Field</span><span class="p">{</span>
+<span class="w">                        </span><span class="nx">Name</span><span class="p">:</span><span class="w"> </span><span class="nx">id</span><span class="p">.</span><span class="nx">Name</span><span class="p">,</span>
+<span class="w">                        </span><span class="nx">Type</span><span class="p">:</span><span class="w"> </span><span class="nx">exprString</span><span class="p">(</span><span class="nx">f</span><span class="p">.</span><span class="nx">Type</span><span class="p">),</span>
+<span class="w">                    </span><span class="p">})</span>
+<span class="w">                </span><span class="p">}</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">            </span><span class="nx">found</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">t</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="kc">false</span>
+<span class="w">        </span><span class="p">})</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">found</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">exprString</span><span class="p">(</span><span class="nx">e</span><span class="w"> </span><span class="nx">ast</span><span class="p">.</span><span class="nx">Expr</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">buf</span><span class="w"> </span><span class="nx">bytes</span><span class="p">.</span><span class="nx">Buffer</span>
+<span class="w">    </span><span class="nx">format</span><span class="p">.</span><span class="nx">Node</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">buf</span><span class="p">,</span><span class="w"> </span><span class="nx">token</span><span class="p">.</span><span class="nx">NewFileSet</span><span class="p">(),</span><span class="w"> </span><span class="nx">e</span><span class="p">)</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">buf</span><span class="p">.</span><span class="nx">String</span><span class="p">()</span>
+<span class="p">}</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="nx">tpl</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">`// Code generated by gen; DO NOT EDIT.</span>
+
+<span class="s">package {{.Package}}</span>
+
+<span class="s">{{range .Fields -}}</span>
+<span class="s">// Set{{.Name}} 設定 {{.Name}} 並回傳接收者，支援串接。</span>
+<span class="s">func (x *{{$.Type}}) Set{{.Name}}(v {{.Type}}) *{{$.Type}} {</span>
+<span class="s">    x.{{.Name}} = v</span>
+<span class="s">    return x</span>
+<span class="s">}</span>
+
+<span class="s">{{end -}}</span>
+<span class="s">`</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">render</span><span class="p">(</span><span class="nx">pkgName</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">t</span><span class="w"> </span><span class="o">*</span><span class="nx">Target</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">tmpl</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">template</span><span class="p">.</span><span class="nx">Must</span><span class="p">(</span><span class="nx">template</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;setters&quot;</span><span class="p">).</span><span class="nx">Parse</span><span class="p">(</span><span class="nx">tpl</span><span class="p">))</span>
+
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">buf</span><span class="w"> </span><span class="nx">bytes</span><span class="p">.</span><span class="nx">Buffer</span>
+<span class="w">    </span><span class="nx">data</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">Package</span><span class="w"> </span><span class="kt">string</span>
+<span class="w">        </span><span class="nx">Type</span><span class="w">    </span><span class="kt">string</span>
+<span class="w">        </span><span class="nx">Fields</span><span class="w">  </span><span class="p">[]</span><span class="nx">Field</span>
+<span class="w">    </span><span class="p">}{</span><span class="nx">pkgName</span><span class="p">,</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">Name</span><span class="p">,</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">Fields</span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">tmpl</span><span class="p">.</span><span class="nx">Execute</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">buf</span><span class="p">,</span><span class="w"> </span><span class="nx">data</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// ✓ 一定要跑 format.Source，這樣模板的縮排就不用寫得很完美</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">format</span><span class="p">.</span><span class="nx">Source</span><span class="p">(</span><span class="nx">buf</span><span class="p">.</span><span class="nx">Bytes</span><span class="p">())</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="第二步在目標檔案加上指令">第二步：在目標檔案加上指令<a class="headerlink" href="#第二步在目標檔案加上指令" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">model</span>
+
+<span class="c1">//go:generate go run ./cmd/gen . User</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">User</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ID</span><span class="w">    </span><span class="kt">int64</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w">  </span><span class="kt">string</span>
+<span class="w">    </span><span class="nx">Email</span><span class="w"> </span><span class="kt">string</span>
+<span class="w">    </span><span class="nx">tags</span><span class="w">  </span><span class="p">[]</span><span class="kt">string</span><span class="w"> </span><span class="c1">// 未匯出，會被跳過</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="第三步執行">第三步：執行<a class="headerlink" href="#第三步執行" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>generate<span class="w"> </span>./...
+</code></pre></div>
+
+<p>產生 <code>user_setters.go</code>：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// Code generated by gen; DO NOT EDIT.</span>
+
+<span class="kn">package</span><span class="w"> </span><span class="nx">model</span>
+
+<span class="c1">// SetID 設定 ID 並回傳接收者，支援串接。</span>
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">x</span><span class="w"> </span><span class="o">*</span><span class="nx">User</span><span class="p">)</span><span class="w"> </span><span class="nx">SetID</span><span class="p">(</span><span class="nx">v</span><span class="w"> </span><span class="kt">int64</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="nx">User</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">x</span><span class="p">.</span><span class="nx">ID</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">v</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">x</span>
+<span class="p">}</span>
+
+<span class="c1">// SetName 設定 Name 並回傳接收者，支援串接。</span>
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">x</span><span class="w"> </span><span class="o">*</span><span class="nx">User</span><span class="p">)</span><span class="w"> </span><span class="nx">SetName</span><span class="p">(</span><span class="nx">v</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="nx">User</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">x</span><span class="p">.</span><span class="nx">Name</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">v</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">x</span>
+<span class="p">}</span>
+
+<span class="c1">// SetEmail 設定 Email 並回傳接收者，支援串接。</span>
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">x</span><span class="w"> </span><span class="o">*</span><span class="nx">User</span><span class="p">)</span><span class="w"> </span><span class="nx">SetEmail</span><span class="p">(</span><span class="nx">v</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="nx">User</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">x</span><span class="p">.</span><span class="nx">Email</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">v</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">x</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="寫產生器的五個原則">寫產生器的五個原則<a class="headerlink" href="#寫產生器的五個原則" title="Permanent link">#</a></h3>
+<ol>
+<li><strong>一定要輸出 <code>// Code generated ... DO NOT EDIT.</code></strong>，而且必須是<strong>第一行</strong>（在 <code>package</code> 之前）。格式規範在 <a href="https://go.dev/s/generatedcode">go generate 文件</a>。</li>
+<li><strong>一定要跑 <code>format.Source()</code>。</strong> 這樣你的模板不需要處理縮排，而且輸出保證符合 <code>gofmt</code>。</li>
+<li><strong>產生器本身加上 <code>//go:build ignore</code></strong>，避免它被當成套件的一部分編譯。</li>
+<li><strong>失敗要 <code>os.Exit(1)</code>。</strong> <code>go generate</code> 遇到非零退出碼會停止並回報。</li>
+<li><strong>輸出要有決定性（deterministic）。</strong> 走訪 map 時記得排序 key，否則每次產生的結果順序不同，diff 會很亂。</li>
+</ol>
+<hr />
+<h2 id="embed另一種生成"><code>embed</code>：另一種「生成」<a class="headerlink" href="#embed另一種生成" title="Permanent link">#</a></h2>
+<p>Go 1.16 的 <code>embed</code> 讓你把檔案直接編進執行檔，很多場景可以取代程式碼生成。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;embed&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;html/template&quot;</span>
+<span class="w">    </span><span class="s">&quot;io/fs&quot;</span>
+<span class="w">    </span><span class="s">&quot;net/http&quot;</span>
+<span class="w">    </span><span class="s">&quot;os&quot;</span>
+<span class="p">)</span>
+
+<span class="c1">//go:embed static/*</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">staticFS</span><span class="w"> </span><span class="nx">embed</span><span class="p">.</span><span class="nx">FS</span>
+
+<span class="c1">//go:embed templates/*.html</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">tmplFS</span><span class="w"> </span><span class="nx">embed</span><span class="p">.</span><span class="nx">FS</span>
+
+<span class="c1">//go:embed version.txt</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">version</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="c1">// 單一檔案可以直接嵌成 string</span>
+
+<span class="c1">//go:embed config.json</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">configData</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="w"> </span><span class="c1">// 或 []byte</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 嵌入的檔案系統可以直接當 http.FileSystem 用</span>
+<span class="w">    </span><span class="nx">sub</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">fs</span><span class="p">.</span><span class="nx">Sub</span><span class="p">(</span><span class="nx">staticFS</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;static&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">http</span><span class="p">.</span><span class="nx">Handle</span><span class="p">(</span><span class="s">&quot;GET /static/&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">StripPrefix</span><span class="p">(</span><span class="s">&quot;/static/&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">FileServer</span><span class="p">(</span><span class="nx">http</span><span class="p">.</span><span class="nx">FS</span><span class="p">(</span><span class="nx">sub</span><span class="p">))))</span>
+
+<span class="w">    </span><span class="nx">tmpl</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">template</span><span class="p">.</span><span class="nx">Must</span><span class="p">(</span><span class="nx">template</span><span class="p">.</span><span class="nx">ParseFS</span><span class="p">(</span><span class="nx">tmplFS</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;templates/*.html&quot;</span><span class="p">))</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">tmpl</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Fprintln</span><span class="p">(</span><span class="nx">os</span><span class="p">.</span><span class="nx">Stdout</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;版本:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">version</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Fprintln</span><span class="p">(</span><span class="nx">os</span><span class="p">.</span><span class="nx">Stdout</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;設定大小:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">configData</span><span class="p">))</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h3 id="規則與限制">規則與限制<a class="headerlink" href="#規則與限制" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>規則</th>
+<th>說明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>必須 <code>import "embed"</code></td>
+<td>就算只用 <code>string</code>／<code>[]byte</code> 也要（可用 <code>_ "embed"</code>）</td>
+</tr>
+<tr>
+<td>只能嵌入<strong>同目錄或子目錄</strong>的檔案</td>
+<td>不能用 <code>../</code></td>
+</tr>
+<tr>
+<td>預設不含 <code>.</code> 與 <code>_</code> 開頭的檔案</td>
+<td>用 <code>all:</code> 前綴才會包含（<code>//go:embed all:static</code>）</td>
+</tr>
+<tr>
+<td>不能嵌入符號連結</td>
+<td></td>
+</tr>
+<tr>
+<td>變數必須在<strong>套件層級</strong></td>
+<td>不能是區域變數</td>
+</tr>
+<tr>
+<td>會增加執行檔大小</td>
+<td>嵌入 100 MB 就多 100 MB</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title"><code>embed</code> 通常比程式碼生成好</p>
+<p>以前要把靜態檔案打包進執行檔，得用 <code>go-bindata</code> 這類工具把檔案轉成一個巨大的 Go 原始碼檔。<code>embed</code> 是原生支援，不需要生成步驟、不會弄髒版控、編譯也更快。</p>
+<p><strong>只要是「把檔案內容帶進執行檔」的需求，優先用 <code>embed</code>。</strong></p>
+</div>
+<hr />
+<h2 id="決策樹">決策樹<a class="headerlink" href="#決策樹" title="Permanent link">#</a></h2>
+<p>面對「重複的樣板程式碼」時，按這個順序評估：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>需要處理的東西在編譯期已知嗎？
+├─ 否 → 反射（沒有別的選擇）
+└─ 是
+   ├─ 只是要把檔案內容帶進來？
+   │  → embed
+   │
+   ├─ 是通用的演算法或容器（不需要看 struct 欄位）？
+   │  → 泛型
+   │
+   ├─ 需要走訪 struct 欄位／產生方法／從外部規格產生程式碼？
+   │  → 程式碼生成
+   │
+   └─ 重複的程式碼不多（&lt; 3 處）？
+      → 直接手寫。生成有它自己的維護成本
+</code></pre></div>
+
+<p><strong>不要為了消除三行重複而引入產生器。</strong> 程式碼生成的成本包括：多一個建置步驟、CI 要檢查是否過期、新人要理解那些「不要編輯」的檔案從哪來、產生器本身也是要維護的程式碼。</p>
+<p>它在下面這些情況才划算：</p>
+<ul>
+<li>重複出現在<strong>數十個型別</strong>上（序列化、mock）</li>
+<li>來源是<strong>外部規格</strong>（<code>.proto</code>、OpenAPI、SQL schema）—— 這時生成是唯一能保證同步的方式</li>
+<li>反射的成本已經量測出來是瓶頸</li>
+</ul>
+<hr />
+<h2 id="全書結語">全書結語<a class="headerlink" href="#全書結語" title="Permanent link">#</a></h2>
+<p>從一份 <code>.go</code> 檔案出發，我們走過了：</p>
+<ul>
+<li><strong>編譯器</strong>如何把它變成機器碼，以及逃逸分析與內聯這兩個決定效能的關鍵最佳化</li>
+<li><strong>資料結構</strong>在記憶體裡的真實樣貌——三欄位的 slice、Swiss Table 的 map、不可變的 string</li>
+<li><strong>語言核心</strong>的實作：暫存器呼叫慣例、介面的 itab 分派、反射建立在型別描述子之上</li>
+<li><strong>關鍵字</strong>其實大多是編譯器改寫成的 runtime 呼叫</li>
+<li><strong>並行</strong>：GMP 排程器、channel 的直接交遞、netpoller 讓阻塞變便宜</li>
+<li><strong>記憶體</strong>：三層配置器、三色標記 GC、會自己長大的堆疊</li>
+<li><strong>標準庫</strong>幾個重要套件的設計取捨</li>
+</ul>
+<p>貫穿全書的一條線是：<strong>Go 沒有魔法，只有你看不見的函式呼叫。</strong></p>
+<p><code>append</code> 是 <code>growslice</code>，<code>go f()</code> 是 <code>newproc</code>，<code>m[k]</code> 是 <code>mapaccess</code>。當你知道每個語法糖背後對應到哪個 runtime 函式，效能問題就從「玄學」變成「可以量測與推理的東西」。</p>
+<p>三個帶得走的習慣：</p>
+<ol>
+<li><strong>量測，不要猜。</strong> <code>-gcflags=-m</code>、<code>-benchmem</code>、<code>pprof</code>、<code>trace</code> —— <a href="toolbox.html">工具箱</a> 那節的六件工具，遇到問題時逐一過一遍。</li>
+<li><strong>先減少配置，再調參數。</strong> <code>allocs/op</code> 降下來，<code>ns/op</code> 與 GC 壓力通常會跟著降。調 <code>GOGC</code> 只是把問題往後推。</li>
+<li><strong>看原始碼。</strong> <code>$(go env GOROOT)/src/runtime/</code> 就在你的機器上。本書引用的每個函式，你都可以自己翻開來看。</li>
+</ol>
+<p>祝閱讀愉快。</p></article><nav class='pager'><a class='prev' href='cgo.html'><span>上一節</span><strong>7.4 cgo</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#為什麼需要程式碼生成'>為什麼需要程式碼生成</a></li><li><a href='#gogenerate-的機制'>go:generate 的機制</a><ul><li><a href='#可用的變數'>可用的變數</a></li></ul></li><li><a href='#最常用的產生器stringer'>最常用的產生器：stringer</a></li><li><a href='#常用的產生器'>常用的產生器</a></li><li><a href='#自己寫產生器'>自己寫產生器</a><ul><li><a href='#第一步解析原始碼'>第一步：解析原始碼</a></li><li><a href='#第二步在目標檔案加上指令'>第二步：在目標檔案加上指令</a></li><li><a href='#第三步執行'>第三步：執行</a></li><li><a href='#寫產生器的五個原則'>寫產生器的五個原則</a></li></ul></li><li><a href='#embed另一種生成'>embed：另一種「生成」</a><ul><li><a href='#規則與限制'>規則與限制</a></li></ul></li><li><a href='#決策樹'>決策樹</a></li><li><a href='#全書結語'>全書結語</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

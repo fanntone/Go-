@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1.6 機器碼生成與連結 — Go 底層原理筆記</title>
+<meta name="description" content="Plan 9 組合語言、暫存器配置、連結器的死碼消除，以及執行檔裡到底塞了哪些東西。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li class='active'><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>編譯器</p><h1><span class='h1num'>1.6</span>機器碼生成與連結</h1><p class='lede'>Plan 9 組合語言、暫存器配置、連結器的死碼消除，以及執行檔裡到底塞了哪些東西。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="plan-9-組合語言">Plan 9 組合語言<a class="headerlink" href="#plan-9-組合語言" title="Permanent link">#</a></h2>
+<p>Go 的組合語言不是 Intel 語法也不是 AT&amp;T 語法，而是繼承自 <strong>Plan 9</strong> 作業系統的一種<strong>半抽象組合語言</strong>。理解它的關鍵是：<strong>它不是 CPU 的真實指令集，而是一層薄薄的抽象</strong>。</p>
+<h3 id="三個要記住的差異">三個要記住的差異<a class="headerlink" href="#三個要記住的差異" title="Permanent link">#</a></h3>
+<p><strong>① 運算元順序是「來源，目的」</strong></p>
+<div class="hl" data-lang="text"><pre><span></span><code>MOVQ AX, BX      // Plan 9：把 AX 搬到 BX
+mov  rbx, rax    // Intel 語法：把 rax 搬到 rbx（順序相反！）
+</code></pre></div>
+
+<p><strong>② 暫存器沒有前綴，而且有虛擬暫存器</strong></p>
+<p>除了 <code>AX</code>、<code>BX</code>、<code>SP</code> 這些真實暫存器，Plan 9 還有四個<strong>虛擬暫存器</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>虛擬暫存器</th>
+<th>意義</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SB</code></td>
+<td>Static Base，全域符號的基底。<code>foo(SB)</code> 表示符號 <code>foo</code></td>
+</tr>
+<tr>
+<td><code>FP</code></td>
+<td>Frame Pointer，函式參數的基底。<code>x+0(FP)</code> 表示第一個參數</td>
+</tr>
+<tr>
+<td><code>SP</code></td>
+<td>Stack Pointer，區域變數的基底。注意這跟硬體的 SP 不完全一樣</td>
+</tr>
+<tr>
+<td><code>PC</code></td>
+<td>Program Counter</td>
+</tr>
+</tbody>
+</table>
+<p><strong>③ 指令後綴標示運算元大小</strong></p>
+<p><code>MOVB</code>（1 位元組）、<code>MOVW</code>（2）、<code>MOVL</code>（4）、<code>MOVQ</code>（8）。</p>
+<h3 id="讀一段實際輸出">讀一段實際輸出<a class="headerlink" href="#讀一段實際輸出" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Point</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">X</span><span class="p">,</span><span class="w"> </span><span class="nx">Y</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">Dist2</span><span class="p">(</span><span class="nx">p</span><span class="w"> </span><span class="nx">Point</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">p</span><span class="p">.</span><span class="nx">X</span><span class="o">*</span><span class="nx">p</span><span class="p">.</span><span class="nx">X</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nx">p</span><span class="p">.</span><span class="nx">Y</span><span class="o">*</span><span class="nx">p</span><span class="p">.</span><span class="nx">Y</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nb">println</span><span class="p">(</span><span class="nx">Dist2</span><span class="p">(</span><span class="nx">Point</span><span class="p">{</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">}))</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-S<span class="w"> </span>-l<span class="w"> </span>main.go
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>main.Dist2 STEXT nosplit size=17 args=0x10 locals=0x0 funcid=0x0 align=0x0
+    0x0000 00000 (main.go:5)    TEXT    main.Dist2(SB), NOSPLIT|ABIInternal, $0-16
+    0x0000 00000 (main.go:6)    IMULQ   AX, AX
+    0x0004 00004 (main.go:6)    IMULQ   BX, BX
+    0x0008 00008 (main.go:6)    LEAQ    (BX)(AX*1), AX
+    0x000c 00012 (main.go:6)    RET
+</code></pre></div>
+
+<p>逐項拆解 <code>TEXT</code> 那一行：</p>
+<table>
+<thead>
+<tr>
+<th>部分</th>
+<th>意義</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>main.Dist2(SB)</code></td>
+<td>符號名稱，<code>SB</code> 表示這是全域符號</td>
+</tr>
+<tr>
+<td><code>NOSPLIT</code></td>
+<td>不插入堆疊成長檢查（函式夠小且不呼叫別人）</td>
+</tr>
+<tr>
+<td><code>ABIInternal</code></td>
+<td>使用 Go 1.17+ 的暫存器呼叫慣例</td>
+</tr>
+<tr>
+<td><code>$0-16</code></td>
+<td>區域變數 0 位元組；參數 + 回傳值共 16 位元組</td>
+</tr>
+</tbody>
+</table>
+<p>然後看指令本身：<code>Point{3, 4}</code> 的兩個欄位被拆開放進 <code>AX</code> 與 <code>BX</code>（<strong>struct 被打散進暫存器</strong>，沒有經過記憶體），兩次 <code>IMULQ</code> 做平方，<code>LEAQ (BX)(AX*1), AX</code> 用位址計算指令做加法（比 <code>ADDQ</code> 少一個旗標更新，是常見的窺孔最佳化）。</p>
+<p>整個函式沒有碰記憶體，也沒有函式序言／尾聲（prologue/epilogue）。這就是暫存器 ABI 加上內聯之後的效果。</p>
+<div class="admonition note">
+<p class="admonition-title">什麼時候你真的需要寫組合語言</p>
+<p>幾乎不需要。標準庫裡有組合語言的地方主要是三類：CPU 指令的直接存取（<code>math/bits</code>、<code>crypto</code> 的 AES-NI／AVX2 實作）、runtime 的堆疊切換與 goroutine 切換、系統呼叫的入口。</p>
+<p>如果你在寫應用程式碼而想用組合語言優化，通常代表演算法或資料結構層面還有更大的空間沒挖。</p>
+</div>
+<hr />
+<h2 id="暫存器配置">暫存器配置<a class="headerlink" href="#暫存器配置" title="Permanent link">#</a></h2>
+<p>SSA 的最後幾個 pass 裡，<code>regalloc</code> 負責決定每個值放在哪。這是 NP-hard 問題，實務上用啟發式演算法。</p>
+<p><code>amd64</code> 上可用的通用暫存器有 16 個，但其中幾個被保留：</p>
+<table>
+<thead>
+<tr>
+<th>暫存器</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SP</code> (<code>RSP</code>)</td>
+<td>堆疊指標</td>
+</tr>
+<tr>
+<td><code>BP</code> (<code>RBP</code>)</td>
+<td>影格指標（frame pointer），用於堆疊追蹤</td>
+</tr>
+<tr>
+<td><code>R14</code></td>
+<td>目前的 <code>g</code>（goroutine 結構的指標）</td>
+</tr>
+<tr>
+<td><code>R12</code></td>
+<td>暫時用途，連結器可能改寫</td>
+</tr>
+<tr>
+<td>其餘</td>
+<td>可自由配置</td>
+</tr>
+</tbody>
+</table>
+<p><code>R14</code> 專門存 <code>g</code> 這件事很關鍵。Go 的每個 goroutine 都有一個 <code>g</code> 結構，runtime 需要「隨時能拿到目前是哪個 g」。把它固定在暫存器裡，讓 <code>getg()</code> 幾乎零成本——這對堆疊成長檢查（每個函式序言都要做）非常重要。</p>
+<p>當值多於暫存器時，多出來的會<strong>溢出（spill）</strong>到堆疊。<code>ssa.html</code> 的最後幾欄可以看到 spill/restore 指令。</p>
+<hr />
+<h2 id="目標檔與連結">目標檔與連結<a class="headerlink" href="#目標檔與連結" title="Permanent link">#</a></h2>
+<p>編譯完每個套件會得到一個 <code>.a</code> 檔（其實是 Go 自訂格式的封存檔）。連結器 <code>cmd/link</code> 把它們與 <code>runtime</code> 合併成一顆執行檔。</p>
+<h3 id="連結器做的四件事">連結器做的四件事<a class="headerlink" href="#連結器做的四件事" title="Permanent link">#</a></h3>
+<p><strong>① 符號解析。</strong> 每個 <code>.a</code> 檔裡有「我定義了哪些符號」與「我需要哪些符號」。連結器把它們對起來，填入真實位址。找不到就是 <code>undefined: xxx</code>。</p>
+<p><strong>② 死碼消除。</strong> 從進入點（<code>runtime.rt0_go</code>）開始做可達性分析，沒被引用到的函式與資料整個丟掉。這是 Go 執行檔沒有比實際更大的原因。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">neverCalled</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;我不會出現在執行檔裡&quot;</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;hi&quot;</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>app.exe<span class="w"> </span>.<span class="w"> </span>
+go<span class="w"> </span>tool<span class="w"> </span>nm<span class="w"> </span>app.exe<span class="w"> </span><span class="p">|</span><span class="w"> </span>findstr<span class="w"> </span><span class="s2">&quot;neverCalled&quot;</span>
+</code></pre></div>
+
+<p>沒有輸出——<code>neverCalled</code> 被刪掉了。</p>
+<div class="admonition warning">
+<p class="admonition-title">反射會擋住死碼消除</p>
+<p>如果你的程式用了 <code>reflect.Value.Method</code> 或 <code>reflect.Type.Method</code>，連結器就無法確定哪些方法會被呼叫，只好<strong>保留所有型別的所有方法</strong>。這會讓執行檔明顯變大。</p>
+<p>這也是為什麼大量使用反射的框架（某些 ORM、DI 容器）產出的執行檔特別肥。</p>
+</div>
+<p><strong>③ 產生中繼資料。</strong> 執行檔裡除了程式碼，還有幾塊 runtime 需要的表：</p>
+<table>
+<thead>
+<tr>
+<th>區段</th>
+<th>內容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pclntab</code></td>
+<td>PC → 行號／函式名對應表，<code>panic</code> 印堆疊追蹤靠它</td>
+</tr>
+<tr>
+<td><code>moduledata</code></td>
+<td>模組層級的中繼資料，GC 與反射的入口</td>
+</tr>
+<tr>
+<td><code>typelinks</code></td>
+<td>所有型別的 <code>_type</code> 描述子，型別斷言與反射用</td>
+</tr>
+<tr>
+<td><code>itablinks</code></td>
+<td>已知的 (介面, 具體型別) 配對表</td>
+</tr>
+<tr>
+<td><code>gcdata</code> / <code>gcbss</code></td>
+<td>全域變數裡哪些位置是指標，GC 掃描用</td>
+</tr>
+<tr>
+<td><code>funcdata</code> / <code>pcdata</code></td>
+<td>每個函式的堆疊圖（stack map），GC 掃描堆疊用</td>
+</tr>
+</tbody>
+</table>
+<p><strong>④ 產生平台的執行檔格式。</strong> Windows 是 PE、Linux 是 ELF、macOS 是 Mach-O。</p>
+<h3 id="執行檔為什麼這麼大">執行檔為什麼這麼大<a class="headerlink" href="#執行檔為什麼這麼大" title="Permanent link">#</a></h3>
+<p>一支只印 hello world 的 Go 程式，編出來大約 1.5–2 MB。原因是<strong>靜態連結</strong>：runtime（排程器、GC、記憶體配置器）全部包進去了，還有上面那些中繼資料表。</p>
+<p>想瘦身：</p>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="c1"># 去掉除錯資訊與符號表，通常能少 25–30%</span>
+go<span class="w"> </span>build<span class="w"> </span>-ldflags<span class="o">=</span><span class="s2">&quot;-s -w&quot;</span><span class="w"> </span>-o<span class="w"> </span>app.exe<span class="w"> </span>.
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>旗標</th>
+<th>作用</th>
+<th>代價</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-s</code></td>
+<td>去掉符號表</td>
+<td><code>go tool nm</code> 失效</td>
+</tr>
+<tr>
+<td><code>-w</code></td>
+<td>去掉 DWARF 除錯資訊</td>
+<td>delve/gdb 無法除錯</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title"><code>-s -w</code> 不影響 panic 堆疊追蹤</p>
+<p>很多人以為加了 <code>-s -w</code> 之後 panic 就印不出函式名了。<strong>不會</strong>。堆疊追蹤靠的是 <code>pclntab</code>，那是 runtime 必需的資料，不會被這兩個旗標移除。被移除的是 DWARF（給外部除錯器用）與符號表（給 <code>nm</code>／<code>objdump</code> 用）。</p>
+</div>
+<p>再進一步可以用 <code>upx</code> 之類的壓縮器，但那會拖慢啟動並可能觸發防毒軟體誤判，一般不建議。</p>
+<h3 id="看看誰佔了空間">看看誰佔了空間<a class="headerlink" href="#看看誰佔了空間" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>nm<span class="w"> </span>-size<span class="w"> </span>-sort<span class="w"> </span>size<span class="w"> </span>app.exe
+</code></pre></div>
+
+<p>或用社群工具 <code>go-size-analyzer</code> / <code>goweight</code> 分析各套件的貢獻。常見的肥胖來源：</p>
+<ul>
+<li><code>net/http</code>（連帶拉進 <code>crypto/tls</code>）</li>
+<li><code>regexp</code></li>
+<li>大量使用反射的第三方套件</li>
+<li><code>time</code> 的時區資料庫（可用 build tag <code>timetzdata</code> 控制）</li>
+</ul>
+<hr />
+<h2 id="常用的連結器旗標">常用的連結器旗標<a class="headerlink" href="#常用的連結器旗標" title="Permanent link">#</a></h2>
+<h3 id="注入版本資訊">注入版本資訊<a class="headerlink" href="#注入版本資訊" title="Permanent link">#</a></h3>
+<p>這是最實用的一招。用 <code>-X</code> 在建置時設定字串變數：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">var</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="nx">version</span><span class="w">   </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;dev&quot;</span>
+<span class="w">    </span><span class="nx">commit</span><span class="w">    </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;none&quot;</span>
+<span class="w">    </span><span class="nx">buildTime</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;unknown&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;version=%s commit=%s built=%s\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">version</span><span class="p">,</span><span class="w"> </span><span class="nx">commit</span><span class="p">,</span><span class="w"> </span><span class="nx">buildTime</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-ldflags<span class="o">=</span><span class="s2">&quot;-X main.version=1.2.3 -X main.commit=</span><span class="k">$(</span>git<span class="w"> </span>rev-parse<span class="w"> </span>--short<span class="w"> </span>HEAD<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>-o<span class="w"> </span>app.exe<span class="w"> </span>.
+</code></pre></div>
+
+<p>限制：只能設定 <strong><code>string</code> 型別的套件層變數</strong>，而且該變數不能是常數、不能已經有非空的初始值（有初始值的話會被覆蓋，但不保證）。</p>
+<div class="admonition tip">
+<p class="admonition-title">Go 1.18 起有內建的版本資訊</p>
+<p>如果你只是想知道 commit hash，不必自己注入。Go 會自動把 VCS 資訊嵌入執行檔：</p>
+<p>```go
+package main</p>
+<p>import (
+    "fmt"
+    "runtime/debug"
+)</p>
+<p>func main() {
+    info, ok := debug.ReadBuildInfo()
+    if !ok {
+        return
+    }
+    for _, s := range info.Settings {
+        if s.Key == "vcs.revision" || s.Key == "vcs.time" || s.Key == "vcs.modified" {
+            fmt.Printf("%s = %s\n", s.Key, s.Value)
+        }
+    }
+}
+```</p>
+<p>也可以在命令列查：<code>go version -m app.exe</code></p>
+</div>
+<h3 id="其他常用旗標">其他常用旗標<a class="headerlink" href="#其他常用旗標" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>旗標</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-s -w</code></td>
+<td>縮小體積（見上）</td>
+</tr>
+<tr>
+<td><code>-X pkg.Var=value</code></td>
+<td>注入字串變數</td>
+</tr>
+<tr>
+<td><code>-extldflags "-static"</code></td>
+<td>搭配 cgo 時強制完全靜態連結</td>
+</tr>
+<tr>
+<td><code>-H windowsgui</code></td>
+<td>Windows 上不開主控台視窗（GUI 程式用）</td>
+</tr>
+<tr>
+<td><code>-buildmode=c-shared</code></td>
+<td>產生 C 可呼叫的共享函式庫</td>
+</tr>
+<tr>
+<td><code>-linkmode=external</code></td>
+<td>用系統連結器而非 Go 內建的</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="交叉編譯">交叉編譯<a class="headerlink" href="#交叉編譯" title="Permanent link">#</a></h2>
+<p>Go 最受歡迎的特性之一。只要不用 cgo，換兩個環境變數就能編出其他平台的執行檔：</p>
+<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GOOS</span><span class="o">=</span>linux<span class="w"> </span><span class="nv">GOARCH</span><span class="o">=</span>amd64<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>app-linux<span class="w"> </span>.
+<span class="nv">GOOS</span><span class="o">=</span>darwin<span class="w"> </span><span class="nv">GOARCH</span><span class="o">=</span>arm64<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>app-mac<span class="w"> </span>.
+<span class="nv">GOOS</span><span class="o">=</span>windows<span class="w"> </span><span class="nv">GOARCH</span><span class="o">=</span>amd64<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>app.exe<span class="w"> </span>.
+</code></pre></div>
+
+<p>PowerShell：</p>
+<div class="hl" data-lang="text"><pre><span></span><code>$env:GOOS = &quot;linux&quot;; $env:GOARCH = &quot;amd64&quot;
+go build -o app-linux .
+Remove-Item Env:GOOS, Env:GOARCH
+</code></pre></div>
+
+<p>看看支援哪些組合：</p>
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>dist<span class="w"> </span>list
+</code></pre></div>
+
+<div class="admonition danger">
+<p class="admonition-title">cgo 會毀掉交叉編譯</p>
+<p>只要你的相依樹裡有任何一個套件用了 cgo（常見的是 <code>mattn/go-sqlite3</code>、部分影像處理套件、某些 DNS 解析路徑），交叉編譯就需要目標平台的 C 交叉編譯工具鏈，難度陡增。</p>
+<p>純 Go 的專案請保持 <code>CGO_ENABLED=0</code>，並在 CI 裡強制檢查：</p>
+<p><code>bash
+CGO_ENABLED=0 go build ./...</code></p>
+<p>這也順帶讓執行檔完全靜態連結，可以放進 <code>FROM scratch</code> 的容器映像。</p>
+</div>
+<hr />
+<p>Part 1 到此結束。你現在知道一份 <code>.go</code> 檔怎麼變成執行檔，也知道編譯器在中間做了哪些決定。</p>
+<p>接下來 Part 2 換個角度：不看編譯器，看<strong>資料在記憶體裡真正的樣子</strong>。從 array 與 slice 開始。</p></article><nav class='pager'><a class='prev' href='escape-inline.html'><span>上一節</span><strong>1.5 逃逸分析、內聯與 PGO</strong></a><a class='next' href='array.html'><span>下一節</span><strong>2.1 陣列 array</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#plan-9-組合語言'>Plan 9 組合語言</a><ul><li><a href='#三個要記住的差異'>三個要記住的差異</a></li><li><a href='#讀一段實際輸出'>讀一段實際輸出</a></li></ul></li><li><a href='#暫存器配置'>暫存器配置</a></li><li><a href='#目標檔與連結'>目標檔與連結</a><ul><li><a href='#連結器做的四件事'>連結器做的四件事</a></li><li><a href='#執行檔為什麼這麼大'>執行檔為什麼這麼大</a></li><li><a href='#看看誰佔了空間'>看看誰佔了空間</a></li></ul></li><li><a href='#常用的連結器旗標'>常用的連結器旗標</a><ul><li><a href='#注入版本資訊'>注入版本資訊</a></li><li><a href='#其他常用旗標'>其他常用旗標</a></li></ul></li><li><a href='#交叉編譯'>交叉編譯</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

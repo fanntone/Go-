@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2.3 雜湊表 map — Go 底層原理筆記</title>
+<meta name="description" content="Go 1.24 把 map 從 bucket 鏈結換成 Swiss Table。控制字元組、可延伸雜湊、為什麼走訪順序是隨機的、以及為什麼不能取 map 元素的位址。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li class='active'><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>資料結構</p><h1><span class='h1num'>2.3</span>雜湊表 map</h1><p class='lede'>Go 1.24 把 map 從 bucket 鏈結換成 Swiss Table。控制字元組、可延伸雜湊、為什麼走訪順序是隨機的、以及為什麼不能取 map 元素的位址。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="一次重大的重寫">一次重大的重寫<a class="headerlink" href="#一次重大的重寫" title="Permanent link">#</a></h2>
+<p>Go 1.24 是 map 實作史上最大的一次改變。舊版用的是「bucket + 溢位鏈結」，新版換成 <strong>Swiss Table</strong>（源自 Google 的 Abseil 函式庫）加上<strong>可延伸雜湊（extendible hashing）</strong>。</p>
+<p>官方回報的效果：查找快 30% 上下，插入與刪除也有明顯改善，而且記憶體佔用通常更低。</p>
+<div class="admonition version">
+<p class="admonition-title">版本對照</p>
+<table>
+<thead>
+<tr>
+<th>版本</th>
+<th>實作</th>
+<th>原始碼位置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>≤ 1.23</td>
+<td>bucket（每桶 8 槽）+ 溢位桶鏈結</td>
+<td><code>runtime/map.go</code></td>
+</tr>
+<tr>
+<td>≥ 1.24</td>
+<td>Swiss Table + 可延伸雜湊</td>
+<td><code>internal/runtime/maps/</code></td>
+</tr>
+</tbody>
+</table>
+<p>如果你讀到的中文資料在講 <code>hmap</code>、<code>bmap</code>、<code>tophash</code>、「溢位桶」，那是 <strong>Go 1.23 以前</strong>的架構。本節講的是現行版本。</p>
+<p>行為（語意）完全沒變：一樣不保證順序、一樣不能取位址、一樣不是並行安全的。變的只是內部結構與效能特性。</p>
+</div>
+<hr />
+<h2 id="swiss-table-的核心想法">Swiss Table 的核心想法<a class="headerlink" href="#swiss-table-的核心想法" title="Permanent link">#</a></h2>
+<p>傳統開放定址雜湊表的問題是：查找時要一格一格比對鍵，每次比對都可能是一次快取未命中（cache miss），因為鍵可能很大（例如字串要追指標）。</p>
+<p>Swiss Table 的解法是<strong>先用一小段中繼資料快速排除</strong>。</p>
+<h3 id="群組group與控制字組control-word">群組（group）與控制字組（control word）<a class="headerlink" href="#群組group與控制字組control-word" title="Permanent link">#</a></h3>
+<p>資料被組織成<strong>群組</strong>，每個群組有 <strong>8 個槽（slot）</strong>，外加一個 <strong>8 位元組的控制字組</strong>。控制字組的每個位元組對應一個槽：</p>
+<figure class="diagram"><svg viewBox="0 0 700 330" role="img" aria-label="Swiss Table 的群組與控制字組"><text class="d-t-b" x="15" y="20">一個 group = 控制字組（8 位元組）+ 8 個槽</text><rect class="d-box-w" x="15" y="32" width="670" height="44" rx="6"/><text class="d-t-s" x="26" y="50">control word（8 bytes）</text><rect class="d-box" x="150" y="38" width="64" height="32" rx="3"/><text class="d-t-m d-mid" x="182" y="59">0x2A</text><rect class="d-box" x="214" y="38" width="64" height="32" rx="3"/><text class="d-t-m d-mid" x="246" y="59">0x11</text><rect class="d-box" x="278" y="38" width="64" height="32" rx="3"/><text class="d-t-m d-mid" x="310" y="59">0x80</text><rect class="d-box" x="342" y="38" width="64" height="32" rx="3"/><text class="d-t-m d-mid" x="374" y="59">0x5C</text><rect class="d-box" x="406" y="38" width="64" height="32" rx="3"/><text class="d-t-m d-mid" x="438" y="59">0x80</text><rect class="d-box" x="470" y="38" width="64" height="32" rx="3"/><text class="d-t-m d-mid" x="502" y="59">0xFE</text><rect class="d-box" x="534" y="38" width="64" height="32" rx="3"/><text class="d-t-m d-mid" x="566" y="59">0x80</text><rect class="d-box" x="598" y="38" width="64" height="32" rx="3"/><text class="d-t-m d-mid" x="630" y="59">0x80</text><text class="d-t-s" x="150" y="94">每個位元組的最高位元：1 = 空／已刪除　0 = 使用中</text><text class="d-t-s" x="150" y="112">使用中時，低 7 位元存該鍵雜湊值的高 7 位元（h2），當作快速指紋</text><rect class="d-box-a" x="150" y="124" width="128" height="40" rx="4"/><text class="d-t-m d-mid" x="214" y="149">slot 0</text><rect class="d-box-a" x="278" y="124" width="128" height="40" rx="4"/><text class="d-t-m d-mid" x="342" y="149">slot 1</text><rect class="d-box" x="406" y="124" width="128" height="40" rx="4"/><text class="d-t-s d-mid" x="470" y="149">slot 2（空）</text><rect class="d-box-a" x="534" y="124" width="128" height="40" rx="4"/><text class="d-t-m d-mid" x="598" y="149">slot 3 …</text><text class="d-t-s" x="15" y="148">8 個槽</text><line class="d-dash" x1="15" y1="186" x2="685" y2="186"/><text class="d-t-b" x="15" y="212">查找 key 的流程</text><text class="d-t-s" x="15" y="234">① hash(key) → 拆成 h1（高位，決定去哪個 group）與 h2（低 7 位元，當指紋）</text><text class="d-t-s" x="15" y="254">② 把 h2 複製 8 份成一個 64 位元字組，跟控制字組做一次 XOR + 位元運算</text><text class="d-t-s" x="15" y="274">　 → 一道指令就得到「哪幾個槽的指紋相符」的位元遮罩（SWAR，也可用 SIMD）</text><text class="d-t-s" x="15" y="294">③ 只對相符的槽做真正的鍵比對（通常 0 或 1 個）</text><text class="d-t-s" x="15" y="314">④ 若整個 group 沒有空槽 → 探測下一個 group；遇到空槽即可確定「不存在」</text></svg><figcaption><b>用一道位元運算過濾 8 個槽。</b>關鍵在步驟 ②：控制字組只有 8 位元組，跟大部分鍵相比小得多，很容易留在 CPU 快取裡。真正昂貴的鍵比對，只對「指紋相符」的少數槽執行。</figcaption></figure>
+
+<p>這個設計的價值在<strong>快取行為</strong>。舊版 map 每次探測都要碰鍵本身；Swiss Table 大部分時候只碰 8 位元組的控制字組。</p>
+<h3 id="探測順序">探測順序<a class="headerlink" href="#探測順序" title="Permanent link">#</a></h3>
+<p>當群組滿了，Swiss Table 不用「溢位桶鏈結」，而是<strong>繼續探測下一個群組</strong>（二次探測，quadratic probing）。當探測到第一個<strong>有空槽</strong>的群組時就可以停——因為插入時也是照同樣順序走，如果鍵存在，一定在這之前就找到了。</p>
+<p>這消除了舊版的溢位桶：不用額外配置、不用追指標、記憶體更緊湊。</p>
+<hr />
+<h2 id="可延伸雜湊go-的額外需求">可延伸雜湊：Go 的額外需求<a class="headerlink" href="#可延伸雜湊go-的額外需求" title="Permanent link">#</a></h2>
+<p>原始的 Swiss Table 擴容時要<strong>一次搬完所有元素</strong>。這對 Go 不可接受，因為：</p>
+<ol>
+<li>Go 的 map 可能非常大，一次搬完會造成明顯的延遲毛刺。</li>
+<li>Go 需要 GC 能<strong>精確掃描</strong> map 裡的指標。</li>
+</ol>
+<p>Go 的解法是<strong>可延伸雜湊</strong>：把一個大 map 拆成多個獨立的小 Swiss Table，每個負責雜湊空間的一段。加上一層目錄（directory）做索引。</p>
+<figure class="diagram"><svg viewBox="0 0 700 250" role="img" aria-label="可延伸雜湊的目錄與表"><text class="d-t-b" x="15" y="20">大 map：目錄 + 多個獨立的小 Swiss Table</text><rect class="d-box-w" x="15" y="32" width="150" height="150" rx="6"/><text class="d-t-b d-mid" x="90" y="54">directory</text><rect class="d-box" x="28" y="64" width="124" height="26" rx="3"/><text class="d-t-m d-mid" x="90" y="82">00 →</text><rect class="d-box" x="28" y="92" width="124" height="26" rx="3"/><text class="d-t-m d-mid" x="90" y="110">01 →</text><rect class="d-box" x="28" y="120" width="124" height="26" rx="3"/><text class="d-t-m d-mid" x="90" y="138">10 →</text><rect class="d-box" x="28" y="148" width="124" height="26" rx="3"/><text class="d-t-m d-mid" x="90" y="166">11 →</text><rect class="d-box-a" x="240" y="32" width="200" height="42" rx="5"/><text class="d-t-a d-mid" x="340" y="52">table A（完整的 Swiss Table）</text><text class="d-t-s d-mid" x="340" y="68">負責雜湊前綴 00</text><rect class="d-box-a" x="240" y="82" width="200" height="42" rx="5"/><text class="d-t-a d-mid" x="340" y="102">table B</text><text class="d-t-s d-mid" x="340" y="118">負責雜湊前綴 01</text><rect class="d-box-a" x="240" y="132" width="200" height="42" rx="5"/><text class="d-t-a d-mid" x="340" y="152">table C</text><text class="d-t-s d-mid" x="340" y="168">負責前綴 10 與 11（共用）</text><path class="d-line" d="M152 77 L236 53" marker-end="url(#ar9)"/><path class="d-line" d="M152 105 L236 103" marker-end="url(#ar9)"/><path class="d-line" d="M152 133 L236 150" marker-end="url(#ar9)"/><path class="d-line" d="M152 161 L236 158" marker-end="url(#ar9)"/><text class="d-t-s" x="470" y="60">滿了的表單獨分裂，</text><text class="d-t-s" x="470" y="80">不影響其他表。</text><text class="d-t-s" x="470" y="104">每次搬移的量有上限，</text><text class="d-t-s" x="470" y="124">避免長時間停頓。</text><defs><marker id="ar9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--line-strong)"/></marker></defs><text class="d-t-s" x="15" y="212">小 map（≤ 8 個元素）不需要目錄，直接就是單一 group，這是最常見的情況，成本最低。</text><text class="d-t-s" x="15" y="234">超過 8 個元素才升級成單一 table；再大才展開成目錄 + 多表。</text></svg><figcaption><b>三層漸進。</b>Go 的 map 依大小自動切換結構：單一 group → 單一 table → 目錄 + 多 table。這讓「大部分 map 都很小」這個常見情況有最低的成本。</figcaption></figure>
+
+<hr />
+<h2 id="走訪順序是隨機的">走訪順序是隨機的<a class="headerlink" href="#走訪順序是隨機的" title="Permanent link">#</a></h2>
+<p>這是刻意設計的，不是實作缺陷。</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="s">&quot;a&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;b&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;c&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;d&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;e&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">k</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Print</span><span class="p">(</span><span class="nx">k</span><span class="p">,</span><span class="w"> </span><span class="s">&quot; &quot;</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">()</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>c d e a b 
+b c d e a 
+e a b c d 
+</code></pre></div>
+
+<p>每次 <code>range</code> 開始時，runtime 會隨機選一個起始群組與起始槽。</p>
+<div class="admonition note">
+<p class="admonition-title">為什麼要故意隨機</p>
+<p>因為 Go 團隊發現，如果順序碰巧穩定，開發者就會（無意識地）依賴它，然後在某次擴容改變順序時整個炸掉。與其讓 bug 潛伏，不如<strong>讓它每次都不一樣，逼你一開始就處理</strong>。</p>
+<p>這跟 map 的擴容機制本來就會改變順序有關——隨機化只是把「偶爾不同」變成「總是不同」。</p>
+</div>
+<p><strong>需要固定順序時，明確排序：</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;maps&quot;</span>
+<span class="w">    </span><span class="s">&quot;slices&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="s">&quot;banana&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;apple&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;cherry&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// Go 1.23+：maps.Keys 回傳迭代器，slices.Sorted 收集並排序</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">k</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">slices</span><span class="p">.</span><span class="nx">Sorted</span><span class="p">(</span><span class="nx">maps</span><span class="p">.</span><span class="nx">Keys</span><span class="p">(</span><span class="nx">m</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">k</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">])</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>apple 1
+banana 2
+cherry 3
+</code></pre></div>
+
+<div class="admonition version">
+<p class="admonition-title">Go 1.21 / 1.23：<code>maps</code> 套件</p>
+<p>Go 1.21 加入 <code>maps</code> 套件（<code>Clone</code>、<code>Copy</code>、<code>DeleteFunc</code>、<code>Equal</code>）。Go 1.23 加入迭代器版本的 <code>maps.Keys</code>、<code>maps.Values</code>、<code>maps.All</code>，它們回傳 <code>iter.Seq</code>，可以直接餵給 <code>slices.Sorted</code>、<code>slices.Collect</code>。</p>
+</div>
+<hr />
+<h2 id="不能取-map-元素的位址">不能取 map 元素的位址<a class="headerlink" href="#不能取-map-元素的位址" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Point</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">X</span><span class="p">,</span><span class="w"> </span><span class="nx">Y</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="nx">Point</span><span class="p">{</span><span class="s">&quot;a&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">}}</span>
+
+<span class="w">    </span><span class="c1">// ✗ 編譯錯誤：cannot take address of m[&quot;a&quot;]</span>
+<span class="w">    </span><span class="c1">// p := &amp;m[&quot;a&quot;]</span>
+
+<span class="w">    </span><span class="c1">// ✗ 編譯錯誤：cannot assign to struct field m[&quot;a&quot;].X in map</span>
+<span class="w">    </span><span class="c1">// m[&quot;a&quot;].X = 10</span>
+
+<span class="w">    </span><span class="c1">// 只能整個取出來讀</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">m</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">]</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>原因：map 的元素會被搬動。</strong> 擴容或分裂時，元素會被移到新的記憶體位置。如果允許你持有一個指向元素的指標，搬動之後那個指標就指向舊位置了。</p>
+<p>三種解法：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Point</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">X</span><span class="p">,</span><span class="w"> </span><span class="nx">Y</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 解法一：存指標（元素本身在堆積上，不隨 map 搬動）</span>
+<span class="w">    </span><span class="nx">m1</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="o">*</span><span class="nx">Point</span><span class="p">{</span><span class="s">&quot;a&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">}}</span>
+<span class="w">    </span><span class="nx">m1</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">].</span><span class="nx">X</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">10</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="o">*</span><span class="nx">m1</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">])</span><span class="w"> </span><span class="c1">// {10 2}</span>
+
+<span class="w">    </span><span class="c1">// 解法二：取出、修改、寫回</span>
+<span class="w">    </span><span class="nx">m2</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="nx">Point</span><span class="p">{</span><span class="s">&quot;a&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">}}</span>
+<span class="w">    </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">m2</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">p</span><span class="p">.</span><span class="nx">X</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">10</span>
+<span class="w">    </span><span class="nx">m2</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">p</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">m2</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">])</span><span class="w"> </span><span class="c1">// {10 2}</span>
+
+<span class="w">    </span><span class="c1">// 解法三：用 slice 存資料，map 只存索引</span>
+<span class="w">    </span><span class="nx">data</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="nx">Point</span><span class="p">{{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">}}</span>
+<span class="w">    </span><span class="nx">idx</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="s">&quot;a&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">data</span><span class="p">[</span><span class="nx">idx</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">]].</span><span class="nx">X</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">10</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">data</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="w"> </span><span class="c1">// {10 2}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>解法一最直觀但每個元素多一次配置；解法三對大量資料最有效率（連續記憶體、快取友善）。</p>
+<hr />
+<h2 id="map-不是並行安全的">map 不是並行安全的<a class="headerlink" href="#map-不是並行安全的" title="Permanent link">#</a></h2>
+<p>同時讀寫會直接讓程式當掉：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">int</span><span class="p">{}</span>
+
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">m</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">i</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}()</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">m</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span><code>fatal error: concurrent map read and map write
+</code></pre></div>
+
+<p>注意這是 <strong><code>fatal error</code> 不是 <code>panic</code></strong>，<code>recover()</code> 攔不住，程式直接死。這是刻意的：並行存取 map 會破壞內部結構，繼續執行會導致記憶體毀損。</p>
+<p>Go 在 map 的內部狀態裡放了一個旗標，寫入時設定、結束時清除。如果另一個 goroutine 在旗標設定期間進來，就觸發這個 fatal error。這<strong>不是完整的偵測</strong>（是盡力而為的檢查），所以有些競爭條件不會被抓到——用 <code>-race</code> 才可靠：</p>
+<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>run<span class="w"> </span>-race<span class="w"> </span>main.go
+</code></pre></div>
+
+<h3 id="三種解法">三種解法<a class="headerlink" href="#三種解法" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;sync&quot;</span>
+<span class="p">)</span>
+
+<span class="c1">// ① 一般用途：RWMutex 包起來</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">SafeMap</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">mu</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">RWMutex</span>
+<span class="w">    </span><span class="nx">m</span><span class="w">  </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">NewSafeMap</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="nx">SafeMap</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">SafeMap</span><span class="p">{</span><span class="nx">m</span><span class="p">:</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">)}</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="o">*</span><span class="nx">SafeMap</span><span class="p">)</span><span class="w"> </span><span class="nx">Get</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">s</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RLock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RUnlock</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="o">*</span><span class="nx">SafeMap</span><span class="p">)</span><span class="w"> </span><span class="nx">Set</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">s</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">s</span><span class="p">.</span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">v</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">sm</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">NewSafeMap</span><span class="p">()</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">wg</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">100</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">        </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">n</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">defer</span><span class="w"> </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Done</span><span class="p">()</span>
+<span class="w">            </span><span class="nx">sm</span><span class="p">.</span><span class="nx">Set</span><span class="p">(</span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Sprint</span><span class="p">(</span><span class="nx">n</span><span class="p">),</span><span class="w"> </span><span class="nx">n</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}(</span><span class="nx">i</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">sm</span><span class="p">.</span><span class="nx">Get</span><span class="p">(</span><span class="s">&quot;42&quot;</span><span class="p">))</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><strong>② <code>sync.Map</code></strong> —— 只在兩種特定情境下比 mutex 快：
+- 鍵一旦寫入就幾乎只讀（快取場景）
+- 多個 goroutine 各自操作<strong>不相交</strong>的鍵集合</p>
+<p>其他情況（尤其是頻繁寫入同一批鍵）<code>sync.Map</code> 通常<strong>比 <code>RWMutex</code> 慢</strong>，因為它內部有 read/dirty 兩份結構要同步。不要因為名字有 sync 就無腦選它。</p>
+<p><strong>③ 分片（sharding）</strong> —— 高並行寫入時最有效：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;hash/maphash&quot;</span>
+<span class="w">    </span><span class="s">&quot;sync&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">const</span><span class="w"> </span><span class="nx">shards</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">32</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">ShardedMap</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">seed</span><span class="w">  </span><span class="nx">maphash</span><span class="p">.</span><span class="nx">Seed</span>
+<span class="w">    </span><span class="nx">parts</span><span class="w"> </span><span class="p">[</span><span class="nx">shards</span><span class="p">]</span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">mu</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">RWMutex</span>
+<span class="w">        </span><span class="nx">m</span><span class="w">  </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">NewSharded</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="nx">ShardedMap</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">ShardedMap</span><span class="p">{</span><span class="nx">seed</span><span class="p">:</span><span class="w"> </span><span class="nx">maphash</span><span class="p">.</span><span class="nx">MakeSeed</span><span class="p">()}</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">parts</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">s</span><span class="p">.</span><span class="nx">parts</span><span class="p">[</span><span class="nx">i</span><span class="p">].</span><span class="nx">m</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">s</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="o">*</span><span class="nx">ShardedMap</span><span class="p">)</span><span class="w"> </span><span class="nx">idx</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nb">int</span><span class="p">(</span><span class="nx">maphash</span><span class="p">.</span><span class="nx">String</span><span class="p">(</span><span class="nx">s</span><span class="p">.</span><span class="nx">seed</span><span class="p">,</span><span class="w"> </span><span class="nx">k</span><span class="p">)</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="nx">shards</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="o">*</span><span class="nx">ShardedMap</span><span class="p">)</span><span class="w"> </span><span class="nx">Set</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">s</span><span class="p">.</span><span class="nx">parts</span><span class="p">[</span><span class="nx">s</span><span class="p">.</span><span class="nx">idx</span><span class="p">(</span><span class="nx">k</span><span class="p">)]</span>
+<span class="w">    </span><span class="nx">p</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">p</span><span class="p">.</span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">v</span>
+<span class="w">    </span><span class="nx">p</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="o">*</span><span class="nx">ShardedMap</span><span class="p">)</span><span class="w"> </span><span class="nx">Get</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">s</span><span class="p">.</span><span class="nx">parts</span><span class="p">[</span><span class="nx">s</span><span class="p">.</span><span class="nx">idx</span><span class="p">(</span><span class="nx">k</span><span class="p">)]</span>
+<span class="w">    </span><span class="nx">p</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RLock</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">p</span><span class="p">.</span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span>
+<span class="w">    </span><span class="nx">p</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RUnlock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>把鎖競爭分散到 32 把鎖上，吞吐量通常能提升好幾倍。</p>
+<hr />
+<h2 id="實用技巧">實用技巧<a class="headerlink" href="#實用技巧" title="Permanent link">#</a></h2>
+<h3 id="用-maptstruct-當集合">用 <code>map[T]struct{}</code> 當集合<a class="headerlink" href="#用-maptstruct-當集合" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">set</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kd">struct</span><span class="p">{}{}</span>
+<span class="nx">set</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kd">struct</span><span class="p">{}{}</span>
+
+<span class="k">if</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">set</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">];</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 存在</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><code>struct{}</code> 大小是 0，不佔任何空間。用 <code>map[string]bool</code> 每個元素會多 1 位元組（加上對齊可能更多）。</p>
+<h3 id="預先配置容量">預先配置容量<a class="headerlink" href="#預先配置容量" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">10000</span><span class="p">)</span><span class="w"> </span><span class="c1">// 避免多次分裂與搬移</span>
+</code></pre></div>
+
+<p>跟 slice 一樣，知道大概的元素數量就先給。</p>
+<h3 id="刪除不會縮小-map">刪除不會縮小 map<a class="headerlink" href="#刪除不會縮小-map" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">int</span><span class="p">)</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">1</span><span class="nx">_000_000</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">m</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">i</span>
+<span class="p">}</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">1</span><span class="nx">_000_000</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nb">delete</span><span class="p">(</span><span class="nx">m</span><span class="p">,</span><span class="w"> </span><span class="nx">i</span><span class="p">)</span>
+<span class="p">}</span>
+<span class="c1">// map 現在是空的，但底層記憶體仍然是一百萬個元素的規模</span>
+</code></pre></div>
+
+<p>Go 的 map <strong>永遠不會縮小</strong>。要真的釋放記憶體，只能建一個新的：</p>
+<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">m</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="c1">// 舊的整個交給 GC</span>
+</code></pre></div>
+
+<p>或用 <code>clear(m)</code>（Go 1.21+）—— 但注意 <code>clear</code> 只是清空內容，<strong>不釋放底層記憶體</strong>。</p>
+<h3 id="鍵型別的效能差異">鍵型別的效能差異<a class="headerlink" href="#鍵型別的效能差異" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>鍵型別</th>
+<th>相對成本</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>int</code> / <code>int64</code> / 指標</td>
+<td>最快，雜湊函式極簡單</td>
+</tr>
+<tr>
+<td><code>string</code></td>
+<td>中等，要走過整個字串算雜湊</td>
+</tr>
+<tr>
+<td>小型陣列 / struct</td>
+<td>中等，memhash</td>
+</tr>
+<tr>
+<td>含介面欄位的 struct</td>
+<td>最慢，要走執行期的型別分派</td>
+</tr>
+</tbody>
+</table>
+<p>熱路徑上如果鍵是長字串，考慮先算出一個 <code>uint64</code> 指紋當鍵。</p>
+<hr />
+<p>下一節談字串——它跟 slice 很像，但有一個決定性的差異：<strong>不可變</strong>。</p></article><nav class='pager'><a class='prev' href='slice.html'><span>上一節</span><strong>2.2 切片 slice</strong></a><a class='next' href='string.html'><span>下一節</span><strong>2.4 字串 string</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#一次重大的重寫'>一次重大的重寫</a></li><li><a href='#swiss-table-的核心想法'>Swiss Table 的核心想法</a><ul><li><a href='#群組group與控制字組control-word'>群組（group）與控制字組（control word）</a></li><li><a href='#探測順序'>探測順序</a></li></ul></li><li><a href='#可延伸雜湊go-的額外需求'>可延伸雜湊：Go 的額外需求</a></li><li><a href='#走訪順序是隨機的'>走訪順序是隨機的</a></li><li><a href='#不能取-map-元素的位址'>不能取 map 元素的位址</a></li><li><a href='#map-不是並行安全的'>map 不是並行安全的</a><ul><li><a href='#三種解法'>三種解法</a></li></ul></li><li><a href='#實用技巧'>實用技巧</a><ul><li><a href='#用-maptstruct-當集合'>用 map[T]struct{} 當集合</a></li><li><a href='#預先配置容量'>預先配置容量</a></li><li><a href='#刪除不會縮小-map'>刪除不會縮小 map</a></li><li><a href='#鍵型別的效能差異'>鍵型別的效能差異</a></li></ul></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>
