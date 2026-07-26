@@ -69,6 +69,7 @@
 <li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
 <li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
 <li class='active'><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+<li><a href='errors.html'><span class='num'>3.4</span><span class='txt'>錯誤處理與傳遞</span></a></li>
 </ul></details>
 <details class='part'>
 <summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
@@ -643,7 +644,7 @@ Hello, Go! Hello, Go!
 <p><code>DeepEqual</code> 在測試裡很方便，但有幾個陷阱：nil slice ≠ 空 slice、函式永遠不等、<code>time.Time</code> 因為內部有單調時鐘欄位可能誤判。</p>
 <p>測試中建議改用 <code>github.com/google/go-cmp/cmp</code>，它的錯誤訊息會直接指出差異在哪，也支援自訂比較規則。</p>
 <hr />
-<p>Part 3 結束。下一部分回到語言表層，看那些「看起來像語法、其實是編譯器改寫」的關鍵字。</p></article><nav class='pager'><a class='prev' href='interface.html'><span>上一節</span><strong>3.2 介面 interface</strong></a><a class='next' href='for-range.html'><span>下一節</span><strong>4.1 for 與 range</strong></a></nav></main>
+<p>Part 3 結束。下一部分回到語言表層，看那些「看起來像語法、其實是編譯器改寫」的關鍵字。</p></article><nav class='pager'><a class='prev' href='interface.html'><span>上一節</span><strong>3.2 介面 interface</strong></a><a class='next' href='errors.html'><span>下一節</span><strong>3.4 錯誤處理與傳遞</strong></a></nav></main>
   <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#反射的三條定律'>反射的三條定律</a></li><li><a href='#定律一介面-反射物件'>定律一：介面 → 反射物件</a><ul><li><a href='#type-與-kind-的差別'>Type 與 Kind 的差別</a></li></ul></li><li><a href='#定律二反射物件-介面'>定律二：反射物件 → 介面</a></li><li><a href='#定律三可設定性'>定律三：可設定性</a><ul><li><a href='#為什麼不能設定'>為什麼不能設定</a></li><li><a href='#正確做法傳指標再-elem'>正確做法：傳指標，再 Elem()</a></li><li><a href='#可設定的三個條件'>可設定的三個條件</a></li></ul></li><li><a href='#struct-tag反射最常見的用途'>struct tag：反射最常見的用途</a><ul><li><a href='#tag-的格式規則'>tag 的格式規則</a></li></ul></li><li><a href='#反射的成本'>反射的成本</a><ul><li><a href='#成本來自哪裡'>成本來自哪裡</a></li><li><a href='#怎麼降低成本'>怎麼降低成本</a></li></ul></li><li><a href='#動態呼叫函式'>動態呼叫函式</a></li><li><a href='#什麼時候該用反射'>什麼時候該用反射</a><ul><li><a href='#reflectdeepequal-的注意事項'>reflect.DeepEqual 的注意事項</a></li></ul></li></ul></nav></aside>
 </div>
 

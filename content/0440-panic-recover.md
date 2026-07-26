@@ -222,6 +222,8 @@ exit status 2
 
 Go 的核心原則：**panic 用於「程式有 bug」，error 用於「預期內的失敗」。**
 
+（error 那一半——誰該接住它、怎麼跨越多層傳遞、goroutine 裡的錯誤該去哪——見 [錯誤處理與傳遞](errors.html)。）
+
 ### 該用 error
 
 ```go

@@ -69,6 +69,7 @@
 <li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
 <li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
 <li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+<li><a href='errors.html'><span class='num'>3.4</span><span class='txt'>錯誤處理與傳遞</span></a></li>
 </ul></details>
 <details class='part'>
 <summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
@@ -527,6 +528,172 @@
 <p>Go 1.26 在 <code>runtime/pprof</code> 加入實驗性的 <code>goroutineleak</code> 剖析，會嘗試自動找出<strong>永遠不可能被喚醒</strong>的 goroutine（例如阻塞在一個沒有其他人持有參照的 channel 上）。這比人工比對兩份快照精準得多。</p>
 </div>
 <hr />
+<h2 id="常見錯誤與解法">常見錯誤與解法<a class="headerlink" href="#常見錯誤與解法" title="Permanent link">#</a></h2>
+<p>channel 的 panic 全部來自「關閉」相關的操作，阻塞則全部來自「沒有對手」。先一張總表：</p>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>nil channel</th>
+<th>開啟中</th>
+<th>已關閉</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ch &lt;- v</code></td>
+<td><strong>永久阻塞</strong></td>
+<td>阻塞到有人收／緩衝有空</td>
+<td><strong>panic</strong></td>
+</tr>
+<tr>
+<td><code>&lt;-ch</code></td>
+<td><strong>永久阻塞</strong></td>
+<td>阻塞到有人送／緩衝有值</td>
+<td>立刻回傳零值，<code>ok = false</code></td>
+</tr>
+<tr>
+<td><code>close(ch)</code></td>
+<td><strong>panic</strong></td>
+<td>正常關閉</td>
+<td><strong>panic</strong></td>
+</tr>
+<tr>
+<td><code>len</code> / <code>cap</code></td>
+<td>0</td>
+<td>目前值</td>
+<td>目前值</td>
+</tr>
+</tbody>
+</table>
+<h3 id="1-誰負責-close由傳送方而且只能有一個">① 誰負責 close：由傳送方，而且只能有一個<a class="headerlink" href="#1-誰負責-close由傳送方而且只能有一個" title="Permanent link">#</a></h3>
+<p>這是所有 channel 錯誤的源頭。<strong>接收方永遠不要 close</strong>——它無法知道傳送方是不是還要送，關掉之後對方一送就 panic。</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 多個生產者各自 close → 第二個就 panic</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">produce</span><span class="p">(</span><span class="nx">out</span><span class="p">)</span>
+<span class="w">        </span><span class="nb">close</span><span class="p">(</span><span class="nx">out</span><span class="p">)</span><span class="w"> </span><span class="c1">// ✗ close of closed channel</span>
+<span class="w">    </span><span class="p">}()</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ 用 WaitGroup 協調，由一個專門的 goroutine 關</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">wg</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">defer</span><span class="w"> </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Done</span><span class="p">();</span><span class="w"> </span><span class="nx">produce</span><span class="p">(</span><span class="nx">out</span><span class="p">)</span><span class="w"> </span><span class="p">}()</span>
+<span class="p">}</span>
+<span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
+<span class="w">    </span><span class="nb">close</span><span class="p">(</span><span class="nx">out</span><span class="p">)</span><span class="w"> </span><span class="c1">// ✓ 確定所有人都送完了</span>
+<span class="p">}()</span>
+</pre></div>
+
+<div class="admonition tip">
+<p class="admonition-title">不確定該不該 close 時，就不要 close</p>
+<p>channel 不像檔案，<strong>不關也不會洩漏資源</strong>——沒有人參照它的時候會被 GC 回收。</p>
+<p><code>close</code> 的用途只有一個：<strong>通知接收方「不會再有東西了」</strong>。如果接收方本來就知道要收幾筆（例如 <code>for i := 0; i &lt; n; i++ { &lt;-ch }</code>），根本不需要 close。</p>
+</div>
+<h3 id="2-要停止訊號時另開一個-channel">② 要「停止訊號」時，另開一個 channel<a class="headerlink" href="#2-要停止訊號時另開一個-channel" title="Permanent link">#</a></h3>
+<p>想叫工作者停下來，不要去 close 資料 channel：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 生產者可能還在送 → panic</span>
+<span class="nb">close</span><span class="p">(</span><span class="nx">jobs</span><span class="p">)</span>
+
+<span class="c1">// ✓ 用另一個專門的 channel 廣播（或直接用 context）</span>
+<span class="nx">done</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kd">struct</span><span class="p">{})</span>
+<span class="nb">close</span><span class="p">(</span><span class="nx">done</span><span class="p">)</span><span class="w"> </span><span class="c1">// 關閉 = 一對多廣播，所有等待者同時被喚醒</span>
+</pre></div>
+
+<p>實務上直接用 <code>context</code>：它就是把這個模式標準化，而且能沿著呼叫樹自動傳播。見 <a href="context.html">context</a>。</p>
+<h3 id="3-for-range-沒有-close-就永遠不會結束">③ <code>for range</code> 沒有 close 就永遠不會結束<a class="headerlink" href="#3-for-range-沒有-close-就永遠不會結束" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 生產者中途 return（例如出錯），忘了 close → 消費端永遠卡住</span>
+<span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">data</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">check</span><span class="p">(</span><span class="nx">v</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="c1">// ← 沒 close</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">out</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="nx">v</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nb">close</span><span class="p">(</span><span class="nx">out</span><span class="p">)</span>
+<span class="p">}()</span>
+
+<span class="c1">// ✓ 用 defer，不管怎麼離開都會關</span>
+<span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nb">close</span><span class="p">(</span><span class="nx">out</span><span class="p">)</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">data</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">check</span><span class="p">(</span><span class="nx">v</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">return</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">out</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="nx">v</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}()</span>
+</pre></div>
+
+<p><strong><code>defer close(ch)</code> 應該是肌肉記憶</strong>。錯誤路徑忘記 close 是 goroutine 洩漏的頭號來源。</p>
+<h3 id="4-同一個-goroutine-收發無緩衝-channel">④ 同一個 goroutine 收發無緩衝 channel<a class="headerlink" href="#4-同一個-goroutine-收發無緩衝-channel" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ch</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="c1">// 無緩衝</span>
+<span class="w">    </span><span class="nx">ch</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="mi">1</span><span class="w">              </span><span class="c1">// ✗ 沒有其他 goroutine 在接收 → 自己把自己鎖死</span>
+<span class="w">    </span><span class="o">&lt;-</span><span class="nx">ch</span><span class="w">                 </span><span class="c1">// 永遠執行不到</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>fatal error: all goroutines are asleep - deadlock!
+</pre></div>
+
+<p>無緩衝 channel 的傳送<strong>必須有另一個 goroutine 同時在接收</strong>。這在寫測試時特別容易犯——想「先塞幾筆資料再讀」，就要用有緩衝的：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">ch</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">)</span><span class="w"> </span><span class="c1">// ✓ 緩衝夠的話，同一個 goroutine 可以先塞後讀</span>
+<span class="nx">ch</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="mi">1</span>
+<span class="nx">ch</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="mi">2</span>
+<span class="nb">close</span><span class="p">(</span><span class="nx">ch</span><span class="p">)</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">ch</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">v</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="admonition note">
+<p class="admonition-title"><code>fatal error: deadlock</code> 只在「所有 goroutine 都睡著」時才會報</p>
+<p>runtime 偵測得到的是<strong>全域死結</strong>。如果你的程式還有其他 goroutine 在跑（例如一個背景的 ticker），即使某個 goroutine 永遠卡住，runtime 也不會報錯——它就只是安靜地洩漏掉。</p>
+<p>所以「沒有 deadlock 錯誤」不代表沒有卡住的 goroutine。要抓這種，靠 <code>/debug/pprof/goroutine</code> 或 <code>goleak</code>（見<a href="#goroutine-洩漏">偵測洩漏</a>）。</p>
+</div>
+<h3 id="5-用-channel-當互斥鎖">⑤ 用 channel 當互斥鎖<a class="headerlink" href="#5-用-channel-當互斥鎖" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 可以動，但比 mutex 慢一個數量級</span>
+<span class="nx">sem</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kd">struct</span><span class="p">{},</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span>
+<span class="nx">sem</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="kd">struct</span><span class="p">{}{}</span>
+<span class="c1">// 臨界區</span>
+<span class="o">&lt;-</span><span class="nx">sem</span>
+
+<span class="c1">// ✓</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">mu</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">Mutex</span>
+<span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
+<span class="c1">// 臨界區</span>
+<span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+</pre></div>
+
+<p>channel 的收發約 50–150 ns，<code>Mutex.Lock</code>＋<code>Unlock</code> 約 15 ns。<strong>channel 適合「傳遞資料所有權」與「協調流程」，不適合單純的互斥。</strong></p>
+<p>反過來說，<code>make(chan struct{}, N)</code> 當<strong>號誌</strong>（限制並行數）是正當用法——那是在協調並行度，不是互斥。</p>
+<h3 id="6-在-select-裡用-break">⑥ 在 <code>select</code> 裡用 <code>break</code><a class="headerlink" href="#6-在-select-裡用-break" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ break 只跳出 select，迴圈繼續</span>
+<span class="k">for</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">done</span><span class="p">:</span>
+<span class="w">        </span><span class="k">break</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ 用標籤，或直接 return</span>
+<span class="nx">loop</span><span class="p">:</span>
+<span class="k">for</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">done</span><span class="p">:</span>
+<span class="w">        </span><span class="k">break</span><span class="w"> </span><span class="nx">loop</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>這是實務上很常見的無限迴圈來源。詳見 <a href="for-range.html">for 與 range</a>。</p>
+<hr />
 <h2 id="常見模式">常見模式<a class="headerlink" href="#常見模式" title="Permanent link">#</a></h2>
 <h3 id="工作池worker-pool">工作池（worker pool）<a class="headerlink" href="#工作池worker-pool" title="Permanent link">#</a></h3>
 <div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
@@ -653,7 +820,7 @@
 </div>
 <hr />
 <p>下一節是 Part 5 的核心：GMP 排程器。</p></article><nav class='pager'><a class='prev' href='timer.html'><span>上一節</span><strong>5.3 計時器 timer</strong></a><a class='next' href='scheduler.html'><span>下一節</span><strong>5.5 GMP 排程器</strong></a></nav></main>
-  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#hchan-的結構'>hchan 的結構</a></li><li><a href='#傳送的三條路徑'>傳送的三條路徑</a><ul><li><a href='#路徑一有人在等接收-直接交遞'>路徑一：有人在等接收 → 直接交遞</a></li><li><a href='#路徑二緩衝區還有空間-放進去'>路徑二：緩衝區還有空間 → 放進去</a></li><li><a href='#路徑三都不行-掛起休眠'>路徑三：都不行 → 掛起休眠</a></li></ul></li><li><a href='#無緩衝-vs-有緩衝語意的差別'>無緩衝 vs 有緩衝：語意的差別</a><ul><li><a href='#該用哪一種'>該用哪一種</a></li></ul></li><li><a href='#關閉-channel'>關閉 channel</a><ul><li><a href='#規則'>規則</a></li><li><a href='#誰該關閉'>誰該關閉</a></li><li><a href='#需要停止訊號時另開一個-channel'>需要「停止訊號」時，另開一個 channel</a></li></ul></li><li><a href='#goroutine-洩漏'>goroutine 洩漏</a><ul><li><a href='#成因一傳送到沒人接收的-channel'>成因一：傳送到沒人接收的 channel</a></li><li><a href='#成因二從沒人傳送也不會關閉的-channel-接收'>成因二：從沒人傳送、也不會關閉的 channel 接收</a></li><li><a href='#成因三忘記-waitgroupdone'>成因三：忘記 WaitGroup.Done</a></li><li><a href='#偵測洩漏'>偵測洩漏</a></li></ul></li><li><a href='#常見模式'>常見模式</a><ul><li><a href='#工作池worker-pool'>工作池（worker pool）</a></li><li><a href='#號誌semaphore限制並行數'>號誌（semaphore）：限制並行數</a></li><li><a href='#pipeline'>pipeline</a></li></ul></li></ul></nav></aside>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#hchan-的結構'>hchan 的結構</a></li><li><a href='#傳送的三條路徑'>傳送的三條路徑</a><ul><li><a href='#路徑一有人在等接收-直接交遞'>路徑一：有人在等接收 → 直接交遞</a></li><li><a href='#路徑二緩衝區還有空間-放進去'>路徑二：緩衝區還有空間 → 放進去</a></li><li><a href='#路徑三都不行-掛起休眠'>路徑三：都不行 → 掛起休眠</a></li></ul></li><li><a href='#無緩衝-vs-有緩衝語意的差別'>無緩衝 vs 有緩衝：語意的差別</a><ul><li><a href='#該用哪一種'>該用哪一種</a></li></ul></li><li><a href='#關閉-channel'>關閉 channel</a><ul><li><a href='#規則'>規則</a></li><li><a href='#誰該關閉'>誰該關閉</a></li><li><a href='#需要停止訊號時另開一個-channel'>需要「停止訊號」時，另開一個 channel</a></li></ul></li><li><a href='#goroutine-洩漏'>goroutine 洩漏</a><ul><li><a href='#成因一傳送到沒人接收的-channel'>成因一：傳送到沒人接收的 channel</a></li><li><a href='#成因二從沒人傳送也不會關閉的-channel-接收'>成因二：從沒人傳送、也不會關閉的 channel 接收</a></li><li><a href='#成因三忘記-waitgroupdone'>成因三：忘記 WaitGroup.Done</a></li><li><a href='#偵測洩漏'>偵測洩漏</a></li></ul></li><li><a href='#常見錯誤與解法'>常見錯誤與解法</a><ul><li><a href='#1-誰負責-close由傳送方而且只能有一個'>① 誰負責 close：由傳送方，而且只能有一個</a></li><li><a href='#2-要停止訊號時另開一個-channel'>② 要「停止訊號」時，另開一個 channel</a></li><li><a href='#3-for-range-沒有-close-就永遠不會結束'>③ for range 沒有 close 就永遠不會結束</a></li><li><a href='#4-同一個-goroutine-收發無緩衝-channel'>④ 同一個 goroutine 收發無緩衝 channel</a></li><li><a href='#5-用-channel-當互斥鎖'>⑤ 用 channel 當互斥鎖</a></li><li><a href='#6-在-select-裡用-break'>⑥ 在 select 裡用 break</a></li></ul></li><li><a href='#常見模式'>常見模式</a><ul><li><a href='#工作池worker-pool'>工作池（worker pool）</a></li><li><a href='#號誌semaphore限制並行數'>號誌（semaphore）：限制並行數</a></li><li><a href='#pipeline'>pipeline</a></li></ul></li></ul></nav></aside>
 </div>
 
 <div class="scrim" hidden></div>

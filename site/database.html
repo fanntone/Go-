@@ -69,6 +69,7 @@
 <li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
 <li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
 <li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+<li><a href='errors.html'><span class='num'>3.4</span><span class='txt'>錯誤處理與傳遞</span></a></li>
 </ul></details>
 <details class='part'>
 <summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
@@ -661,6 +662,164 @@ database/sql/driver（驅動介面）
 </pre></div>
 
 <hr />
+<h2 id="常見錯誤與解法">常見錯誤與解法<a class="headerlink" href="#常見錯誤與解法" title="Permanent link">#</a></h2>
+<p><code>database/sql</code> 的問題有個共通特徵：<strong>症狀出現的地方跟原因發生的地方相隔很遠</strong>。連線漏了不會立刻報錯，要等到池子耗盡、整個服務同時卡死才爆出來。這張表把症狀對回原因。</p>
+<table>
+<thead>
+<tr>
+<th>症狀</th>
+<th>真正的原因</th>
+<th>解法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>服務跑一陣子後所有查詢一起卡住</td>
+<td><code>Rows</code> 沒 <code>Close</code>，連線被佔光</td>
+<td><code>defer rows.Close()</code></td>
+</tr>
+<tr>
+<td><code>db.Stats().WaitCount</code> 持續成長</td>
+<td>池子太小或查詢太慢</td>
+<td>調大 <code>MaxOpenConns</code> / 優化查詢</td>
+</tr>
+<tr>
+<td>連線一直重建、<code>MaxIdleClosed</code> 很高</td>
+<td><code>MaxIdleConns</code> 太小</td>
+<td>設成等於 <code>MaxOpenConns</code></td>
+</tr>
+<tr>
+<td>資料庫 failover 後仍連舊節點</td>
+<td>沒設 <code>ConnMaxLifetime</code></td>
+<td>設 5–30 分鐘</td>
+</tr>
+<tr>
+<td>啟動時沒報錯，第一次查詢才失敗</td>
+<td><code>sql.Open</code> 不會真的連線</td>
+<td>啟動時 <code>PingContext</code></td>
+</tr>
+<tr>
+<td>讀到一半網路斷了卻當成正常結束</td>
+<td>沒檢查 <code>rows.Err()</code></td>
+<td>迴圈後一定要檢查</td>
+</tr>
+<tr>
+<td><code>converting NULL to string is unsupported</code></td>
+<td>欄位可為 NULL</td>
+<td><code>sql.Null[T]</code> / 指標 / SQL 端 <code>COALESCE</code></td>
+</tr>
+<tr>
+<td>交易一直卡住、鎖等待暴增</td>
+<td>交易中做了外部呼叫</td>
+<td>交易只包資料庫操作</td>
+</tr>
+<tr>
+<td>timeout 設了卻沒作用</td>
+<td>用了非 <code>Context</code> 版本的 API</td>
+<td>一律用 <code>QueryContext</code> 等</td>
+</tr>
+</tbody>
+</table>
+<h3 id="1-rows-沒關最致命的一個">① <code>Rows</code> 沒關：最致命的一個<a class="headerlink" href="#1-rows-沒關最致命的一個" title="Permanent link">#</a></h3>
+<p>值得單獨拿出來講，因為它的後果最嚴重而且最難查。</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 每次呼叫漏一條連線</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">listBad</span><span class="p">(</span><span class="nx">db</span><span class="w"> </span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">rows</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">Query</span><span class="p">(</span><span class="s">`SELECT name FROM users`</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">out</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">rows</span><span class="p">.</span><span class="nx">Next</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kd">var</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="kt">string</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">rows</span><span class="p">.</span><span class="nx">Scan</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">n</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="c1">// ← 提早 return，rows 永遠不會被關</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">out</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">out</span><span class="p">,</span><span class="w"> </span><span class="nx">n</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">out</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+</pre></div>
+
+<p><strong>注意這裡有兩個漏洞</strong>：完全沒有 <code>Close</code>，而且就算你在最後補一行 <code>rows.Close()</code>，中間那個錯誤路徑仍然會漏。</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✓</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">listGood</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">db</span><span class="w"> </span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">rows</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">QueryContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="s">`SELECT name FROM users`</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">rows</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span><span class="w"> </span><span class="c1">// ← 不管從哪條路徑離開都會關</span>
+
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">out</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">rows</span><span class="p">.</span><span class="nx">Next</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kd">var</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="kt">string</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">rows</span><span class="p">.</span><span class="nx">Scan</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">n</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">out</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">out</span><span class="p">,</span><span class="w"> </span><span class="nx">n</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">out</span><span class="p">,</span><span class="w"> </span><span class="nx">rows</span><span class="p">.</span><span class="nx">Err</span><span class="p">()</span><span class="w"> </span><span class="c1">// ← 順便處理迴圈中斷的錯誤</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="admonition note">
+<p class="admonition-title"><code>Rows</code> 什麼時候會自動關？</p>
+<p><code>rows.Next()</code> 讀到最後一筆並回傳 <code>false</code> 時，<code>Rows</code> 會自動關閉。所以<strong>正常讀完的路徑其實不會漏</strong>——會漏的永遠是<strong>提早離開</strong>：<code>return</code>、<code>break</code>、<code>panic</code>。</p>
+<p>這正是為什麼 <code>defer</code> 是唯一可靠的做法，也是為什麼這個 bug 在測試時看不出來（測試資料通常都讀完了），上線後遇到錯誤路徑才爆。</p>
+</div>
+<h3 id="2-症狀的傳播方式">② 症狀的傳播方式<a class="headerlink" href="#2-症狀的傳播方式" title="Permanent link">#</a></h3>
+<p>理解這個有助於在監控上及早發現：</p>
+<div class="hl" data-lang="text"><pre><span></span>某個 handler 漏了 rows.Close()
+   ↓ 每次請求佔住一條連線
+連線池的閒置連線逐漸歸零
+   ↓ 新請求開始排隊等連線
+db.Stats().WaitCount / WaitDuration 開始上升
+   ↓ 排隊時間超過 context timeout
+所有查詢同時回傳 &quot;context deadline exceeded&quot;
+   ↓
+看起來像「資料庫掛了」，但資料庫其實很閒
+</pre></div>
+
+<p><strong>關鍵指標是 <code>WaitCount</code></strong>——它會在災難發生前幾分鐘就開始上升。把 <code>db.Stats()</code> 推到監控系統（做法見<a href="#監控連線池">監控連線池</a>），比等 500 錯誤有用得多。</p>
+<h3 id="3-交易中做外部呼叫">③ 交易中做外部呼叫<a class="headerlink" href="#3-交易中做外部呼叫" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ HTTP 呼叫可能要好幾秒，這段時間連線與資料庫的列鎖都被佔著</span>
+<span class="nx">tx</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">BeginTx</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span><span class="p">)</span>
+<span class="nx">tx</span><span class="p">.</span><span class="nx">ExecContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="s">`UPDATE orders SET status=&#39;paying&#39; WHERE id=$1`</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">)</span>
+<span class="nx">resp</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">callPaymentAPI</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">)</span><span class="w"> </span><span class="c1">// ← 危險</span>
+<span class="nx">tx</span><span class="p">.</span><span class="nx">ExecContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="s">`UPDATE orders SET status=$1 WHERE id=$2`</span><span class="p">,</span><span class="w"> </span><span class="nx">resp</span><span class="p">.</span><span class="nx">Status</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">)</span>
+<span class="nx">tx</span><span class="p">.</span><span class="nx">Commit</span><span class="p">()</span>
+</pre></div>
+
+<p>一個交易 = 一條連線被獨佔到結束。外部呼叫慢 3 秒，這條連線就被佔 3 秒，同時資料庫端的列鎖也拿著不放——其他要改同一列的交易全部排隊。</p>
+<p><strong>解法是把外部呼叫移出交易</strong>，用兩段短交易加上冪等性處理：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// 第一段交易：標記狀態</span>
+<span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">markPaying</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">db</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="p">}</span>
+
+<span class="c1">// 交易外：呼叫外部服務</span>
+<span class="nx">resp</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">callPaymentAPI</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">)</span>
+<span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="p">}</span>
+
+<span class="c1">// 第二段交易：寫回結果（要能重複執行而不出錯）</span>
+<span class="k">return</span><span class="w"> </span><span class="nx">finalizePayment</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">db</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">,</span><span class="w"> </span><span class="nx">resp</span><span class="p">.</span><span class="nx">Status</span><span class="p">)</span>
+</pre></div>
+
+<p>代價是中間狀態要能被復原——這就是為什麼分散式流程需要 saga 或對帳機制。<strong>但把外部呼叫塞進交易並不會讓問題消失，只是把它換成更難處理的連線池耗盡。</strong></p>
+<h3 id="4-用-prepare-做單次查詢">④ 用 <code>Prepare</code> 做單次查詢<a class="headerlink" href="#4-用-prepare-做單次查詢" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 三次來回：Prepare → Execute → Close</span>
+<span class="nx">stmt</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">Prepare</span><span class="p">(</span><span class="nx">query</span><span class="p">)</span>
+<span class="k">defer</span><span class="w"> </span><span class="nx">stmt</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span>
+<span class="nx">stmt</span><span class="p">.</span><span class="nx">QueryRow</span><span class="p">(</span><span class="nx">arg</span><span class="p">).</span><span class="nx">Scan</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">v</span><span class="p">)</span>
+
+<span class="c1">// ✓ 一次來回，一樣有 SQL 注入防護</span>
+<span class="nx">db</span><span class="p">.</span><span class="nx">QueryRow</span><span class="p">(</span><span class="nx">query</span><span class="p">,</span><span class="w"> </span><span class="nx">arg</span><span class="p">).</span><span class="nx">Scan</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">v</span><span class="p">)</span>
+</pre></div>
+
+<p>參數化查詢的防注入效果來自「查詢與資料分開傳送」，<strong>不需要你手動 <code>Prepare</code> 就已經生效</strong>。明確 <code>Prepare</code> 只在「同一個 statement 要執行很多次」時才划算。</p>
+<hr />
 <h2 id="檢查清單">檢查清單<a class="headerlink" href="#檢查清單" title="Permanent link">#</a></h2>
 <table>
 <thead>
@@ -718,7 +877,7 @@ database/sql/driver（驅動介面）
 </table>
 <hr />
 <p>下一節談 cgo：跟 C 世界互通的代價。</p></article><nav class='pager'><a class='prev' href='http.html'><span>上一節</span><strong>7.2 net/http</strong></a><a class='next' href='cgo.html'><span>下一節</span><strong>7.4 cgo</strong></a></nav></main>
-  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#一層抽象不是-orm'>一層抽象，不是 ORM</a></li><li><a href='#sqldb-是連線池不是連線'>sql.DB 是連線池，不是連線</a><ul><li><a href='#連線池設定'>連線池設定</a></li><li><a href='#設定建議'>設定建議</a></li><li><a href='#監控連線池'>監控連線池</a></li></ul></li><li><a href='#四種查詢方法'>四種查詢方法</a></li><li><a href='#null-處理'>NULL 處理</a><ul><li><a href='#三種解法'>三種解法</a></li></ul></li><li><a href='#prepared-statement-的隱藏成本'>Prepared Statement 的隱藏成本</a><ul><li><a href='#一個容易忽略的行為'>一個容易忽略的行為</a></li></ul></li><li><a href='#交易'>交易</a></li><li><a href='#批次操作'>批次操作</a></li><li><a href='#sql-注入'>SQL 注入</a><ul><li><a href='#動態欄位名怎麼辦'>動態欄位名怎麼辦</a></li></ul></li><li><a href='#生態系選擇'>生態系選擇</a></li><li><a href='#檢查清單'>檢查清單</a></li></ul></nav></aside>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#一層抽象不是-orm'>一層抽象，不是 ORM</a></li><li><a href='#sqldb-是連線池不是連線'>sql.DB 是連線池，不是連線</a><ul><li><a href='#連線池設定'>連線池設定</a></li><li><a href='#設定建議'>設定建議</a></li><li><a href='#監控連線池'>監控連線池</a></li></ul></li><li><a href='#四種查詢方法'>四種查詢方法</a></li><li><a href='#null-處理'>NULL 處理</a><ul><li><a href='#三種解法'>三種解法</a></li></ul></li><li><a href='#prepared-statement-的隱藏成本'>Prepared Statement 的隱藏成本</a><ul><li><a href='#一個容易忽略的行為'>一個容易忽略的行為</a></li></ul></li><li><a href='#交易'>交易</a></li><li><a href='#批次操作'>批次操作</a></li><li><a href='#sql-注入'>SQL 注入</a><ul><li><a href='#動態欄位名怎麼辦'>動態欄位名怎麼辦</a></li></ul></li><li><a href='#生態系選擇'>生態系選擇</a></li><li><a href='#常見錯誤與解法'>常見錯誤與解法</a><ul><li><a href='#1-rows-沒關最致命的一個'>① Rows 沒關：最致命的一個</a></li><li><a href='#2-症狀的傳播方式'>② 症狀的傳播方式</a></li><li><a href='#3-交易中做外部呼叫'>③ 交易中做外部呼叫</a></li><li><a href='#4-用-prepare-做單次查詢'>④ 用 Prepare 做單次查詢</a></li></ul></li><li><a href='#檢查清單'>檢查清單</a></li></ul></nav></aside>
 </div>
 
 <div class="scrim" hidden></div>

@@ -431,6 +431,187 @@ func main() {
 
 這也是為什麼**函式庫裡不該用 `log.Fatal`**——它會讓呼叫端的所有清理邏輯失效。
 
+### ⑤ LIFO 順序：這正是資源釋放需要的
+
+`defer` 的後進先出常被當成一個要背的規則，但它其實是**唯一正確的順序**——資源的釋放本來就該跟取得反過來。
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("開啟連線")
+	defer fmt.Println("關閉連線") // 最後才關
+
+	fmt.Println("開始交易")
+	defer fmt.Println("結束交易") // 交易要在連線關閉前結束
+
+	fmt.Println("取得鎖")
+	defer fmt.Println("釋放鎖") // 鎖最先放掉
+
+	fmt.Println("--- 做事 ---")
+}
+```
+
+```text
+開啟連線
+開始交易
+取得鎖
+--- 做事 ---
+釋放鎖
+結束交易
+關閉連線
+```
+
+如果是先進先出，就會變成「先關連線，再結束交易」——後者需要前者還活著，直接壞掉。
+
+**所以寫法上只要照著「取得資源就馬上 defer 釋放」，順序自然就對了**，不需要自己想。
+
+### ⑥ 參數立刻求值造成的錯誤
+
+[開頭的第二條規則](#兩條規則決定一切)在實務上最常見的兩種踩法：
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+)
+
+func wrong() {
+	start := time.Now()
+
+	// ✗ time.Since 現在就算了 → 永遠是 0
+	// （go vet 會抓到這個錯誤：call to time.Since is not deferred）
+	defer fmt.Println("耗時:", time.Since(start))
+
+	time.Sleep(50 * time.Millisecond)
+}
+
+func right() {
+	start := time.Now()
+	defer func() {
+		fmt.Println("耗時:", time.Since(start)) // ✓ 到函式結束才算
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+}
+
+func main() {
+	wrong() // 耗時: 0s
+	right() // 耗時: 50.1ms
+}
+```
+
+第二種是「defer 想印最終的錯誤」：
+
+```go
+// ✗ err 現在是 nil，印出來永遠是 nil
+func bad() (err error) {
+	defer fmt.Println("結果:", err)
+	err = doWork()
+	return err
+}
+
+// ✓ 閉包捕捉變數本身
+func good() (err error) {
+	defer func() { fmt.Println("結果:", err) }()
+	err = doWork()
+	return err
+}
+```
+
+**規則**：`defer f(x)` 中的 `x` 現在就求值；要延後求值就包一層 `defer func(){ ... }()`。
+
+!!! tip "`go vet` 抓得到計時這一種"
+    ```bash
+    go vet ./...
+    ```
+
+    ```text
+    ./main.go:10:31: call to time.Since is not deferred
+    ```
+
+    `go vet` 有專門的檢查針對 `defer` 中直接呼叫 `time.Since`——因為這幾乎必定是錯的。
+
+    但它**只涵蓋這個特例**。上面第二個例子（`defer fmt.Println("結果:", err)`）語法上完全合法，vet 不會有任何意見，只能靠自己記得規則。
+
+### ⑦ 條件式清理：成功之後不該回滾
+
+交易與檔案這類「成功要提交、失敗要還原」的資源，不能無腦 `defer`：
+
+```go
+package main
+
+import (
+	"context"
+	"database/sql"
+)
+
+// ✓ 標準寫法：先 defer Rollback，成功後才 Commit
+func transfer(ctx context.Context, db *sql.DB, from, to int64, amount int) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	// 已經 Commit 的話，Rollback 會回傳 ErrTxDone，忽略即可
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE accounts SET balance = balance - $1 WHERE id = $2`, amount, from); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE accounts SET balance = balance + $1 WHERE id = $2`, amount, to); err != nil {
+		return err
+	}
+
+	return tx.Commit() // 成功才走到這
+}
+```
+
+`defer tx.Rollback()` 這個慣用法之所以安全，是因為**`Commit` 之後的 `Rollback` 是無害的 no-op**（回傳 `sql.ErrTxDone`）。所以你不需要在每個錯誤路徑手寫 rollback，也不會誤回滾已提交的交易。
+
+同樣的模式適用於「建到一半失敗要清掉」：
+
+```go
+func createFile(path string) (err error) {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+
+	success := false
+	defer func() {
+		f.Close()
+		if !success {
+			os.Remove(path) // 只有失敗時才刪
+		}
+	}()
+
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+
+	success = true
+	return nil
+}
+```
+
+### ⑧ 什麼時候不要用 defer
+
+自從 Go 1.14 的[開放編碼](#三種實作路徑)之後，`defer` 幾乎免費，**不要為了效能而避免使用它**。真正該避開的只有三種情況：
+
+| 情況 | 為什麼 | 替代做法 |
+| --- | --- | --- |
+| 迴圈中取得資源 | 累積到函式結束才釋放 | [包一層函式](#迴圈中的-defer兩個問題) |
+| 鎖只需要保護前半段 | `defer` 會持有到函式結束 | 手動 `Unlock`，縮小臨界區 |
+| 每秒數千萬次的極熱路徑 | 仍有微小成本 | 先量測，確認是瓶頸再說 |
+
+第三種請務必**先量測**。`-gcflags="-d=defer"` 會告訴你走的是哪條路徑；如果印出 `open-coded defer`，那它的成本大約是 1 奈秒，幾乎不可能是你的瓶頸。
+
 ---
 
 ## `defer` 與 goroutine

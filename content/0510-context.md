@@ -378,6 +378,218 @@ conn.PingContext(ctx)
 
 ---
 
+## 常見錯誤與解法
+
+| 症狀 | 原因 | 解法 |
+| --- | --- | --- |
+| 記憶體緩慢成長、goroutine 數只增不減 | 忘記呼叫 `cancel` | `defer cancel()`，CI 跑 `go vet` |
+| 設了 timeout 卻沒作用 | 內層函式沒吃 `ctx` | 整條鏈都要傳，用 `*Context` 版本的 API |
+| 取消訊號傳不進背景工作 | `go` 出去時傳了 `Background()` | 傳同一個 `ctx`；真要脫離用 `WithoutCancel` |
+| CPU 密集迴圈停不下來 | 沒有檢查點 | 迴圈中定期 `select` 檢查 `ctx.Done()` |
+| 測試難寫、相依看不出來 | 用 `WithValue` 傳相依 | 相依用參數或 struct 欄位注入 |
+| `ctx.Value` 拿到別人的東西 | 用 `string` 當鍵 | 未匯出的自訂型別當鍵 |
+
+### ① 忘記 `cancel`：最常見的一個
+
+```go
+// ✗ ctx 永遠留在父節點的 children 裡，計時器也不會停
+func bad(parent context.Context) {
+	ctx, _ := context.WithTimeout(parent, time.Second)
+	doWork(ctx)
+}
+
+// ✓
+func good(parent context.Context) {
+	ctx, cancel := context.WithTimeout(parent, time.Second)
+	defer cancel()
+	doWork(ctx)
+}
+```
+
+**即使 context 已經因逾時而取消，仍然要呼叫 `cancel()`**——它同時負責停掉內部計時器、以及把自己從父節點的子節點集合移除。長壽命的父 context（例如整個服務的生命週期）沒有這一步就會持續累積子節點。
+
+`go vet` 的 `lostcancel` 檢查抓得到：
+
+```bash
+go vet ./...
+```
+
+```text
+./main.go:8:7: the cancel function is not used on all paths (possible context leak)
+```
+
+**這個檢查一定要放進 CI。** 它是 context 相關問題中唯一能自動化的部分。
+
+### ② timeout 設了卻沒用：中間有一層沒吃 ctx
+
+```go
+// ✗ 5 秒的 timeout 完全沒有作用
+func handler(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	result := slowQuery() // ← 沒收 ctx，會一直跑到自己結束為止
+	_ = result
+}
+
+// ✓ 整條鏈都要傳，而且要用支援 context 的 API
+func handler(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	result, err := slowQuery(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusGatewayTimeout)
+		return
+	}
+	_ = result
+}
+```
+
+**timeout 只有在整條呼叫鏈都尊重 context 時才有意義。** 標準庫大多提供了 `*Context` 版本，優先用它們：
+
+```go
+db.QueryContext(ctx, query, args...)
+http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+conn.PingContext(ctx)
+cmd := exec.CommandContext(ctx, "ls")
+```
+
+### ③ 背景工作傳了 `Background()`
+
+```go
+// ✗ 請求結束了，這個 goroutine 還在跑，而且沒人能叫停
+func handler(w http.ResponseWriter, r *http.Request) {
+	go auditLog(context.Background(), r.URL.Path)
+}
+```
+
+這通常是為了解決一個真實問題：**請求結束後 `r.Context()` 就被取消了**，直接傳它進去會讓背景工作立刻中斷。
+
+正確做法（Go 1.21+）：
+
+```go
+func handler(w http.ResponseWriter, r *http.Request) {
+	// 保留 trace ID 等值，但不繼承「請求結束就取消」
+	bg := context.WithoutCancel(r.Context())
+
+	// 再給它自己的期限，避免永遠跑下去
+	bg, cancel := context.WithTimeout(bg, 30*time.Second)
+
+	go func() {
+		defer cancel()
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("audit panic", "err", rec)
+			}
+		}()
+		auditLog(bg, r.URL.Path)
+	}()
+}
+```
+
+三個重點：`WithoutCancel` 保留值但切斷取消、再加一個自己的 timeout、goroutine 自己 recover（見 [panic](panic.html#在服務邊界攔截-panic)）。
+
+### ④ CPU 密集迴圈感受不到取消
+
+context 是**合作式**的——沒有人能強制中斷你的迴圈。純運算的程式碼必須自己插檢查點：
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+func process(ctx context.Context, items []int) (int, error) {
+	sum := 0
+	for i, v := range items {
+		// 每處理一批檢查一次，不要每輪都檢查（select 有成本）
+		if i%1000 == 0 {
+			select {
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			default:
+			}
+		}
+		sum += v * v
+	}
+	return sum, nil
+}
+
+func main() {
+	items := make([]int, 5_000_000)
+	for i := range items {
+		items[i] = i
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+
+	sum, err := process(ctx, items)
+	fmt.Println(sum, err)
+}
+```
+
+```text
+0 context deadline exceeded
+```
+
+**檢查頻率是個取捨**：太頻繁（每輪都檢查）會拖慢迴圈，太稀疏則反應遲鈍。以「每 1–10 毫秒的工作量」為單位檢查一次通常剛好。
+
+### ⑤ 把 context 存進 struct
+
+```go
+// ✗ 幾乎總是錯的
+type Service struct {
+	ctx context.Context
+	db  *sql.DB
+}
+
+// ✓ context 走參數，第一個位置
+type Service struct {
+	db *sql.DB
+}
+
+func (s *Service) Load(ctx context.Context, id int64) (*User, error) {
+	return s.query(ctx, id)
+}
+```
+
+原因：**context 是「一次呼叫」的生命週期，struct 是「一個物件」的生命週期**，兩者不一致。存進 struct 之後，同一個 `Service` 被兩個請求共用時，第一個請求的取消會影響第二個。
+
+唯一的例外是「這個 struct 本身就代表一次請求」，例如 `http.Request`。
+
+### ⑥ 用 `WithValue` 傳相依
+
+```go
+// ✗ 相依藏在 context 裡：編譯期看不出來、無法測試、型別斷言可能 panic
+func handler(ctx context.Context) {
+	db := ctx.Value("db").(*sql.DB)
+	db.Query(...)
+}
+
+// ✓ 明確注入
+type Handler struct {
+	db     *sql.DB
+	logger *slog.Logger
+}
+
+func (h *Handler) Handle(ctx context.Context, req Request) error {
+	return h.db.QueryContext(ctx, ...)  // ctx 只帶取消訊號與 trace ID
+}
+```
+
+`WithValue` 的正當用途只有**請求範圍的中繼資料**：request ID、trace span、已認證的使用者身分、語系。資料庫連線、logger、設定這些是**相依**，應該用參數或欄位注入。
+
+判準：**如果拿掉它函式就不能運作，那它是相依，不該放 context。**
+
+（鍵一定要用未匯出的自訂型別，理由見[前面那節](#withvalue-的正確用法)。）
+
+---
+
 ## 一個完整的例子
 
 把所有東西串起來：

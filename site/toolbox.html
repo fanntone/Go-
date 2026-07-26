@@ -69,6 +69,7 @@
 <li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
 <li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
 <li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+<li><a href='errors.html'><span class='num'>3.4</span><span class='txt'>錯誤處理與傳遞</span></a></li>
 </ul></details>
 <details class='part'>
 <summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
@@ -367,7 +368,36 @@ go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </sp
 
 <div class="admonition danger">
 <p class="admonition-title">不要把 pprof 端點暴露到公網</p>
-<p><code>net/http/pprof</code> 會註冊到 <code>http.DefaultServeMux</code>。如果你的對外服務剛好也用 <code>DefaultServeMux</code>，這些端點就跟著上線了，任何人都能拉走你的堆積快照與完整呼叫堆疊。務必綁在 <code>localhost</code>，或掛在另一個只有內網能連的 mux 上。</p>
+<p>上面那行 <code>_ "net/http/pprof"</code> 是<strong>匿名 import</strong>——它一行程式碼都沒被呼叫，卻會在 <code>init()</code> 時把 <code>/debug/pprof/*</code> 註冊到全域的 <code>http.DefaultServeMux</code>。</p>
+<p>如果你的對外服務用 <code>http.ListenAndServe(addr, nil)</code>（<code>nil</code> 就是 <code>DefaultServeMux</code>），這些端點就跟著上線了：</p>
+<table>
+<thead>
+<tr>
+<th>路徑</th>
+<th>洩漏什麼</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/debug/pprof/heap</code></td>
+<td>堆積快照，含記憶體中的資料</td>
+</tr>
+<tr>
+<td><code>/debug/pprof/goroutine?debug=2</code></td>
+<td>所有 goroutine 的完整呼叫堆疊</td>
+</tr>
+<tr>
+<td><code>/debug/pprof/profile</code></td>
+<td>30 秒 CPU 剖析——也能當 DoS 用</td>
+</tr>
+<tr>
+<td><code>/debug/pprof/cmdline</code></td>
+<td>完整命令列參數（常含設定與密鑰）</td>
+</tr>
+</tbody>
+</table>
+<p>更麻煩的是它會<strong>間接發生</strong>：你沒有直接 import，但某個第三方相依 import 了，結果一樣。</p>
+<p>正確做法是自己建 mux、非匿名 import <code>net/http/pprof</code> 手動註冊，並把它綁在只有內網能連的位址上。完整說明與可執行的自我檢查程式碼見 <a href="http.html#servemux用內建的還是自己建一個">net/http：ServeMux 該用哪一個</a>。</p>
 </div>
 <p>常用的剖析種類：</p>
 <table>

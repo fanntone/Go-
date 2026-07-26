@@ -69,6 +69,7 @@
 <li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
 <li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
 <li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+<li><a href='errors.html'><span class='num'>3.4</span><span class='txt'>錯誤處理與傳遞</span></a></li>
 </ul></details>
 <details class='part' open>
 <summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
@@ -495,6 +496,184 @@ defer: 0
 
 <p><code>os.Exit</code>、<code>log.Fatal</code>（內部呼叫 <code>os.Exit</code>）、以及 goroutine 被 <code>runtime.Goexit</code> 以外的方式終止，都不會執行 <code>defer</code>。</p>
 <p>這也是為什麼<strong>函式庫裡不該用 <code>log.Fatal</code></strong>——它會讓呼叫端的所有清理邏輯失效。</p>
+<h3 id="5-lifo-順序這正是資源釋放需要的">⑤ LIFO 順序：這正是資源釋放需要的<a class="headerlink" href="#5-lifo-順序這正是資源釋放需要的" title="Permanent link">#</a></h3>
+<p><code>defer</code> 的後進先出常被當成一個要背的規則，但它其實是<strong>唯一正確的順序</strong>——資源的釋放本來就該跟取得反過來。</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;開啟連線&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;關閉連線&quot;</span><span class="p">)</span><span class="w"> </span><span class="c1">// 最後才關</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;開始交易&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;結束交易&quot;</span><span class="p">)</span><span class="w"> </span><span class="c1">// 交易要在連線關閉前結束</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;取得鎖&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;釋放鎖&quot;</span><span class="p">)</span><span class="w"> </span><span class="c1">// 鎖最先放掉</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;--- 做事 ---&quot;</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>開啟連線
+開始交易
+取得鎖
+--- 做事 ---
+釋放鎖
+結束交易
+關閉連線
+</pre></div>
+
+<p>如果是先進先出，就會變成「先關連線，再結束交易」——後者需要前者還活著，直接壞掉。</p>
+<p><strong>所以寫法上只要照著「取得資源就馬上 defer 釋放」，順序自然就對了</strong>，不需要自己想。</p>
+<h3 id="6-參數立刻求值造成的錯誤">⑥ 參數立刻求值造成的錯誤<a class="headerlink" href="#6-參數立刻求值造成的錯誤" title="Permanent link">#</a></h3>
+<p><a href="#兩條規則決定一切">開頭的第二條規則</a>在實務上最常見的兩種踩法：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">wrong</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">start</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Now</span><span class="p">()</span>
+
+<span class="w">    </span><span class="c1">// ✗ time.Since 現在就算了 → 永遠是 0</span>
+<span class="w">    </span><span class="c1">// （go vet 會抓到這個錯誤：call to time.Since is not deferred）</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;耗時:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Since</span><span class="p">(</span><span class="nx">start</span><span class="p">))</span>
+
+<span class="w">    </span><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="mi">50</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">right</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">start</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Now</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;耗時:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Since</span><span class="p">(</span><span class="nx">start</span><span class="p">))</span><span class="w"> </span><span class="c1">// ✓ 到函式結束才算</span>
+<span class="w">    </span><span class="p">}()</span>
+
+<span class="w">    </span><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="mi">50</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">wrong</span><span class="p">()</span><span class="w"> </span><span class="c1">// 耗時: 0s</span>
+<span class="w">    </span><span class="nx">right</span><span class="p">()</span><span class="w"> </span><span class="c1">// 耗時: 50.1ms</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>第二種是「defer 想印最終的錯誤」：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ err 現在是 nil，印出來永遠是 nil</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">bad</span><span class="p">()</span><span class="w"> </span><span class="p">(</span><span class="nx">err</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;結果:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">err</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">doWork</span><span class="p">()</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ 閉包捕捉變數本身</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">good</span><span class="p">()</span><span class="w"> </span><span class="p">(</span><span class="nx">err</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;結果:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span><span class="w"> </span><span class="p">}()</span>
+<span class="w">    </span><span class="nx">err</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">doWork</span><span class="p">()</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="p">}</span>
+</pre></div>
+
+<p><strong>規則</strong>：<code>defer f(x)</code> 中的 <code>x</code> 現在就求值；要延後求值就包一層 <code>defer func(){ ... }()</code>。</p>
+<div class="admonition tip">
+<p class="admonition-title"><code>go vet</code> 抓得到計時這一種</p>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>vet<span class="w"> </span>./...
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>./main.go:10:31: call to time.Since is not deferred
+</pre></div>
+
+<p><code>go vet</code> 有專門的檢查針對 <code>defer</code> 中直接呼叫 <code>time.Since</code>——因為這幾乎必定是錯的。</p>
+<p>但它<strong>只涵蓋這個特例</strong>。上面第二個例子（<code>defer fmt.Println("結果:", err)</code>）語法上完全合法，vet 不會有任何意見，只能靠自己記得規則。</p>
+</div>
+<h3 id="7-條件式清理成功之後不該回滾">⑦ 條件式清理：成功之後不該回滾<a class="headerlink" href="#7-條件式清理成功之後不該回滾" title="Permanent link">#</a></h3>
+<p>交易與檔案這類「成功要提交、失敗要還原」的資源，不能無腦 <code>defer</code>：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;context&quot;</span>
+<span class="w">    </span><span class="s">&quot;database/sql&quot;</span>
+<span class="p">)</span>
+
+<span class="c1">// ✓ 標準寫法：先 defer Rollback，成功後才 Commit</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">transfer</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">db</span><span class="w"> </span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span><span class="p">,</span><span class="w"> </span><span class="nx">from</span><span class="p">,</span><span class="w"> </span><span class="nx">to</span><span class="w"> </span><span class="kt">int64</span><span class="p">,</span><span class="w"> </span><span class="nx">amount</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">tx</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">BeginTx</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="c1">// 已經 Commit 的話，Rollback 會回傳 ErrTxDone，忽略即可</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">Rollback</span><span class="p">()</span><span class="w"> </span><span class="c1">//nolint:errcheck</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">ExecContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span>
+<span class="w">        </span><span class="s">`UPDATE accounts SET balance = balance - $1 WHERE id = $2`</span><span class="p">,</span><span class="w"> </span><span class="nx">amount</span><span class="p">,</span><span class="w"> </span><span class="nx">from</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">ExecContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span>
+<span class="w">        </span><span class="s">`UPDATE accounts SET balance = balance + $1 WHERE id = $2`</span><span class="p">,</span><span class="w"> </span><span class="nx">amount</span><span class="p">,</span><span class="w"> </span><span class="nx">to</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">tx</span><span class="p">.</span><span class="nx">Commit</span><span class="p">()</span><span class="w"> </span><span class="c1">// 成功才走到這</span>
+<span class="p">}</span>
+</pre></div>
+
+<p><code>defer tx.Rollback()</code> 這個慣用法之所以安全，是因為<strong><code>Commit</code> 之後的 <code>Rollback</code> 是無害的 no-op</strong>（回傳 <code>sql.ErrTxDone</code>）。所以你不需要在每個錯誤路徑手寫 rollback，也不會誤回滾已提交的交易。</p>
+<p>同樣的模式適用於「建到一半失敗要清掉」：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">createFile</span><span class="p">(</span><span class="nx">path</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="nx">err</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">f</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">Create</span><span class="p">(</span><span class="nx">path</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">success</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kc">false</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">f</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">success</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">os</span><span class="p">.</span><span class="nx">Remove</span><span class="p">(</span><span class="nx">path</span><span class="p">)</span><span class="w"> </span><span class="c1">// 只有失敗時才刪</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}()</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">f</span><span class="p">.</span><span class="nx">Write</span><span class="p">(</span><span class="nx">data</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">success</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+</pre></div>
+
+<h3 id="8-什麼時候不要用-defer">⑧ 什麼時候不要用 defer<a class="headerlink" href="#8-什麼時候不要用-defer" title="Permanent link">#</a></h3>
+<p>自從 Go 1.14 的<a href="#三種實作路徑">開放編碼</a>之後，<code>defer</code> 幾乎免費，<strong>不要為了效能而避免使用它</strong>。真正該避開的只有三種情況：</p>
+<table>
+<thead>
+<tr>
+<th>情況</th>
+<th>為什麼</th>
+<th>替代做法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>迴圈中取得資源</td>
+<td>累積到函式結束才釋放</td>
+<td><a href="#迴圈中的-defer兩個問題">包一層函式</a></td>
+</tr>
+<tr>
+<td>鎖只需要保護前半段</td>
+<td><code>defer</code> 會持有到函式結束</td>
+<td>手動 <code>Unlock</code>，縮小臨界區</td>
+</tr>
+<tr>
+<td>每秒數千萬次的極熱路徑</td>
+<td>仍有微小成本</td>
+<td>先量測，確認是瓶頸再說</td>
+</tr>
+</tbody>
+</table>
+<p>第三種請務必<strong>先量測</strong>。<code>-gcflags="-d=defer"</code> 會告訴你走的是哪條路徑；如果印出 <code>open-coded defer</code>，那它的成本大約是 1 奈秒，幾乎不可能是你的瓶頸。</p>
 <hr />
 <h2 id="defer-與-goroutine"><code>defer</code> 與 goroutine<a class="headerlink" href="#defer-與-goroutine" title="Permanent link">#</a></h2>
 <p>每個 goroutine 有自己的 <code>_defer</code> 鏈結串列（<code>g._defer</code>）。goroutine 結束時會執行它自己的 <code>defer</code>，但<strong>不會</strong>執行建立它的那個 goroutine 的 <code>defer</code>。</p>
@@ -525,7 +704,7 @@ defer: 0
 <p><code>defer wg.Done()</code> 是最標準的用法——確保不管 goroutine 怎麼結束（正常回傳或 panic），計數都會遞減。<strong>沒有它，一次 panic 就會讓 <code>wg.Wait()</code> 永遠卡住。</strong></p>
 <hr />
 <p>下一節談 <code>panic</code> 與 <code>recover</code>——它們跟 <code>defer</code> 是同一套機制的三個面向。</p></article><nav class='pager'><a class='prev' href='select.html'><span>上一節</span><strong>4.2 select</strong></a><a class='next' href='panic.html'><span>下一節</span><strong>4.4 panic 與 recover</strong></a></nav></main>
-  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#兩條規則決定一切'>兩條規則決定一切</a><ul><li><a href='#對照閉包捕捉的是變數'>對照：閉包捕捉的是變數</a></li></ul></li><li><a href='#三種實作路徑'>三種實作路徑</a><ul><li><a href='#驗證走了哪條路'>驗證走了哪條路</a></li></ul></li><li><a href='#迴圈中的-defer兩個問題'>迴圈中的 defer：兩個問題</a></li><li><a href='#defer-與具名回傳值'>defer 與具名回傳值</a><ul><li><a href='#return-其實是兩步'>return 其實是兩步</a></li><li><a href='#實用場景一統一包裝錯誤'>實用場景一：統一包裝錯誤</a></li><li><a href='#實用場景二把-panic-轉成-error'>實用場景二：把 panic 轉成 error</a></li><li><a href='#實用場景三計時'>實用場景三：計時</a></li></ul></li><li><a href='#常見錯誤'>常見錯誤</a><ul><li><a href='#1-defer-遇到會-panic-的接收者'>① defer 遇到會 panic 的接收者</a></li><li><a href='#2-忽略-close-的錯誤'>② 忽略 Close 的錯誤</a></li><li><a href='#3-對-mutex-用錯位置'>③ 對 mutex 用錯位置</a></li><li><a href='#4-以為-osexit-會執行-defer'>④ 以為 os.Exit 會執行 defer</a></li></ul></li><li><a href='#defer-與-goroutine'>defer 與 goroutine</a></li></ul></nav></aside>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#兩條規則決定一切'>兩條規則決定一切</a><ul><li><a href='#對照閉包捕捉的是變數'>對照：閉包捕捉的是變數</a></li></ul></li><li><a href='#三種實作路徑'>三種實作路徑</a><ul><li><a href='#驗證走了哪條路'>驗證走了哪條路</a></li></ul></li><li><a href='#迴圈中的-defer兩個問題'>迴圈中的 defer：兩個問題</a></li><li><a href='#defer-與具名回傳值'>defer 與具名回傳值</a><ul><li><a href='#return-其實是兩步'>return 其實是兩步</a></li><li><a href='#實用場景一統一包裝錯誤'>實用場景一：統一包裝錯誤</a></li><li><a href='#實用場景二把-panic-轉成-error'>實用場景二：把 panic 轉成 error</a></li><li><a href='#實用場景三計時'>實用場景三：計時</a></li></ul></li><li><a href='#常見錯誤'>常見錯誤</a><ul><li><a href='#1-defer-遇到會-panic-的接收者'>① defer 遇到會 panic 的接收者</a></li><li><a href='#2-忽略-close-的錯誤'>② 忽略 Close 的錯誤</a></li><li><a href='#3-對-mutex-用錯位置'>③ 對 mutex 用錯位置</a></li><li><a href='#4-以為-osexit-會執行-defer'>④ 以為 os.Exit 會執行 defer</a></li><li><a href='#5-lifo-順序這正是資源釋放需要的'>⑤ LIFO 順序：這正是資源釋放需要的</a></li><li><a href='#6-參數立刻求值造成的錯誤'>⑥ 參數立刻求值造成的錯誤</a></li><li><a href='#7-條件式清理成功之後不該回滾'>⑦ 條件式清理：成功之後不該回滾</a></li><li><a href='#8-什麼時候不要用-defer'>⑧ 什麼時候不要用 defer</a></li></ul></li><li><a href='#defer-與-goroutine'>defer 與 goroutine</a></li></ul></nav></aside>
 </div>
 
 <div class="scrim" hidden></div>

@@ -69,6 +69,7 @@
 <li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
 <li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
 <li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+<li><a href='errors.html'><span class='num'>3.4</span><span class='txt'>錯誤處理與傳遞</span></a></li>
 </ul></details>
 <details class='part'>
 <summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
@@ -389,6 +390,210 @@ cherry 3
 
 <p>把鎖競爭分散到 32 把鎖上，吞吐量通常能提升好幾倍。</p>
 <hr />
+<h2 id="常見錯誤與解法">常見錯誤與解法<a class="headerlink" href="#常見錯誤與解法" title="Permanent link">#</a></h2>
+<p>把前面的機制轉成一張「症狀 → 原因 → 解法」表，再逐一展開最容易踩的幾個。</p>
+<table>
+<thead>
+<tr>
+<th>症狀</th>
+<th>原因</th>
+<th>解法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>panic: assignment to entry in nil map</code></td>
+<td>只宣告沒初始化</td>
+<td><code>make</code> 或延後初始化</td>
+</tr>
+<tr>
+<td><code>fatal error: concurrent map read and map write</code></td>
+<td>並行讀寫</td>
+<td><code>RWMutex</code> / 分片 / <code>sync.Map</code></td>
+</tr>
+<tr>
+<td><code>cannot assign to struct field m[k].X</code></td>
+<td>map 元素不可定址</td>
+<td>存指標、或取出改完寫回</td>
+</tr>
+<tr>
+<td>每次跑順序都不同</td>
+<td>走訪順序刻意隨機化</td>
+<td><code>slices.Sorted(maps.Keys(m))</code></td>
+</tr>
+<tr>
+<td>刪光了記憶體卻沒降</td>
+<td>map 永不縮小</td>
+<td>重建一個新的</td>
+</tr>
+<tr>
+<td>記憶體持續成長</td>
+<td>當快取用但沒有淘汰</td>
+<td>加容量上限或 TTL</td>
+</tr>
+</tbody>
+</table>
+<h3 id="1-nil-map讀可以寫會-panic">① nil map：讀可以，寫會 panic<a class="headerlink" href="#1-nil-map讀可以寫會-panic" title="Permanent link">#</a></h3>
+<p>這個不對稱很容易忘：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Config</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Labels</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">string</span><span class="w"> </span><span class="c1">// 零值是 nil</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">c</span><span class="w"> </span><span class="nx">Config</span>
+
+<span class="w">    </span><span class="c1">// ✓ 讀 nil map 完全合法，回傳零值</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%q, len=%d\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">Labels</span><span class="p">[</span><span class="s">&quot;env&quot;</span><span class="p">],</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">Labels</span><span class="p">))</span>
+
+<span class="w">    </span><span class="c1">// ✓ range nil map 也合法，跑 0 次</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">Labels</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;panic:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nb">recover</span><span class="p">())</span><span class="w"> </span><span class="p">}()</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">Labels</span><span class="p">[</span><span class="s">&quot;env&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;prod&quot;</span><span class="w"> </span><span class="c1">// ✗ panic</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>&quot;&quot;, len=0
+panic: assignment to entry in nil map
+</pre></div>
+
+<p><strong>最常發生的場景是 struct 裡的 map 欄位</strong>——<code>json.Unmarshal</code> 進來時如果 JSON 沒有那個欄位，map 就是 nil，之後寫入直接炸。</p>
+<p>解法有兩種：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// 解法一：建構函式初始化</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">NewConfig</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="nx">Config</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Config</span><span class="p">{</span><span class="nx">Labels</span><span class="p">:</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">string</span><span class="p">{}}</span>
+<span class="p">}</span>
+
+<span class="c1">// 解法二：零值可用（延後初始化）—— 見 make 與 new 那章</span>
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Config</span><span class="p">)</span><span class="w"> </span><span class="nx">SetLabel</span><span class="p">(</span><span class="nx">k</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">Labels</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">c</span><span class="p">.</span><span class="nx">Labels</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">string</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">Labels</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">v</span>
+<span class="p">}</span>
+</pre></div>
+
+<h3 id="2-當快取用但沒有淘汰機制">② 當快取用，但沒有淘汰機制<a class="headerlink" href="#2-當快取用但沒有淘汰機制" title="Permanent link">#</a></h3>
+<p>這是正式環境最常見的 map 相關事故：<strong><code>map</code> 不是快取，它沒有大小上限、沒有 TTL、也不會縮小</strong>。</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 記憶體只會往上長，直到 OOM</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">cache</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">][]</span><span class="kt">byte</span><span class="p">{}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">Get</span><span class="p">(</span><span class="nx">key</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">cache</span><span class="p">[</span><span class="nx">key</span><span class="p">];</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">v</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">expensiveLoad</span><span class="p">(</span><span class="nx">key</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">cache</span><span class="p">[</span><span class="nx">key</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="c1">// 永遠不刪</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">v</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>只要 key 的空間夠大（使用者 ID、URL、session token），這就是一顆定時炸彈。而且如同前面提過的，<strong>就算你之後 <code>delete</code> 掉，底層記憶體也不會還給系統</strong>。</p>
+<p>最小可用的修法是加上限與鎖：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;sync&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">BoundedCache</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">mu</span><span class="w">    </span><span class="nx">sync</span><span class="p">.</span><span class="nx">RWMutex</span>
+<span class="w">    </span><span class="nx">m</span><span class="w">     </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">string</span>
+<span class="w">    </span><span class="nx">max</span><span class="w">   </span><span class="kt">int</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">NewBoundedCache</span><span class="p">(</span><span class="nx">max</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="nx">BoundedCache</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">BoundedCache</span><span class="p">{</span><span class="nx">m</span><span class="p">:</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">max</span><span class="p">),</span><span class="w"> </span><span class="nx">max</span><span class="p">:</span><span class="w"> </span><span class="nx">max</span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">BoundedCache</span><span class="p">)</span><span class="w"> </span><span class="nx">Get</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RLock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RUnlock</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">BoundedCache</span><span class="p">)</span><span class="w"> </span><span class="nx">Set</span><span class="p">(</span><span class="nx">k</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">m</span><span class="p">)</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">max</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 最陽春的淘汰：清空重來，避免無限成長</span>
+<span class="w">        </span><span class="c1">// （真正的 LRU 請用 hashicorp/golang-lru 之類的實作）</span>
+<span class="w">        </span><span class="nx">c</span><span class="p">.</span><span class="nx">m</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">max</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">v</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">c</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">NewBoundedCache</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">Set</span><span class="p">(</span><span class="s">&quot;a&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;1&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">Set</span><span class="p">(</span><span class="s">&quot;b&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;2&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">Set</span><span class="p">(</span><span class="s">&quot;c&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;3&quot;</span><span class="p">)</span><span class="w"> </span><span class="c1">// 觸發清空</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">m</span><span class="p">))</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>實務上請直接用現成的 LRU 套件（<code>hashicorp/golang-lru</code>）或帶 TTL 的快取，不要自己造。<strong>重點是：任何長期存在的 map，都要能回答「它最大會長到多大」。</strong></p>
+<h3 id="3-依賴走訪順序">③ 依賴走訪順序<a class="headerlink" href="#3-依賴走訪順序" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 每次執行結果不同，測試會隨機失敗</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">Signature</span><span class="p">(</span><span class="nx">m</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">sb</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">Builder</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">k</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">sb</span><span class="p">.</span><span class="nx">WriteString</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot;=&quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot;;&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">sb</span><span class="p">.</span><span class="nx">String</span><span class="p">()</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ 明確排序</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">Signature</span><span class="p">(</span><span class="nx">m</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">sb</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">Builder</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">k</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">slices</span><span class="p">.</span><span class="nx">Sorted</span><span class="p">(</span><span class="nx">maps</span><span class="p">.</span><span class="nx">Keys</span><span class="p">(</span><span class="nx">m</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">sb</span><span class="p">.</span><span class="nx">WriteString</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot;=&quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot;;&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">sb</span><span class="p">.</span><span class="nx">String</span><span class="p">()</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>任何要產生<strong>簽章、雜湊、序列化輸出、日誌</strong>的地方，只要走訪了 map 就必須先排序。這類 bug 的特徵是「本機測試都過，CI 偶爾紅一次」。</p>
+<h3 id="4-在-range-中新增元素">④ 在 range 中新增元素<a class="headerlink" href="#4-在-range-中新增元素" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="k">for</span><span class="w"> </span><span class="nx">k</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nb">delete</span><span class="p">(</span><span class="nx">m</span><span class="p">,</span><span class="w"> </span><span class="nx">k</span><span class="p">)</span><span class="w">     </span><span class="c1">// ✓ 規格保證安全</span>
+<span class="w">    </span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="o">+</span><span class="s">&quot;_new&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="w"> </span><span class="c1">// ✗ 行為未定義：新元素可能出現也可能不出現</span>
+<span class="p">}</span>
+</pre></div>
+
+<p><strong>刪除是安全的，新增不是。</strong> 需要新增就先收集到 slice，迴圈結束後再處理：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">var</span><span class="w"> </span><span class="nx">toAdd</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">k</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">needsCopy</span><span class="p">(</span><span class="nx">k</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">toAdd</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">toAdd</span><span class="p">,</span><span class="w"> </span><span class="nx">k</span><span class="o">+</span><span class="s">&quot;_new&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">k</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">toAdd</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;&quot;</span>
+<span class="p">}</span>
+</pre></div>
+
+<h3 id="5-用-syncmap-只因為名字有-sync">⑤ 用 <code>sync.Map</code> 只因為名字有 sync<a class="headerlink" href="#5-用-syncmap-只因為名字有-sync" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 大多數情況這樣更慢</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">Map</span>
+</pre></div>
+
+<p><code>sync.Map</code> 只在兩種特定情境比 <code>RWMutex + map</code> 快：</p>
+<ol>
+<li>鍵寫入後幾乎只讀（快取場景）</li>
+<li>多個 goroutine 操作<strong>不相交</strong>的鍵集合</li>
+</ol>
+<p>其他情況——特別是頻繁寫入同一批鍵——它通常<strong>比 <code>RWMutex</code> 慢</strong>，因為內部要維護 read/dirty 兩份結構。而且它沒有型別安全（存取都是 <code>any</code>，要斷言）。</p>
+<p><strong>預設選擇是 <code>RWMutex</code> 包一層</strong>，量測後有需要再換。高並行寫入請看前面的<a href="#map-不是並行安全的">分片作法</a>。</p>
+<hr />
 <h2 id="實用技巧">實用技巧<a class="headerlink" href="#實用技巧" title="Permanent link">#</a></h2>
 <h3 id="用-maptstruct-當集合">用 <code>map[T]struct{}</code> 當集合<a class="headerlink" href="#用-maptstruct-當集合" title="Permanent link">#</a></h3>
 <div class="hl" data-lang="go"><pre><span></span><span class="nx">set</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kd">struct</span><span class="p">{}{}</span>
@@ -451,7 +656,7 @@ cherry 3
 <p>熱路徑上如果鍵是長字串，考慮先算出一個 <code>uint64</code> 指紋當鍵。</p>
 <hr />
 <p>下一節談字串——它跟 slice 很像，但有一個決定性的差異：<strong>不可變</strong>。</p></article><nav class='pager'><a class='prev' href='slice.html'><span>上一節</span><strong>2.2 切片 slice</strong></a><a class='next' href='string.html'><span>下一節</span><strong>2.4 字串 string</strong></a></nav></main>
-  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#一次重大的重寫'>一次重大的重寫</a></li><li><a href='#swiss-table-的核心想法'>Swiss Table 的核心想法</a><ul><li><a href='#群組group與控制字組control-word'>群組（group）與控制字組（control word）</a></li><li><a href='#探測順序'>探測順序</a></li></ul></li><li><a href='#可延伸雜湊go-的額外需求'>可延伸雜湊：Go 的額外需求</a></li><li><a href='#走訪順序是隨機的'>走訪順序是隨機的</a></li><li><a href='#不能取-map-元素的位址'>不能取 map 元素的位址</a></li><li><a href='#map-不是並行安全的'>map 不是並行安全的</a><ul><li><a href='#三種解法'>三種解法</a></li></ul></li><li><a href='#實用技巧'>實用技巧</a><ul><li><a href='#用-maptstruct-當集合'>用 map[T]struct{} 當集合</a></li><li><a href='#預先配置容量'>預先配置容量</a></li><li><a href='#刪除不會縮小-map'>刪除不會縮小 map</a></li><li><a href='#鍵型別的效能差異'>鍵型別的效能差異</a></li></ul></li></ul></nav></aside>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#一次重大的重寫'>一次重大的重寫</a></li><li><a href='#swiss-table-的核心想法'>Swiss Table 的核心想法</a><ul><li><a href='#群組group與控制字組control-word'>群組（group）與控制字組（control word）</a></li><li><a href='#探測順序'>探測順序</a></li></ul></li><li><a href='#可延伸雜湊go-的額外需求'>可延伸雜湊：Go 的額外需求</a></li><li><a href='#走訪順序是隨機的'>走訪順序是隨機的</a></li><li><a href='#不能取-map-元素的位址'>不能取 map 元素的位址</a></li><li><a href='#map-不是並行安全的'>map 不是並行安全的</a><ul><li><a href='#三種解法'>三種解法</a></li></ul></li><li><a href='#常見錯誤與解法'>常見錯誤與解法</a><ul><li><a href='#1-nil-map讀可以寫會-panic'>① nil map：讀可以，寫會 panic</a></li><li><a href='#2-當快取用但沒有淘汰機制'>② 當快取用，但沒有淘汰機制</a></li><li><a href='#3-依賴走訪順序'>③ 依賴走訪順序</a></li><li><a href='#4-在-range-中新增元素'>④ 在 range 中新增元素</a></li><li><a href='#5-用-syncmap-只因為名字有-sync'>⑤ 用 sync.Map 只因為名字有 sync</a></li></ul></li><li><a href='#實用技巧'>實用技巧</a><ul><li><a href='#用-maptstruct-當集合'>用 map[T]struct{} 當集合</a></li><li><a href='#預先配置容量'>預先配置容量</a></li><li><a href='#刪除不會縮小-map'>刪除不會縮小 map</a></li><li><a href='#鍵型別的效能差異'>鍵型別的效能差異</a></li></ul></li></ul></nav></aside>
 </div>
 
 <div class="scrim" hidden></div>

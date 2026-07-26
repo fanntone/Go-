@@ -571,6 +571,141 @@ user, err := queries.GetUser(ctx, 42) // 型別完全正確
 
 ---
 
+## 常見錯誤與解法
+
+`database/sql` 的問題有個共通特徵：**症狀出現的地方跟原因發生的地方相隔很遠**。連線漏了不會立刻報錯，要等到池子耗盡、整個服務同時卡死才爆出來。這張表把症狀對回原因。
+
+| 症狀 | 真正的原因 | 解法 |
+| --- | --- | --- |
+| 服務跑一陣子後所有查詢一起卡住 | `Rows` 沒 `Close`，連線被佔光 | `defer rows.Close()` |
+| `db.Stats().WaitCount` 持續成長 | 池子太小或查詢太慢 | 調大 `MaxOpenConns` / 優化查詢 |
+| 連線一直重建、`MaxIdleClosed` 很高 | `MaxIdleConns` 太小 | 設成等於 `MaxOpenConns` |
+| 資料庫 failover 後仍連舊節點 | 沒設 `ConnMaxLifetime` | 設 5–30 分鐘 |
+| 啟動時沒報錯，第一次查詢才失敗 | `sql.Open` 不會真的連線 | 啟動時 `PingContext` |
+| 讀到一半網路斷了卻當成正常結束 | 沒檢查 `rows.Err()` | 迴圈後一定要檢查 |
+| `converting NULL to string is unsupported` | 欄位可為 NULL | `sql.Null[T]` / 指標 / SQL 端 `COALESCE` |
+| 交易一直卡住、鎖等待暴增 | 交易中做了外部呼叫 | 交易只包資料庫操作 |
+| timeout 設了卻沒作用 | 用了非 `Context` 版本的 API | 一律用 `QueryContext` 等 |
+
+### ① `Rows` 沒關：最致命的一個
+
+值得單獨拿出來講，因為它的後果最嚴重而且最難查。
+
+```go
+// ✗ 每次呼叫漏一條連線
+func listBad(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`SELECT name FROM users`)
+	if err != nil {
+		return nil, err
+	}
+
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err // ← 提早 return，rows 永遠不會被關
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+```
+
+**注意這裡有兩個漏洞**：完全沒有 `Close`，而且就算你在最後補一行 `rows.Close()`，中間那個錯誤路徑仍然會漏。
+
+```go
+// ✓
+func listGood(ctx context.Context, db *sql.DB) ([]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT name FROM users`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() // ← 不管從哪條路徑離開都會關
+
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err() // ← 順便處理迴圈中斷的錯誤
+}
+```
+
+!!! note "`Rows` 什麼時候會自動關？"
+    `rows.Next()` 讀到最後一筆並回傳 `false` 時，`Rows` 會自動關閉。所以**正常讀完的路徑其實不會漏**——會漏的永遠是**提早離開**：`return`、`break`、`panic`。
+
+    這正是為什麼 `defer` 是唯一可靠的做法，也是為什麼這個 bug 在測試時看不出來（測試資料通常都讀完了），上線後遇到錯誤路徑才爆。
+
+### ② 症狀的傳播方式
+
+理解這個有助於在監控上及早發現：
+
+```text
+某個 handler 漏了 rows.Close()
+   ↓ 每次請求佔住一條連線
+連線池的閒置連線逐漸歸零
+   ↓ 新請求開始排隊等連線
+db.Stats().WaitCount / WaitDuration 開始上升
+   ↓ 排隊時間超過 context timeout
+所有查詢同時回傳 "context deadline exceeded"
+   ↓
+看起來像「資料庫掛了」，但資料庫其實很閒
+```
+
+**關鍵指標是 `WaitCount`**——它會在災難發生前幾分鐘就開始上升。把 `db.Stats()` 推到監控系統（做法見[監控連線池](#監控連線池)），比等 500 錯誤有用得多。
+
+### ③ 交易中做外部呼叫
+
+```go
+// ✗ HTTP 呼叫可能要好幾秒，這段時間連線與資料庫的列鎖都被佔著
+tx, _ := db.BeginTx(ctx, nil)
+tx.ExecContext(ctx, `UPDATE orders SET status='paying' WHERE id=$1`, id)
+resp, _ := callPaymentAPI(ctx, id) // ← 危險
+tx.ExecContext(ctx, `UPDATE orders SET status=$1 WHERE id=$2`, resp.Status, id)
+tx.Commit()
+```
+
+一個交易 = 一條連線被獨佔到結束。外部呼叫慢 3 秒，這條連線就被佔 3 秒，同時資料庫端的列鎖也拿著不放——其他要改同一列的交易全部排隊。
+
+**解法是把外部呼叫移出交易**，用兩段短交易加上冪等性處理：
+
+```go
+// 第一段交易：標記狀態
+if err := markPaying(ctx, db, id); err != nil {
+	return err
+}
+
+// 交易外：呼叫外部服務
+resp, err := callPaymentAPI(ctx, id)
+if err != nil {
+	return err
+}
+
+// 第二段交易：寫回結果（要能重複執行而不出錯）
+return finalizePayment(ctx, db, id, resp.Status)
+```
+
+代價是中間狀態要能被復原——這就是為什麼分散式流程需要 saga 或對帳機制。**但把外部呼叫塞進交易並不會讓問題消失，只是把它換成更難處理的連線池耗盡。**
+
+### ④ 用 `Prepare` 做單次查詢
+
+```go
+// ✗ 三次來回：Prepare → Execute → Close
+stmt, _ := db.Prepare(query)
+defer stmt.Close()
+stmt.QueryRow(arg).Scan(&v)
+
+// ✓ 一次來回，一樣有 SQL 注入防護
+db.QueryRow(query, arg).Scan(&v)
+```
+
+參數化查詢的防注入效果來自「查詢與資料分開傳送」，**不需要你手動 `Prepare` 就已經生效**。明確 `Prepare` 只在「同一個 statement 要執行很多次」時才划算。
+
+---
+
 ## 檢查清單
 
 | 項目 | 為什麼 |

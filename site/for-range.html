@@ -69,6 +69,7 @@
 <li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
 <li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
 <li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+<li><a href='errors.html'><span class='num'>3.4</span><span class='txt'>錯誤處理與傳遞</span></a></li>
 </ul></details>
 <details class='part' open>
 <summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
@@ -613,7 +614,7 @@ s[1]=2 s[3]=4
 <p>這是實務上很常見的 bug。</p>
 </div>
 <hr />
-<p>下一節談 <code>select</code>——channel 多路選擇的實作。</p></article><nav class='pager'><a class='prev' href='reflect.html'><span>上一節</span><strong>3.3 反射 reflect</strong></a><a class='next' href='select.html'><span>下一節</span><strong>4.2 select</strong></a></nav></main>
+<p>下一節談 <code>select</code>——channel 多路選擇的實作。</p></article><nav class='pager'><a class='prev' href='errors.html'><span>上一節</span><strong>3.4 錯誤處理與傳遞</strong></a><a class='next' href='select.html'><span>下一節</span><strong>4.2 select</strong></a></nav></main>
   <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#go-只有一個迴圈關鍵字'>Go 只有一個迴圈關鍵字</a></li><li><a href='#range-slice-的改寫'>range slice 的改寫</a><ul><li><a href='#1-長度只算一次'>① 長度只算一次</a></li><li><a href='#2-v-是複本'>② v 是複本</a></li><li><a href='#3-迴圈變數go-122-的重大變更'>③ 迴圈變數：Go 1.22 的重大變更</a></li></ul></li><li><a href='#range-陣列-vs-range-slice'>range 陣列 vs range slice</a></li><li><a href='#range-map-與-range-channel'>range map 與 range channel</a><ul><li><a href='#map隨機順序可安全刪除'>map：隨機順序，可安全刪除</a></li><li><a href='#channel讀到關閉為止'>channel：讀到關閉為止</a></li><li><a href='#range-字串解碼-utf-8'>range 字串：解碼 UTF-8</a></li></ul></li><li><a href='#go-123range-over-func-迭代器'>Go 1.23：range over func 迭代器</a><ul><li><a href='#三種簽章'>三種簽章</a></li><li><a href='#一個實際例子'>一個實際例子</a></li><li><a href='#為什麼這個功能重要'>為什麼這個功能重要</a></li></ul></li><li><a href='#breakcontinue-與標籤'>break、continue 與標籤</a></li></ul></nav></aside>
 </div>
 

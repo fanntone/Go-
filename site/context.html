@@ -69,6 +69,7 @@
 <li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
 <li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
 <li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+<li><a href='errors.html'><span class='num'>3.4</span><span class='txt'>錯誤處理與傳遞</span></a></li>
 </ul></details>
 <details class='part'>
 <summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
@@ -438,6 +439,217 @@ worker 1 停止：context canceled
 </pre></div>
 
 <hr />
+<h2 id="常見錯誤與解法">常見錯誤與解法<a class="headerlink" href="#常見錯誤與解法" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>症狀</th>
+<th>原因</th>
+<th>解法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>記憶體緩慢成長、goroutine 數只增不減</td>
+<td>忘記呼叫 <code>cancel</code></td>
+<td><code>defer cancel()</code>，CI 跑 <code>go vet</code></td>
+</tr>
+<tr>
+<td>設了 timeout 卻沒作用</td>
+<td>內層函式沒吃 <code>ctx</code></td>
+<td>整條鏈都要傳，用 <code>*Context</code> 版本的 API</td>
+</tr>
+<tr>
+<td>取消訊號傳不進背景工作</td>
+<td><code>go</code> 出去時傳了 <code>Background()</code></td>
+<td>傳同一個 <code>ctx</code>；真要脫離用 <code>WithoutCancel</code></td>
+</tr>
+<tr>
+<td>CPU 密集迴圈停不下來</td>
+<td>沒有檢查點</td>
+<td>迴圈中定期 <code>select</code> 檢查 <code>ctx.Done()</code></td>
+</tr>
+<tr>
+<td>測試難寫、相依看不出來</td>
+<td>用 <code>WithValue</code> 傳相依</td>
+<td>相依用參數或 struct 欄位注入</td>
+</tr>
+<tr>
+<td><code>ctx.Value</code> 拿到別人的東西</td>
+<td>用 <code>string</code> 當鍵</td>
+<td>未匯出的自訂型別當鍵</td>
+</tr>
+</tbody>
+</table>
+<h3 id="1-忘記-cancel最常見的一個">① 忘記 <code>cancel</code>：最常見的一個<a class="headerlink" href="#1-忘記-cancel最常見的一個" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ ctx 永遠留在父節點的 children 裡，計時器也不會停</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">bad</span><span class="p">(</span><span class="nx">parent</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithTimeout</span><span class="p">(</span><span class="nx">parent</span><span class="p">,</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">doWork</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">good</span><span class="p">(</span><span class="nx">parent</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithTimeout</span><span class="p">(</span><span class="nx">parent</span><span class="p">,</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">cancel</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">doWork</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<p><strong>即使 context 已經因逾時而取消，仍然要呼叫 <code>cancel()</code></strong>——它同時負責停掉內部計時器、以及把自己從父節點的子節點集合移除。長壽命的父 context（例如整個服務的生命週期）沒有這一步就會持續累積子節點。</p>
+<p><code>go vet</code> 的 <code>lostcancel</code> 檢查抓得到：</p>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>vet<span class="w"> </span>./...
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>./main.go:8:7: the cancel function is not used on all paths (possible context leak)
+</pre></div>
+
+<p><strong>這個檢查一定要放進 CI。</strong> 它是 context 相關問題中唯一能自動化的部分。</p>
+<h3 id="2-timeout-設了卻沒用中間有一層沒吃-ctx">② timeout 設了卻沒用：中間有一層沒吃 ctx<a class="headerlink" href="#2-timeout-設了卻沒用中間有一層沒吃-ctx" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 5 秒的 timeout 完全沒有作用</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">handler</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithTimeout</span><span class="p">(</span><span class="nx">r</span><span class="p">.</span><span class="nx">Context</span><span class="p">(),</span><span class="w"> </span><span class="mi">5</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">cancel</span><span class="p">()</span>
+
+<span class="w">    </span><span class="nx">result</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">slowQuery</span><span class="p">()</span><span class="w"> </span><span class="c1">// ← 沒收 ctx，會一直跑到自己結束為止</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">result</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ 整條鏈都要傳，而且要用支援 context 的 API</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">handler</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithTimeout</span><span class="p">(</span><span class="nx">r</span><span class="p">.</span><span class="nx">Context</span><span class="p">(),</span><span class="w"> </span><span class="mi">5</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">cancel</span><span class="p">()</span>
+
+<span class="w">    </span><span class="nx">result</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">slowQuery</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">http</span><span class="p">.</span><span class="nx">Error</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">.</span><span class="nx">Error</span><span class="p">(),</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">StatusGatewayTimeout</span><span class="p">)</span>
+<span class="w">        </span><span class="k">return</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">result</span>
+<span class="p">}</span>
+</pre></div>
+
+<p><strong>timeout 只有在整條呼叫鏈都尊重 context 時才有意義。</strong> 標準庫大多提供了 <code>*Context</code> 版本，優先用它們：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">db</span><span class="p">.</span><span class="nx">QueryContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">query</span><span class="p">,</span><span class="w"> </span><span class="nx">args</span><span class="o">...</span><span class="p">)</span>
+<span class="nx">http</span><span class="p">.</span><span class="nx">NewRequestWithContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">MethodGet</span><span class="p">,</span><span class="w"> </span><span class="nx">url</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span><span class="p">)</span>
+<span class="nx">conn</span><span class="p">.</span><span class="nx">PingContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
+<span class="nx">cmd</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">exec</span><span class="p">.</span><span class="nx">CommandContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ls&quot;</span><span class="p">)</span>
+</pre></div>
+
+<h3 id="3-背景工作傳了-background">③ 背景工作傳了 <code>Background()</code><a class="headerlink" href="#3-背景工作傳了-background" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 請求結束了，這個 goroutine 還在跑，而且沒人能叫停</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">handler</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="nx">auditLog</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nx">Background</span><span class="p">(),</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">URL</span><span class="p">.</span><span class="nx">Path</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>這通常是為了解決一個真實問題：<strong>請求結束後 <code>r.Context()</code> 就被取消了</strong>，直接傳它進去會讓背景工作立刻中斷。</p>
+<p>正確做法（Go 1.21+）：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">handler</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 保留 trace ID 等值，但不繼承「請求結束就取消」</span>
+<span class="w">    </span><span class="nx">bg</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithoutCancel</span><span class="p">(</span><span class="nx">r</span><span class="p">.</span><span class="nx">Context</span><span class="p">())</span>
+
+<span class="w">    </span><span class="c1">// 再給它自己的期限，避免永遠跑下去</span>
+<span class="w">    </span><span class="nx">bg</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithTimeout</span><span class="p">(</span><span class="nx">bg</span><span class="p">,</span><span class="w"> </span><span class="mi">30</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">defer</span><span class="w"> </span><span class="nx">cancel</span><span class="p">()</span>
+<span class="w">        </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="nx">rec</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">recover</span><span class="p">();</span><span class="w"> </span><span class="nx">rec</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Error</span><span class="p">(</span><span class="s">&quot;audit panic&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;err&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">rec</span><span class="p">)</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}()</span>
+<span class="w">        </span><span class="nx">auditLog</span><span class="p">(</span><span class="nx">bg</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">URL</span><span class="p">.</span><span class="nx">Path</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}()</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>三個重點：<code>WithoutCancel</code> 保留值但切斷取消、再加一個自己的 timeout、goroutine 自己 recover（見 <a href="panic.html#在服務邊界攔截-panic">panic</a>）。</p>
+<h3 id="4-cpu-密集迴圈感受不到取消">④ CPU 密集迴圈感受不到取消<a class="headerlink" href="#4-cpu-密集迴圈感受不到取消" title="Permanent link">#</a></h3>
+<p>context 是<strong>合作式</strong>的——沒有人能強制中斷你的迴圈。純運算的程式碼必須自己插檢查點：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;context&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">process</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">items</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">sum</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">items</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 每處理一批檢查一次，不要每輪都檢查（select 有成本）</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">i</span><span class="o">%</span><span class="mi">1000</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nx">Done</span><span class="p">():</span>
+<span class="w">                </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nx">ctx</span><span class="p">.</span><span class="nx">Err</span><span class="p">()</span>
+<span class="w">            </span><span class="k">default</span><span class="p">:</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">sum</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">v</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">sum</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">items</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="nx">_000_000</span><span class="p">)</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">items</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">items</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">i</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithTimeout</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nx">Background</span><span class="p">(),</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">cancel</span><span class="p">()</span>
+
+<span class="w">    </span><span class="nx">sum</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">process</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">items</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">sum</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>0 context deadline exceeded
+</pre></div>
+
+<p><strong>檢查頻率是個取捨</strong>：太頻繁（每輪都檢查）會拖慢迴圈，太稀疏則反應遲鈍。以「每 1–10 毫秒的工作量」為單位檢查一次通常剛好。</p>
+<h3 id="5-把-context-存進-struct">⑤ 把 context 存進 struct<a class="headerlink" href="#5-把-context-存進-struct" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 幾乎總是錯的</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">Service</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span>
+<span class="w">    </span><span class="nx">db</span><span class="w">  </span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ context 走參數，第一個位置</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">Service</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">db</span><span class="w"> </span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="o">*</span><span class="nx">Service</span><span class="p">)</span><span class="w"> </span><span class="nx">Load</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="w"> </span><span class="kt">int64</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">User</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">query</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>原因：<strong>context 是「一次呼叫」的生命週期，struct 是「一個物件」的生命週期</strong>，兩者不一致。存進 struct 之後，同一個 <code>Service</code> 被兩個請求共用時，第一個請求的取消會影響第二個。</p>
+<p>唯一的例外是「這個 struct 本身就代表一次請求」，例如 <code>http.Request</code>。</p>
+<h3 id="6-用-withvalue-傳相依">⑥ 用 <code>WithValue</code> 傳相依<a class="headerlink" href="#6-用-withvalue-傳相依" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 相依藏在 context 裡：編譯期看不出來、無法測試、型別斷言可能 panic</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">handler</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">db</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">ctx</span><span class="p">.</span><span class="nx">Value</span><span class="p">(</span><span class="s">&quot;db&quot;</span><span class="p">).(</span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">db</span><span class="p">.</span><span class="nx">Query</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ 明確注入</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">Handler</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">db</span><span class="w">     </span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span>
+<span class="w">    </span><span class="nx">logger</span><span class="w"> </span><span class="o">*</span><span class="nx">slog</span><span class="p">.</span><span class="nx">Logger</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">h</span><span class="w"> </span><span class="o">*</span><span class="nx">Handler</span><span class="p">)</span><span class="w"> </span><span class="nx">Handle</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">req</span><span class="w"> </span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">h</span><span class="p">.</span><span class="nx">db</span><span class="p">.</span><span class="nx">QueryContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">)</span><span class="w">  </span><span class="c1">// ctx 只帶取消訊號與 trace ID</span>
+<span class="p">}</span>
+</pre></div>
+
+<p><code>WithValue</code> 的正當用途只有<strong>請求範圍的中繼資料</strong>：request ID、trace span、已認證的使用者身分、語系。資料庫連線、logger、設定這些是<strong>相依</strong>，應該用參數或欄位注入。</p>
+<p>判準：<strong>如果拿掉它函式就不能運作，那它是相依，不該放 context。</strong></p>
+<p>（鍵一定要用未匯出的自訂型別，理由見<a href="#withvalue-的正確用法">前面那節</a>。）</p>
+<hr />
 <h2 id="一個完整的例子">一個完整的例子<a class="headerlink" href="#一個完整的例子" title="Permanent link">#</a></h2>
 <p>把所有東西串起來：</p>
 <div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
@@ -540,7 +752,7 @@ worker 1 停止：context canceled
 </div>
 <hr />
 <p>下一節談同步原語：<code>sync</code> 套件裡那些鎖是怎麼實作的，以及什麼時候該用哪一個。</p></article><nav class='pager'><a class='prev' href='make-new.html'><span>上一節</span><strong>4.5 make 與 new</strong></a><a class='next' href='sync.html'><span>下一節</span><strong>5.2 同步原語與鎖</strong></a></nav></main>
-  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#context-解決什麼問題'>context 解決什麼問題</a></li><li><a href='#介面本身很小'>介面本身很小</a></li><li><a href='#樹狀結構'>樹狀結構</a><ul><li><a href='#cancelctx-的實作'>cancelCtx 的實作</a></li></ul></li><li><a href='#四種建構函式'>四種建構函式</a><ul><li><a href='#withcancel手動取消'>WithCancel：手動取消</a></li><li><a href='#withtimeout-withdeadline時間取消'>WithTimeout / WithDeadline：時間取消</a></li><li><a href='#withvalue傳遞請求範圍的值'>WithValue：傳遞請求範圍的值</a></li><li><a href='#withcancelcause-causego-120'>WithCancelCause / Cause（Go 1.20+）</a></li></ul></li><li><a href='#withvalue-的正確用法'>WithValue 的正確用法</a><ul><li><a href='#鍵一定要用未匯出的自訂型別'>鍵一定要用未匯出的自訂型別</a></li><li><a href='#只放請求範圍的中繼資料'>只放「請求範圍的中繼資料」</a></li></ul></li><li><a href='#使用規範'>使用規範</a><ul><li><a href='#1-context-是第一個參數命名為-ctx'>① context 是第一個參數，命名為 ctx</a></li><li><a href='#2-不要傳-nil-context'>② 不要傳 nil context</a></li><li><a href='#3-一路往下傳不要中斷'>③ 一路往下傳，不要中斷</a></li><li><a href='#4-在阻塞操作處檢查取消'>④ 在阻塞操作處檢查取消</a></li></ul></li><li><a href='#一個完整的例子'>一個完整的例子</a></li></ul></nav></aside>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#context-解決什麼問題'>context 解決什麼問題</a></li><li><a href='#介面本身很小'>介面本身很小</a></li><li><a href='#樹狀結構'>樹狀結構</a><ul><li><a href='#cancelctx-的實作'>cancelCtx 的實作</a></li></ul></li><li><a href='#四種建構函式'>四種建構函式</a><ul><li><a href='#withcancel手動取消'>WithCancel：手動取消</a></li><li><a href='#withtimeout-withdeadline時間取消'>WithTimeout / WithDeadline：時間取消</a></li><li><a href='#withvalue傳遞請求範圍的值'>WithValue：傳遞請求範圍的值</a></li><li><a href='#withcancelcause-causego-120'>WithCancelCause / Cause（Go 1.20+）</a></li></ul></li><li><a href='#withvalue-的正確用法'>WithValue 的正確用法</a><ul><li><a href='#鍵一定要用未匯出的自訂型別'>鍵一定要用未匯出的自訂型別</a></li><li><a href='#只放請求範圍的中繼資料'>只放「請求範圍的中繼資料」</a></li></ul></li><li><a href='#使用規範'>使用規範</a><ul><li><a href='#1-context-是第一個參數命名為-ctx'>① context 是第一個參數，命名為 ctx</a></li><li><a href='#2-不要傳-nil-context'>② 不要傳 nil context</a></li><li><a href='#3-一路往下傳不要中斷'>③ 一路往下傳，不要中斷</a></li><li><a href='#4-在阻塞操作處檢查取消'>④ 在阻塞操作處檢查取消</a></li></ul></li><li><a href='#常見錯誤與解法'>常見錯誤與解法</a><ul><li><a href='#1-忘記-cancel最常見的一個'>① 忘記 cancel：最常見的一個</a></li><li><a href='#2-timeout-設了卻沒用中間有一層沒吃-ctx'>② timeout 設了卻沒用：中間有一層沒吃 ctx</a></li><li><a href='#3-背景工作傳了-background'>③ 背景工作傳了 Background()</a></li><li><a href='#4-cpu-密集迴圈感受不到取消'>④ CPU 密集迴圈感受不到取消</a></li><li><a href='#5-把-context-存進-struct'>⑤ 把 context 存進 struct</a></li><li><a href='#6-用-withvalue-傳相依'>⑥ 用 WithValue 傳相依</a></li></ul></li><li><a href='#一個完整的例子'>一個完整的例子</a></li></ul></nav></aside>
 </div>
 
 <div class="scrim" hidden></div>

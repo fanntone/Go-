@@ -350,6 +350,194 @@ items = slices.Delete(items, 1, 3) // 會把尾端清成零值
 
 ---
 
+## 實務上最常出錯的五件事
+
+前面講的都是機制。這一節把「機制導致的實際 bug」集中起來——每一個都是把「slice 只是一個指向陣列的三欄位標頭」這件事忘掉的後果。
+
+### ① 傳進函式：改元素會影響呼叫端，append 不一定
+
+這是最容易困惑的一個，因為**同一個函式，兩種行為**：
+
+```go
+package main
+
+import "fmt"
+
+func modify(s []int) {
+	s[0] = 999 // ✓ 會影響呼叫端：改的是共用的底層陣列
+}
+
+func grow(s []int) {
+	s = append(s, 4) // ✗ 不一定影響呼叫端：可能重新配置，而且 s 是標頭的複本
+}
+
+func growInPlace(s []int) {
+	s = append(s, 4) // 容量夠時會寫進共用的底層陣列
+	_ = s
+}
+
+func main() {
+	a := []int{1, 2, 3}
+	modify(a)
+	fmt.Println("modify 後:", a) // [999 2 3] ← 被改了
+
+	b := []int{1, 2, 3} // len=3 cap=3，append 必定重新配置
+	grow(b)
+	fmt.Println("grow 後:  ", b, len(b)) // [1 2 3] 3 ← 沒變
+
+	c := make([]int, 3, 10) // cap 有空間
+	c[0], c[1], c[2] = 1, 2, 3
+	growInPlace(c)
+	fmt.Println("cap 夠時: ", c, len(c), cap(c)) // [1 2 3] 3 10 ← len 沒變…
+	fmt.Println("但底層被寫了:", c[:4])            // [1 2 3 4] ← 底層陣列真的被改了
+}
+```
+
+**為什麼**：函式收到的是**標頭的複本**。改 `s[0]` 動的是標頭指向的那塊記憶體（共用）；`s = append(...)` 只改了複本的 `len` 與 `array` 欄位，呼叫端的標頭完全沒動。
+
+**規則**：
+
+- 只讀 → 傳 `[]T` 就好
+- 只改既有元素 → 傳 `[]T`，會生效
+- **可能改變長度 → 一定要回傳新的 slice**，讓呼叫端接住
+
+```go
+// ✓ 標準寫法
+func appendItem(s []int, v int) []int {
+	return append(s, v)
+}
+s = appendItem(s, 4)
+
+// ✓ 或傳指標（較少見，但語意最明確）
+func appendItemPtr(s *[]int, v int) {
+	*s = append(*s, v)
+}
+```
+
+### ② `append` 的回傳值一定要接
+
+上一點的延伸。這個錯誤 `go vet` 抓不到全部，很容易漏：
+
+```go
+append(s, 1)      // ✗ 完全沒作用（編譯錯誤：append 的結果未使用）
+s2 := append(s, 1) // ⚠ 合法，但 s 與 s2 可能共用底層陣列
+s = append(s, 1)   // ✓
+```
+
+第二種寫法特別危險——**兩個 slice 可能指向同一塊記憶體**：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	s := make([]int, 3, 10)
+	a := append(s, 100)
+	b := append(s, 200) // 又從 s 開始 append，寫到同一個位置
+
+	fmt.Println(a[3], b[3]) // 200 200 ← a 被 b 蓋掉了
+}
+```
+
+要從同一個基底衍生多個 slice，用三索引切法斷開容量（見[共享底層陣列](#共享底層陣列最常見的坑)），或明確 `slices.Clone`。
+
+### ③ `copy` 只複製「兩者長度的較小值」
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	src := []int{1, 2, 3, 4, 5}
+
+	var dst1 []int // nil，len=0
+	fmt.Println(copy(dst1, src), dst1) // 0 [] ← 什麼都沒複製！
+
+	dst2 := make([]int, 0, 5) // cap 夠但 len=0
+	fmt.Println(copy(dst2, src), dst2) // 0 [] ← 一樣沒複製
+
+	dst3 := make([]int, len(src)) // ✓ len 要夠
+	fmt.Println(copy(dst3, src), dst3) // 5 [1 2 3 4 5]
+}
+```
+
+**`copy` 看的是 `len` 不是 `cap`。** 這是「複製後發現目標是空的」這類 bug 的唯一原因。要複製整份就用 `slices.Clone(src)`，不會出錯。
+
+### ④ 排序會就地修改原始 slice
+
+```go
+package main
+
+import (
+	"fmt"
+	"slices"
+)
+
+func report(data []int) {
+	slices.Sort(data) // ✗ 呼叫端的資料順序被改掉了
+	fmt.Println("最小:", data[0])
+}
+
+func reportSafe(data []int) {
+	sorted := slices.Clone(data) // ✓ 先複製
+	slices.Sort(sorted)
+	fmt.Println("最小:", sorted[0])
+}
+
+func main() {
+	original := []int{3, 1, 2}
+	report(original)
+	fmt.Println("被改了:", original) // [1 2 3]
+
+	original2 := []int{3, 1, 2}
+	reportSafe(original2)
+	fmt.Println("沒被改:", original2) // [3 1 2]
+}
+```
+
+`slices.Sort`、`slices.Reverse`、`sort.Slice` 全部是**就地（in-place）**操作。函式庫要對呼叫端傳進來的 slice 排序時，先 `Clone`——否則你在對方不知情的狀況下改了他的資料。
+
+### ⑤ 從迴圈收集指標時的陷阱
+
+Go 1.22 修掉了迴圈變數的問題，但**取元素位址**仍要小心：
+
+```go
+package main
+
+import "fmt"
+
+type Item struct{ N int }
+
+func main() {
+	items := []Item{{1}, {2}, {3}}
+
+	// ✓ Go 1.22+ 正確：每輪 v 是新變數
+	var ptrs []*Item
+	for _, v := range items {
+		ptrs = append(ptrs, &v) // 指向每輪的複本
+	}
+	fmt.Println(ptrs[0].N, ptrs[1].N, ptrs[2].N) // 1 2 3
+
+	// ⚠ 但這些指標指向「複本」，不是原本的元素
+	ptrs[0].N = 999
+	fmt.Println("原始資料沒變:", items[0].N) // 1
+
+	// ✓ 要指向真正的元素，用索引
+	var real []*Item
+	for i := range items {
+		real = append(real, &items[i])
+	}
+	real[0].N = 999
+	fmt.Println("原始資料變了:", items[0].N) // 999
+}
+```
+
+`&v` 與 `&items[i]` 是**兩個不同的東西**，而且都合法——編譯器不會提醒你選錯。
+
+---
+
 ## `slices` 套件：別再自己寫了
 
 !!! version "Go 1.21 起：`slices` 進入標準庫"

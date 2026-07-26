@@ -449,6 +449,168 @@ curl "http://localhost:6060/debug/pprof/goroutine?debug=2"
 
 ---
 
+## 常見錯誤與解法
+
+channel 的 panic 全部來自「關閉」相關的操作，阻塞則全部來自「沒有對手」。先一張總表：
+
+| 操作 | nil channel | 開啟中 | 已關閉 |
+| --- | --- | --- | --- |
+| `ch <- v` | **永久阻塞** | 阻塞到有人收／緩衝有空 | **panic** |
+| `<-ch` | **永久阻塞** | 阻塞到有人送／緩衝有值 | 立刻回傳零值，`ok = false` |
+| `close(ch)` | **panic** | 正常關閉 | **panic** |
+| `len` / `cap` | 0 | 目前值 | 目前值 |
+
+### ① 誰負責 close：由傳送方，而且只能有一個
+
+這是所有 channel 錯誤的源頭。**接收方永遠不要 close**——它無法知道傳送方是不是還要送，關掉之後對方一送就 panic。
+
+```go
+// ✗ 多個生產者各自 close → 第二個就 panic
+for i := 0; i < 3; i++ {
+	go func() {
+		produce(out)
+		close(out) // ✗ close of closed channel
+	}()
+}
+
+// ✓ 用 WaitGroup 協調，由一個專門的 goroutine 關
+var wg sync.WaitGroup
+for i := 0; i < 3; i++ {
+	wg.Add(1)
+	go func() { defer wg.Done(); produce(out) }()
+}
+go func() {
+	wg.Wait()
+	close(out) // ✓ 確定所有人都送完了
+}()
+```
+
+!!! tip "不確定該不該 close 時，就不要 close"
+    channel 不像檔案，**不關也不會洩漏資源**——沒有人參照它的時候會被 GC 回收。
+
+    `close` 的用途只有一個：**通知接收方「不會再有東西了」**。如果接收方本來就知道要收幾筆（例如 `for i := 0; i < n; i++ { <-ch }`），根本不需要 close。
+
+### ② 要「停止訊號」時，另開一個 channel
+
+想叫工作者停下來，不要去 close 資料 channel：
+
+```go
+// ✗ 生產者可能還在送 → panic
+close(jobs)
+
+// ✓ 用另一個專門的 channel 廣播（或直接用 context）
+done := make(chan struct{})
+close(done) // 關閉 = 一對多廣播，所有等待者同時被喚醒
+```
+
+實務上直接用 `context`：它就是把這個模式標準化，而且能沿著呼叫樹自動傳播。見 [context](context.html)。
+
+### ③ `for range` 沒有 close 就永遠不會結束
+
+```go
+// ✗ 生產者中途 return（例如出錯），忘了 close → 消費端永遠卡住
+go func() {
+	for _, v := range data {
+		if err := check(v); err != nil {
+			return // ← 沒 close
+		}
+		out <- v
+	}
+	close(out)
+}()
+
+// ✓ 用 defer，不管怎麼離開都會關
+go func() {
+	defer close(out)
+	for _, v := range data {
+		if err := check(v); err != nil {
+			return
+		}
+		out <- v
+	}
+}()
+```
+
+**`defer close(ch)` 應該是肌肉記憶**。錯誤路徑忘記 close 是 goroutine 洩漏的頭號來源。
+
+### ④ 同一個 goroutine 收發無緩衝 channel
+
+```go
+package main
+
+func main() {
+	ch := make(chan int) // 無緩衝
+	ch <- 1              // ✗ 沒有其他 goroutine 在接收 → 自己把自己鎖死
+	<-ch                 // 永遠執行不到
+}
+```
+
+```text
+fatal error: all goroutines are asleep - deadlock!
+```
+
+無緩衝 channel 的傳送**必須有另一個 goroutine 同時在接收**。這在寫測試時特別容易犯——想「先塞幾筆資料再讀」，就要用有緩衝的：
+
+```go
+ch := make(chan int, 3) // ✓ 緩衝夠的話，同一個 goroutine 可以先塞後讀
+ch <- 1
+ch <- 2
+close(ch)
+for v := range ch {
+	_ = v
+}
+```
+
+!!! note "`fatal error: deadlock` 只在「所有 goroutine 都睡著」時才會報"
+    runtime 偵測得到的是**全域死結**。如果你的程式還有其他 goroutine 在跑（例如一個背景的 ticker），即使某個 goroutine 永遠卡住，runtime 也不會報錯——它就只是安靜地洩漏掉。
+
+    所以「沒有 deadlock 錯誤」不代表沒有卡住的 goroutine。要抓這種，靠 `/debug/pprof/goroutine` 或 `goleak`（見[偵測洩漏](#goroutine-洩漏)）。
+
+### ⑤ 用 channel 當互斥鎖
+
+```go
+// ✗ 可以動，但比 mutex 慢一個數量級
+sem := make(chan struct{}, 1)
+sem <- struct{}{}
+// 臨界區
+<-sem
+
+// ✓
+var mu sync.Mutex
+mu.Lock()
+// 臨界區
+mu.Unlock()
+```
+
+channel 的收發約 50–150 ns，`Mutex.Lock`＋`Unlock` 約 15 ns。**channel 適合「傳遞資料所有權」與「協調流程」，不適合單純的互斥。**
+
+反過來說，`make(chan struct{}, N)` 當**號誌**（限制並行數）是正當用法——那是在協調並行度，不是互斥。
+
+### ⑥ 在 `select` 裡用 `break`
+
+```go
+// ✗ break 只跳出 select，迴圈繼續
+for {
+	select {
+	case <-done:
+		break
+	}
+}
+
+// ✓ 用標籤，或直接 return
+loop:
+for {
+	select {
+	case <-done:
+		break loop
+	}
+}
+```
+
+這是實務上很常見的無限迴圈來源。詳見 [for 與 range](for-range.html)。
+
+---
+
 ## 常見模式
 
 ### 工作池（worker pool）

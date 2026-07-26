@@ -336,6 +336,251 @@ nil
 
 ---
 
+## 常見錯誤與解法
+
+介面的問題有兩類：**執行期才炸的**（nil 陷阱、比較 panic、斷言失敗）與**編譯不過但訊息不好懂的**（方法集）。兩類的根因都是「介面值其實是 (型別, 資料) 這一對」這件事沒有內化。
+
+| 症狀 | 原因 | 解法 |
+| --- | --- | --- |
+| `err != nil` 但印出來是 `<nil>` | 裝了 nil 指標的介面不等於 nil | 函式內不要用具體錯誤型別的變數 |
+| `X does not implement Y (method Z has pointer receiver)` | 方法集規則 | 傳 `&x` 而非 `x` |
+| `panic: comparing uncomparable type` | 動態型別不可比較 | 別用 `==`，改用 `reflect.DeepEqual` 或 `go-cmp` |
+| `panic: interface conversion` | 單值型別斷言失敗 | 一律用雙值形式 |
+| 熱路徑效能不如預期 | 介面呼叫無法內聯 | 具體型別、泛型、或 PGO 去虛擬化 |
+| 改介面就要動一堆檔案 | 介面定義在生產端且太大 | 在消費端定義最小介面 |
+
+### ① 介面比較會在執行期 panic
+
+這個很少人知道，但踩到很痛——**它編譯得過，只在執行期炸**：
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	var a any = []int{1, 2}
+	var b any = []int{1, 2}
+
+	defer func() { fmt.Println("panic:", recover()) }()
+	fmt.Println(a == b)
+}
+```
+
+```text
+panic: runtime error: comparing uncomparable type []int
+```
+
+介面的 `==` 會先比型別，型別相同才比值。但 **slice、map、func 是不可比較的型別**，比到值的時候 runtime 只能 panic。
+
+更隱蔽的版本是**把含 slice 欄位的 struct 當 map 鍵**：
+
+```go
+package main
+
+import "fmt"
+
+type Key struct {
+	ID   int
+	Tags []string // ← 讓整個 struct 變成不可比較
+}
+
+func main() {
+	// 直接用 map[Key]string 是編譯錯誤，但透過 any 就繞過檢查了
+	m := map[any]string{}
+
+	defer func() { fmt.Println("panic:", recover()) }()
+	m[Key{1, []string{"a"}}] = "x"
+}
+```
+
+```text
+panic: runtime error: hash of unhashable type main.Key
+```
+
+**判斷準則**：只要動態型別可能含 slice、map、func，就不要用 `==`、不要當 map 鍵。要比較內容用 `reflect.DeepEqual`（測試裡建議用 `google/go-cmp`，錯誤訊息好得多）。
+
+!!! tip "怎麼提早發現"
+    這類問題編譯期抓不到。實務做法是**在型別上加一個編譯期斷言**，強制它可比較：
+
+    ```go
+    type Key struct {
+        ID   int
+        Tags []string
+    }
+
+    // 如果 Key 變成不可比較，這行會編譯失敗
+    var _ = map[Key]struct{}{}
+    ```
+
+    把它放在定義旁邊，之後有人加了 slice 欄位就會立刻編譯不過，而不是上線後才 panic。
+
+### ② 單值型別斷言
+
+```go
+s := v.(string)      // ✗ 型別不對就 panic
+s, ok := v.(string)  // ✓ 失敗回傳零值與 false
+```
+
+**幾乎總是該用雙值形式**，除非你能百分之百確定型別（例如剛剛才自己裝進去的）。
+
+處理外部輸入時特別重要：
+
+```go
+// ✗ JSON 裡的 id 是字串的話，直接 panic
+func badParse(data []byte) int {
+	var m map[string]any
+	json.Unmarshal(data, &m)
+	return int(m["id"].(float64))
+}
+
+// ✓
+func goodParse(data []byte) (int, error) {
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return 0, err
+	}
+	f, ok := m["id"].(float64) // JSON 數字一律是 float64
+	if !ok {
+		return 0, fmt.Errorf("id 不是數字，實際是 %T", m["id"])
+	}
+	return int(f), nil
+}
+```
+
+錯誤訊息裡用 `%T` 印出實際型別，除錯時省很多時間。
+
+### ③ 熱路徑上的介面：問題不是呼叫開銷
+
+介面方法呼叫本身只比直接呼叫慢 1–2 奈秒。**真正的代價是它無法被內聯**——而內聯失敗會連帶讓常數傳播、邊界檢查消除全部失效。
+
+```go
+package main
+
+import (
+	"fmt"
+	"testing"
+)
+
+type Adder interface{ Add(int) int }
+
+type Impl struct{ n int }
+
+func (i Impl) Add(x int) int { return i.n + x }
+
+func viaInterface(a Adder, times int) int {
+	sum := 0
+	for i := 0; i < times; i++ {
+		sum = a.Add(sum)
+	}
+	return sum
+}
+
+func viaConcrete(a Impl, times int) int {
+	sum := 0
+	for i := 0; i < times; i++ {
+		sum = a.Add(sum) // 可以被內聯成單純的加法
+	}
+	return sum
+}
+
+func main() {
+	impl := Impl{1}
+
+	r1 := testing.Benchmark(func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = viaInterface(impl, 1000)
+		}
+	})
+	r2 := testing.Benchmark(func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = viaConcrete(impl, 1000)
+		}
+	})
+
+	fmt.Println("interface:", r1)
+	fmt.Println("concrete: ", r2)
+}
+```
+
+差距通常在數倍而非數十 %，取決於被內聯後編譯器還能做多少最佳化。
+
+**但不要因此就不用介面。** 判準是：
+
+- **這段程式碼每秒跑幾百萬次嗎？** 不是的話，可讀性遠比這點差距重要。
+- **量測過嗎？** 用 `-gcflags="-m"` 確認內聯真的被擋住、用 pprof 確認它真的是熱點。
+- **能用 PGO 嗎？** Go 1.21+ 的推測式去虛擬化能在熱點自動把介面呼叫變回直接呼叫，見 [PGO](escape-inline.html#pgoprofile-guided-optimization)。
+
+### ④ 過早抽象：只有一個實作就定介面
+
+```go
+// ✗ 只有一個實作，介面純粹是額外的一層
+type UserRepository interface {
+	Get(ctx context.Context, id int64) (*User, error)
+	Create(ctx context.Context, u *User) error
+	Update(ctx context.Context, u *User) error
+	Delete(ctx context.Context, id int64) error
+	List(ctx context.Context, filter Filter) ([]*User, error)
+}
+
+type postgresUserRepository struct{ db *sql.DB } // 唯一的實作
+```
+
+這種寫法從 Java/C# 帶過來的人特別容易寫。它的問題是：
+
+- 跳到定義會跳到介面，還要再找一次實作
+- 加一個方法要改兩個地方
+- 為了「可以換成 MySQL」而抽象，但那一天通常不會來
+
+**Go 的慣例是反過來的**：先寫具體型別，等到**真的出現第二個實作或測試需要替換**時，再在**使用端**定義最小介面：
+
+```go
+// repository 套件：直接提供具體型別
+package repository
+
+type UserRepo struct{ db *sql.DB }
+
+func New(db *sql.DB) *UserRepo { ... }
+func (r *UserRepo) Get(ctx context.Context, id int64) (*User, error) { ... }
+
+// report 套件：我只需要讀，就只定義讀
+package report
+
+type userGetter interface {
+	Get(ctx context.Context, id int64) (*User, error)
+}
+
+func Generate(ctx context.Context, g userGetter) error { ... }
+```
+
+好處：`report` 不需要 import `repository`，測試時傳一個只有 `Get` 的假物件就好，而且 `repository` 加新方法完全不影響 `report`。
+
+### ⑤ 回傳介面
+
+```go
+// ✗ 呼叫端拿不到具體型別的其他方法，之後加方法還是破壞性變更
+func NewClient(addr string) Client { ... }
+
+// ✓ 回傳具體型別
+func NewClient(addr string) *Client { ... }
+```
+
+Go 諺語：**接受介面，回傳具體型別**。
+
+回傳介面唯一合理的時機是「真的有多個實作、而呼叫端不該知道是哪一個」——例如工廠函式依設定回傳不同的儲存後端。
+
+!!! warning "回傳介面還有 nil 陷阱"
+    ```go
+    func New() Storage {
+        var s *S3Storage // nil
+        return s         // ✗ 回傳的介面不是 nil
+    }
+    ```
+
+    跟 [nil 介面陷阱](#nil-介面的經典陷阱) 是同一個問題。回傳具體型別 `*S3Storage` 就不會有這件事——`nil` 就是 `nil`。
+
+---
+
 ## 介面的設計建議
 
 技術細節之外，幾條實務原則：

@@ -69,6 +69,7 @@
 <li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
 <li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
 <li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+<li><a href='errors.html'><span class='num'>3.4</span><span class='txt'>錯誤處理與傳遞</span></a></li>
 </ul></details>
 <details class='part'>
 <summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
@@ -674,6 +675,324 @@ Previous read at 0x00c000112010 by main goroutine:
 <p>建議做法：CI 上跑 <code>go test -race ./...</code>，正式環境用一般建置。</p>
 </div>
 <hr />
+<h2 id="常見錯誤與解法">常見錯誤與解法<a class="headerlink" href="#常見錯誤與解法" title="Permanent link">#</a></h2>
+<p>同步原語的 bug 有個共通特徵：<strong>大多不會立刻出錯，而是在特定的時序下偶發</strong>。所以「本機測試都過」完全不能當作沒問題的證據——<code>-race</code> 才是。</p>
+<table>
+<thead>
+<tr>
+<th>症狀</th>
+<th>原因</th>
+<th>解法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>計數對不上、資料偶爾錯亂</td>
+<td>複製了含 mutex 的 struct</td>
+<td>全部方法用指標接收者</td>
+</tr>
+<tr>
+<td>程式偶發卡死</td>
+<td>錯誤路徑漏了 <code>Unlock</code></td>
+<td><code>defer mu.Unlock()</code></td>
+</tr>
+<tr>
+<td>讀多的場景卻死結</td>
+<td><code>RLock</code> 巢狀呼叫</td>
+<td>抽出不加鎖的內部版本</td>
+</tr>
+<tr>
+<td><code>WaitGroup</code> 永遠不返回</td>
+<td><code>Add</code> 寫在 goroutine 內、或漏了 <code>Done</code></td>
+<td><code>Add</code> 在 <code>go</code> 之前、<code>defer wg.Done()</code></td>
+</tr>
+<tr>
+<td>初始化失敗後不再重試</td>
+<td><code>Once</code> 內 panic 也算執行過</td>
+<td>自己實作重試，或用 <code>OnceValues</code></td>
+</tr>
+<tr>
+<td>用了 atomic 還是有競爭</td>
+<td>複合操作不是原子的</td>
+<td><code>CompareAndSwap</code> 或改用鎖</td>
+</tr>
+<tr>
+<td>高並行下吞吐上不去</td>
+<td>鎖競爭</td>
+<td>mutex profile 找熱點、分片</td>
+</tr>
+</tbody>
+</table>
+<h3 id="1-複製了含-mutex-的-struct">① 複製了含 mutex 的 struct<a class="headerlink" href="#1-複製了含-mutex-的-struct" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;sync&quot;</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Counter</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">mu</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">Mutex</span>
+<span class="w">    </span><span class="nx">n</span><span class="w">  </span><span class="kt">int</span>
+<span class="p">}</span>
+
+<span class="c1">// ✗ 值接收者：每次呼叫都複製一份，鎖的是複本</span>
+<span class="c1">// （go vet 會抓到這個錯誤：passes lock by value）</span>
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="nx">Counter</span><span class="p">)</span><span class="w"> </span><span class="nx">IncBad</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">n</span><span class="o">++</span><span class="w"> </span><span class="c1">// 改的也是複本</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ 指標接收者</span>
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Counter</span><span class="p">)</span><span class="w"> </span><span class="nx">Inc</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">n</span><span class="o">++</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">c</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Counter</span><span class="p">{}</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">Inc</span><span class="p">()</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>vet<span class="w"> </span>./...
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>./main.go:11:6: IncBad passes lock by value: main.Counter contains sync.Mutex
+</pre></div>
+
+<p><strong><code>go vet</code> 抓得到這一種，一定要放進 CI。</strong> 它同時涵蓋 <code>sync.Mutex</code>、<code>RWMutex</code>、<code>WaitGroup</code>、<code>Once</code>、<code>Cond</code>——這些型別內部都有 <code>noCopy</code> 標記。</p>
+<p>同樣的道理：含 mutex 的 struct <strong>不該當 map 的值型別</strong>，因為 <code>m[k]</code> 取出來的是複本：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ m[k].Inc() 根本不能編譯（不可定址），改成這樣也是錯的</span>
+<span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="nx">Counter</span><span class="p">{}</span>
+<span class="nx">c</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">m</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">]</span>
+<span class="nx">c</span><span class="p">.</span><span class="nx">Inc</span><span class="p">()</span><span class="w">      </span><span class="c1">// 改的是複本</span>
+<span class="nx">m</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">c</span><span class="w">   </span><span class="c1">// 這中間有競爭窗口</span>
+
+<span class="c1">// ✓ 存指標</span>
+<span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="o">*</span><span class="nx">Counter</span><span class="p">{}</span>
+<span class="nx">m</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">].</span><span class="nx">Inc</span><span class="p">()</span>
+</pre></div>
+
+<h3 id="2-錯誤路徑漏了-unlock">② 錯誤路徑漏了 <code>Unlock</code><a class="headerlink" href="#2-錯誤路徑漏了-unlock" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 中間 return 就再也解不開了</span>
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Cache</span><span class="p">)</span><span class="w"> </span><span class="nx">Get</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
+
+<span class="w">    </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">ErrNotFound</span><span class="w"> </span><span class="c1">// ← 鎖沒放！之後所有人都卡住</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓</span>
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Cache</span><span class="p">)</span><span class="w"> </span><span class="nx">Get</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+
+<span class="w">    </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">ErrNotFound</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>這個 bug 的症狀是<strong>整個服務在某個時間點突然全部卡死</strong>，而且堆疊追蹤裡一堆 goroutine 停在 <code>sync.(*Mutex).Lock</code>。</p>
+<p>診斷方式：</p>
+<div class="hl" data-lang="bash"><pre><span></span>curl<span class="w"> </span><span class="s2">&quot;http://localhost:6060/debug/pprof/goroutine?debug=2&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-A5<span class="w"> </span><span class="s2">&quot;sync.(\*Mutex).Lock&quot;</span>
+</pre></div>
+
+<p><strong>預設就用 <code>defer</code></strong>。只有在確定「函式後半段跟共享狀態無關」時，才手動 <code>Unlock</code> 縮小臨界區。</p>
+<h3 id="3-rwmutex-的讀鎖不可重入">③ RWMutex 的讀鎖不可重入<a class="headerlink" href="#3-rwmutex-的讀鎖不可重入" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 可能死結</span>
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Cache</span><span class="p">)</span><span class="w"> </span><span class="nx">Get</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RLock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RUnlock</span><span class="p">()</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">format</span><span class="p">(</span><span class="nx">k</span><span class="p">)</span><span class="w"> </span><span class="c1">// format 內部也 RLock → 危險</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Cache</span><span class="p">)</span><span class="w"> </span><span class="nx">format</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RLock</span><span class="p">()</span><span class="w">       </span><span class="c1">// ← 如果這中間有寫入者在等，這裡會卡住</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RUnlock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span>
+<span class="p">}</span>
+</pre></div>
+
+<p><strong>為什麼會死結</strong>：<code>RWMutex</code> 是<a href="#寫入者優先">寫入者優先</a>的。一旦有寫入者提出請求，後續的 <code>RLock</code> 就會被擋住——但第一層的 <code>RUnlock</code> 還沒執行，寫入者也拿不到鎖。三方互相等待。</p>
+<p><strong>解法是慣例做法</strong>：把不加鎖的版本抽出來，用 <code>Locked</code> 後綴標示「呼叫者必須已持有鎖」。</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Cache</span><span class="p">)</span><span class="w"> </span><span class="nx">Get</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RLock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RUnlock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">formatLocked</span><span class="p">(</span><span class="nx">k</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="c1">// formatLocked 假設呼叫者已持有鎖</span>
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Cache</span><span class="p">)</span><span class="w"> </span><span class="nx">formatLocked</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">]</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Mutex 也一樣不可重入，理由與寫法都相同（見<a href="#使用注意事項">使用注意事項</a>）。</p>
+<h3 id="4-waitgroup-的兩個經典誤用">④ <code>WaitGroup</code> 的兩個經典誤用<a class="headerlink" href="#4-waitgroup-的兩個經典誤用" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ Add 寫在 goroutine 裡</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w">      </span><span class="c1">// ← Wait 可能在這之前就通過了</span>
+<span class="w">        </span><span class="k">defer</span><span class="w"> </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Done</span><span class="p">()</span>
+<span class="w">        </span><span class="nx">work</span><span class="p">()</span>
+<span class="w">    </span><span class="p">}()</span>
+<span class="p">}</span>
+<span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span><span class="w"> </span><span class="c1">// 可能立刻返回，什麼都沒等到</span>
+
+<span class="c1">// ✗ 沒用 defer，panic 時計數不會遞減</span>
+<span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">work</span><span class="p">()</span><span class="w">      </span><span class="c1">// 這裡 panic 的話…</span>
+<span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Done</span><span class="p">()</span><span class="w">   </span><span class="c1">// …永遠執行不到 → Wait 永遠卡住</span>
+<span class="p">}()</span>
+</pre></div>
+
+<p>正確寫法：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w">              </span><span class="c1">// ✓ 在 go 之前</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">defer</span><span class="w"> </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Done</span><span class="p">()</span><span class="w">    </span><span class="c1">// ✓ 用 defer</span>
+<span class="w">        </span><span class="nx">work</span><span class="p">()</span>
+<span class="w">    </span><span class="p">}()</span>
+<span class="p">}</span>
+<span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
+</pre></div>
+
+<div class="admonition version">
+<p class="admonition-title">Go 1.25：<code>wg.Go</code> 讓這兩個錯誤不可能發生</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Go</span><span class="p">(</span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">work</span><span class="p">()</span><span class="w"> </span><span class="p">})</span>
+<span class="p">}</span>
+<span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
+</pre></div>
+
+<p><code>Add</code>、<code>go</code>、<code>defer Done</code> 三步合成一步。新程式碼優先用這個。</p>
+</div>
+<h3 id="5-synconce-裡-panic-之後不會重試">⑤ <code>sync.Once</code> 裡 panic 之後不會重試<a class="headerlink" href="#5-synconce-裡-panic-之後不會重試" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;sync&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">var</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="nx">once</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">Once</span>
+<span class="w">    </span><span class="nx">conn</span><span class="w"> </span><span class="kt">string</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">connect</span><span class="p">(</span><span class="nx">fail</span><span class="w"> </span><span class="kt">bool</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">once</span><span class="p">.</span><span class="nx">Do</span><span class="p">(</span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">fail</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nb">panic</span><span class="p">(</span><span class="s">&quot;連線失敗&quot;</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">conn</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;connected&quot;</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;第一次:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nb">recover</span><span class="p">())</span><span class="w"> </span><span class="p">}()</span>
+<span class="w">        </span><span class="nx">connect</span><span class="p">(</span><span class="kc">true</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}()</span>
+
+<span class="w">    </span><span class="nx">connect</span><span class="p">(</span><span class="kc">false</span><span class="p">)</span><span class="w"> </span><span class="c1">// 不會再執行了</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;conn = %q\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">conn</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>第一次: 連線失敗
+conn = &quot;&quot;
+</pre></div>
+
+<p><code>Once</code> 內部用 <code>defer o.done.Store(1)</code> 標記完成，<strong>panic 展開時那個 defer 仍會執行</strong>。所以「失敗了下次重試」的語意不成立——初始化失敗之後，後續所有呼叫都會安靜地拿到半成品。</p>
+<p>需要重試語意就別用 <code>Once</code>：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">lazyConn</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">mu</span><span class="w">   </span><span class="nx">sync</span><span class="p">.</span><span class="nx">Mutex</span>
+<span class="w">    </span><span class="nx">conn</span><span class="w"> </span><span class="o">*</span><span class="nx">Conn</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">l</span><span class="w"> </span><span class="o">*</span><span class="nx">lazyConn</span><span class="p">)</span><span class="w"> </span><span class="nx">Get</span><span class="p">()</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">Conn</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">l</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">l</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">l</span><span class="p">.</span><span class="nx">conn</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">l</span><span class="p">.</span><span class="nx">conn</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">dial</span><span class="p">()</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="c1">// ✓ 失敗不記錄狀態，下次會再試</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">l</span><span class="p">.</span><span class="nx">conn</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">c</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">c</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+</pre></div>
+
+<h3 id="6-atomic-的複合操作不是原子的">⑥ atomic 的複合操作不是原子的<a class="headerlink" href="#6-atomic-的複合操作不是原子的" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ Load 與 Store 之間有窗口，兩個 goroutine 可能同時進來</span>
+<span class="k">if</span><span class="w"> </span><span class="nx">counter</span><span class="p">.</span><span class="nx">Load</span><span class="p">()</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">limit</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">counter</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ 用 CompareAndSwap 迴圈</span>
+<span class="k">for</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">cur</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">counter</span><span class="p">.</span><span class="nx">Load</span><span class="p">()</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">cur</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="nx">limit</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">break</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">counter</span><span class="p">.</span><span class="nx">CompareAndSwap</span><span class="p">(</span><span class="nx">cur</span><span class="p">,</span><span class="w"> </span><span class="nx">cur</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">break</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="c1">// CAS 失敗表示有人搶先改了，重讀再試</span>
+<span class="p">}</span>
+</pre></div>
+
+<p><strong>atomic 保證的是「單一操作」的原子性</strong>，不是你寫的那段邏輯。只要涉及「先讀、判斷、再寫」，就需要 CAS 或直接用鎖。</p>
+<p>一個實用的判準：<strong>如果你的原子操作超過一行，八成該用 mutex。</strong> 可讀性的損失通常不值得那點效能。</p>
+<h3 id="7-找出鎖競爭的熱點">⑦ 找出鎖競爭的熱點<a class="headerlink" href="#7-找出鎖競爭的熱點" title="Permanent link">#</a></h3>
+<p>高並行下吞吐上不去，但 CPU 沒滿——通常是鎖競爭。</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;net/http&quot;</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="s">&quot;net/http/pprof&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">init</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">SetMutexProfileFraction</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span><span class="w"> </span><span class="c1">// 取樣 1/5 的競爭事件</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">SetBlockProfileRate</span><span class="p">(</span><span class="mi">10000</span><span class="p">)</span><span class="w"> </span><span class="c1">// 每 10 微秒的阻塞取樣一次</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">mux</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">NewServeMux</span><span class="p">()</span>
+<span class="w">    </span><span class="c1">// … 手動註冊 pprof，見 net/http 那章</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">mux</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </span>-http<span class="o">=</span>:8081<span class="w"> </span>http://localhost:6060/debug/pprof/mutex
+go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </span>-http<span class="o">=</span>:8081<span class="w"> </span>http://localhost:6060/debug/pprof/block
+</pre></div>
+
+<ul>
+<li><strong>mutex profile</strong> —— 哪把鎖被爭用最久</li>
+<li><strong>block profile</strong> —— goroutine 阻塞在哪（含 channel）</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">兩個剖析都有效能成本</p>
+<p><code>SetMutexProfileFraction</code> 與 <code>SetBlockProfileRate</code> 都會拖慢程式。<strong>只在診斷期間開啟</strong>，不要長期留在正式環境。取樣率也不要設 1（全採樣）。</p>
+</div>
+<p>找到熱點之後的處理順序：縮小臨界區 → 換成 <code>RWMutex</code>（讀多時）→ 分片 → 改用無鎖結構。前兩項通常就夠了。</p>
+<hr />
 <h2 id="效能對照">效能對照<a class="headerlink" href="#效能對照" title="Permanent link">#</a></h2>
 <table>
 <thead>
@@ -717,7 +1036,7 @@ Previous read at 0x00c000112010 by main goroutine:
 <p><strong>這張表最重要的訊息</strong>：channel 比 mutex 貴一個數量級。用 channel 傳遞資料所有權、協調流程是對的；用 channel 當互斥鎖（<code>ch := make(chan struct{}, 1)</code>）就是繞遠路。</p>
 <hr />
 <p>下一節談計時器——Go 1.23 把整個實作重寫了。</p></article><nav class='pager'><a class='prev' href='context.html'><span>上一節</span><strong>5.1 context</strong></a><a class='next' href='timer.html'><span>下一節</span><strong>5.3 計時器 timer</strong></a></nav></main>
-  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#為什麼需要鎖'>為什麼需要鎖</a></li><li><a href='#syncmutex'>sync.Mutex</a><ul><li><a href='#結構'>結構</a></li><li><a href='#兩種模式'>兩種模式</a></li><li><a href='#自旋的條件'>自旋的條件</a></li><li><a href='#使用注意事項'>使用注意事項</a></li></ul></li><li><a href='#syncrwmutex'>sync.RWMutex</a><ul><li><a href='#寫入者優先'>寫入者優先</a></li></ul></li><li><a href='#syncwaitgroup'>sync.WaitGroup</a><ul><li><a href='#需要收集錯誤時用-errgroup'>需要收集錯誤時用 errgroup</a></li></ul></li><li><a href='#synconce'>sync.Once</a><ul><li><a href='#實作要點'>實作要點</a></li></ul></li><li><a href='#syncatomic'>sync/atomic</a><ul><li><a href='#atomicvalue-的用途無鎖設定熱更新'>atomic.Value 的用途：無鎖設定熱更新</a></li></ul></li><li><a href='#記憶體模型與-race'>記憶體模型與 -race</a><ul><li><a href='#happens-before'>happens-before</a></li><li><a href='#一定要跑-race'>一定要跑 -race</a></li></ul></li><li><a href='#效能對照'>效能對照</a></li></ul></nav></aside>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#為什麼需要鎖'>為什麼需要鎖</a></li><li><a href='#syncmutex'>sync.Mutex</a><ul><li><a href='#結構'>結構</a></li><li><a href='#兩種模式'>兩種模式</a></li><li><a href='#自旋的條件'>自旋的條件</a></li><li><a href='#使用注意事項'>使用注意事項</a></li></ul></li><li><a href='#syncrwmutex'>sync.RWMutex</a><ul><li><a href='#寫入者優先'>寫入者優先</a></li></ul></li><li><a href='#syncwaitgroup'>sync.WaitGroup</a><ul><li><a href='#需要收集錯誤時用-errgroup'>需要收集錯誤時用 errgroup</a></li></ul></li><li><a href='#synconce'>sync.Once</a><ul><li><a href='#實作要點'>實作要點</a></li></ul></li><li><a href='#syncatomic'>sync/atomic</a><ul><li><a href='#atomicvalue-的用途無鎖設定熱更新'>atomic.Value 的用途：無鎖設定熱更新</a></li></ul></li><li><a href='#記憶體模型與-race'>記憶體模型與 -race</a><ul><li><a href='#happens-before'>happens-before</a></li><li><a href='#一定要跑-race'>一定要跑 -race</a></li></ul></li><li><a href='#常見錯誤與解法'>常見錯誤與解法</a><ul><li><a href='#1-複製了含-mutex-的-struct'>① 複製了含 mutex 的 struct</a></li><li><a href='#2-錯誤路徑漏了-unlock'>② 錯誤路徑漏了 Unlock</a></li><li><a href='#3-rwmutex-的讀鎖不可重入'>③ RWMutex 的讀鎖不可重入</a></li><li><a href='#4-waitgroup-的兩個經典誤用'>④ WaitGroup 的兩個經典誤用</a></li><li><a href='#5-synconce-裡-panic-之後不會重試'>⑤ sync.Once 裡 panic 之後不會重試</a></li><li><a href='#6-atomic-的複合操作不是原子的'>⑥ atomic 的複合操作不是原子的</a></li><li><a href='#7-找出鎖競爭的熱點'>⑦ 找出鎖競爭的熱點</a></li></ul></li><li><a href='#效能對照'>效能對照</a></li></ul></nav></aside>
 </div>
 
 <div class="scrim" hidden></div>

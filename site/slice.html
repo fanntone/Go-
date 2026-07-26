@@ -69,6 +69,7 @@
 <li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
 <li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
 <li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+<li><a href='errors.html'><span class='num'>3.4</span><span class='txt'>錯誤處理與傳遞</span></a></li>
 </ul></details>
 <details class='part'>
 <summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
@@ -398,6 +399,170 @@ with:          14562         81234 ns/op        802816 B/op          1 allocs/op
 </pre></div>
 
 <hr />
+<h2 id="實務上最常出錯的五件事">實務上最常出錯的五件事<a class="headerlink" href="#實務上最常出錯的五件事" title="Permanent link">#</a></h2>
+<p>前面講的都是機制。這一節把「機制導致的實際 bug」集中起來——每一個都是把「slice 只是一個指向陣列的三欄位標頭」這件事忘掉的後果。</p>
+<h3 id="1-傳進函式改元素會影響呼叫端append-不一定">① 傳進函式：改元素會影響呼叫端，append 不一定<a class="headerlink" href="#1-傳進函式改元素會影響呼叫端append-不一定" title="Permanent link">#</a></h3>
+<p>這是最容易困惑的一個，因為<strong>同一個函式，兩種行為</strong>：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">modify</span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">s</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">999</span><span class="w"> </span><span class="c1">// ✓ 會影響呼叫端：改的是共用的底層陣列</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">grow</span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">)</span><span class="w"> </span><span class="c1">// ✗ 不一定影響呼叫端：可能重新配置，而且 s 是標頭的複本</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">growInPlace</span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">)</span><span class="w"> </span><span class="c1">// 容量夠時會寫進共用的底層陣列</span>
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">s</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">modify</span><span class="p">(</span><span class="nx">a</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;modify 後:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">a</span><span class="p">)</span><span class="w"> </span><span class="c1">// [999 2 3] ← 被改了</span>
+
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">}</span><span class="w"> </span><span class="c1">// len=3 cap=3，append 必定重新配置</span>
+<span class="w">    </span><span class="nx">grow</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;grow 後:  &quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">b</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">b</span><span class="p">))</span><span class="w"> </span><span class="c1">// [1 2 3] 3 ← 沒變</span>
+
+<span class="w">    </span><span class="nx">c</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span><span class="p">)</span><span class="w"> </span><span class="c1">// cap 有空間</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span><span class="w"> </span><span class="nx">c</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span><span class="w"> </span><span class="nx">c</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span>
+<span class="w">    </span><span class="nx">growInPlace</span><span class="p">(</span><span class="nx">c</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;cap 夠時: &quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">c</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">c</span><span class="p">),</span><span class="w"> </span><span class="nb">cap</span><span class="p">(</span><span class="nx">c</span><span class="p">))</span><span class="w"> </span><span class="c1">// [1 2 3] 3 10 ← len 沒變…</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;但底層被寫了:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">c</span><span class="p">[:</span><span class="mi">4</span><span class="p">])</span><span class="w">            </span><span class="c1">// [1 2 3 4] ← 底層陣列真的被改了</span>
+<span class="p">}</span>
+</pre></div>
+
+<p><strong>為什麼</strong>：函式收到的是<strong>標頭的複本</strong>。改 <code>s[0]</code> 動的是標頭指向的那塊記憶體（共用）；<code>s = append(...)</code> 只改了複本的 <code>len</code> 與 <code>array</code> 欄位，呼叫端的標頭完全沒動。</p>
+<p><strong>規則</strong>：</p>
+<ul>
+<li>只讀 → 傳 <code>[]T</code> 就好</li>
+<li>只改既有元素 → 傳 <code>[]T</code>，會生效</li>
+<li><strong>可能改變長度 → 一定要回傳新的 slice</strong>，讓呼叫端接住</li>
+</ul>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✓ 標準寫法</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">appendItem</span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="p">)</span>
+<span class="p">}</span>
+<span class="nx">s</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">appendItem</span><span class="p">(</span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">)</span>
+
+<span class="c1">// ✓ 或傳指標（較少見，但語意最明確）</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">appendItemPtr</span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="o">*</span><span class="p">[]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="o">*</span><span class="nx">s</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="o">*</span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<h3 id="2-append-的回傳值一定要接">② <code>append</code> 的回傳值一定要接<a class="headerlink" href="#2-append-的回傳值一定要接" title="Permanent link">#</a></h3>
+<p>上一點的延伸。這個錯誤 <code>go vet</code> 抓不到全部，很容易漏：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="nb">append</span><span class="p">(</span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w">      </span><span class="c1">// ✗ 完全沒作用（編譯錯誤：append 的結果未使用）</span>
+<span class="nx">s2</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="c1">// ⚠ 合法，但 s 與 s2 可能共用底層陣列</span>
+<span class="nx">s</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w">   </span><span class="c1">// ✓</span>
+</pre></div>
+
+<p>第二種寫法特別危險——<strong>兩個 slice 可能指向同一塊記憶體</strong>：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="mi">100</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="mi">200</span><span class="p">)</span><span class="w"> </span><span class="c1">// 又從 s 開始 append，寫到同一個位置</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">a</span><span class="p">[</span><span class="mi">3</span><span class="p">],</span><span class="w"> </span><span class="nx">b</span><span class="p">[</span><span class="mi">3</span><span class="p">])</span><span class="w"> </span><span class="c1">// 200 200 ← a 被 b 蓋掉了</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>要從同一個基底衍生多個 slice，用三索引切法斷開容量（見<a href="#共享底層陣列最常見的坑">共享底層陣列</a>），或明確 <code>slices.Clone</code>。</p>
+<h3 id="3-copy-只複製兩者長度的較小值">③ <code>copy</code> 只複製「兩者長度的較小值」<a class="headerlink" href="#3-copy-只複製兩者長度的較小值" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">src</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">}</span>
+
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">dst1</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="w"> </span><span class="c1">// nil，len=0</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">copy</span><span class="p">(</span><span class="nx">dst1</span><span class="p">,</span><span class="w"> </span><span class="nx">src</span><span class="p">),</span><span class="w"> </span><span class="nx">dst1</span><span class="p">)</span><span class="w"> </span><span class="c1">// 0 [] ← 什麼都沒複製！</span>
+
+<span class="w">    </span><span class="nx">dst2</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">)</span><span class="w"> </span><span class="c1">// cap 夠但 len=0</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">copy</span><span class="p">(</span><span class="nx">dst2</span><span class="p">,</span><span class="w"> </span><span class="nx">src</span><span class="p">),</span><span class="w"> </span><span class="nx">dst2</span><span class="p">)</span><span class="w"> </span><span class="c1">// 0 [] ← 一樣沒複製</span>
+
+<span class="w">    </span><span class="nx">dst3</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">src</span><span class="p">))</span><span class="w"> </span><span class="c1">// ✓ len 要夠</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">copy</span><span class="p">(</span><span class="nx">dst3</span><span class="p">,</span><span class="w"> </span><span class="nx">src</span><span class="p">),</span><span class="w"> </span><span class="nx">dst3</span><span class="p">)</span><span class="w"> </span><span class="c1">// 5 [1 2 3 4 5]</span>
+<span class="p">}</span>
+</pre></div>
+
+<p><strong><code>copy</code> 看的是 <code>len</code> 不是 <code>cap</code>。</strong> 這是「複製後發現目標是空的」這類 bug 的唯一原因。要複製整份就用 <code>slices.Clone(src)</code>，不會出錯。</p>
+<h3 id="4-排序會就地修改原始-slice">④ 排序會就地修改原始 slice<a class="headerlink" href="#4-排序會就地修改原始-slice" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;slices&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">report</span><span class="p">(</span><span class="nx">data</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">slices</span><span class="p">.</span><span class="nx">Sort</span><span class="p">(</span><span class="nx">data</span><span class="p">)</span><span class="w"> </span><span class="c1">// ✗ 呼叫端的資料順序被改掉了</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;最小:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">data</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">reportSafe</span><span class="p">(</span><span class="nx">data</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">sorted</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">slices</span><span class="p">.</span><span class="nx">Clone</span><span class="p">(</span><span class="nx">data</span><span class="p">)</span><span class="w"> </span><span class="c1">// ✓ 先複製</span>
+<span class="w">    </span><span class="nx">slices</span><span class="p">.</span><span class="nx">Sort</span><span class="p">(</span><span class="nx">sorted</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;最小:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">sorted</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">original</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">report</span><span class="p">(</span><span class="nx">original</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;被改了:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">original</span><span class="p">)</span><span class="w"> </span><span class="c1">// [1 2 3]</span>
+
+<span class="w">    </span><span class="nx">original2</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">}</span>
+<span class="w">    </span><span class="nx">reportSafe</span><span class="p">(</span><span class="nx">original2</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;沒被改:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">original2</span><span class="p">)</span><span class="w"> </span><span class="c1">// [3 1 2]</span>
+<span class="p">}</span>
+</pre></div>
+
+<p><code>slices.Sort</code>、<code>slices.Reverse</code>、<code>sort.Slice</code> 全部是<strong>就地（in-place）</strong>操作。函式庫要對呼叫端傳進來的 slice 排序時，先 <code>Clone</code>——否則你在對方不知情的狀況下改了他的資料。</p>
+<h3 id="5-從迴圈收集指標時的陷阱">⑤ 從迴圈收集指標時的陷阱<a class="headerlink" href="#5-從迴圈收集指標時的陷阱" title="Permanent link">#</a></h3>
+<p>Go 1.22 修掉了迴圈變數的問題，但<strong>取元素位址</strong>仍要小心：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Item</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">N</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">items</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="nx">Item</span><span class="p">{{</span><span class="mi">1</span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="mi">2</span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="mi">3</span><span class="p">}}</span>
+
+<span class="w">    </span><span class="c1">// ✓ Go 1.22+ 正確：每輪 v 是新變數</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">ptrs</span><span class="w"> </span><span class="p">[]</span><span class="o">*</span><span class="nx">Item</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">items</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">ptrs</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">ptrs</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">v</span><span class="p">)</span><span class="w"> </span><span class="c1">// 指向每輪的複本</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">ptrs</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">N</span><span class="p">,</span><span class="w"> </span><span class="nx">ptrs</span><span class="p">[</span><span class="mi">1</span><span class="p">].</span><span class="nx">N</span><span class="p">,</span><span class="w"> </span><span class="nx">ptrs</span><span class="p">[</span><span class="mi">2</span><span class="p">].</span><span class="nx">N</span><span class="p">)</span><span class="w"> </span><span class="c1">// 1 2 3</span>
+
+<span class="w">    </span><span class="c1">// ⚠ 但這些指標指向「複本」，不是原本的元素</span>
+<span class="w">    </span><span class="nx">ptrs</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">N</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">999</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;原始資料沒變:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">items</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">N</span><span class="p">)</span><span class="w"> </span><span class="c1">// 1</span>
+
+<span class="w">    </span><span class="c1">// ✓ 要指向真正的元素，用索引</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">real</span><span class="w"> </span><span class="p">[]</span><span class="o">*</span><span class="nx">Item</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">items</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">real</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">real</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">items</span><span class="p">[</span><span class="nx">i</span><span class="p">])</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">real</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">N</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">999</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;原始資料變了:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">items</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">N</span><span class="p">)</span><span class="w"> </span><span class="c1">// 999</span>
+<span class="p">}</span>
+</pre></div>
+
+<p><code>&amp;v</code> 與 <code>&amp;items[i]</code> 是<strong>兩個不同的東西</strong>，而且都合法——編譯器不會提醒你選錯。</p>
+<hr />
 <h2 id="slices-套件別再自己寫了"><code>slices</code> 套件：別再自己寫了<a class="headerlink" href="#slices-套件別再自己寫了" title="Permanent link">#</a></h2>
 <div class="admonition version">
 <p class="admonition-title">Go 1.21 起：<code>slices</code> 進入標準庫</p>
@@ -541,7 +706,7 @@ with:          14562         81234 ns/op        802816 B/op          1 allocs/op
 
 <hr />
 <p>下一節是 map。Go 1.24 把它整個換掉了，從 bucket 鏈結改成 Swiss Table，是近年最大的一次資料結構重寫。</p></article><nav class='pager'><a class='prev' href='array.html'><span>上一節</span><strong>2.1 陣列 array</strong></a><a class='next' href='map.html'><span>下一節</span><strong>2.3 雜湊表 map</strong></a></nav></main>
-  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#slice-就是一個三欄位的-struct'>slice 就是一個三欄位的 struct</a></li><li><a href='#共享底層陣列最常見的坑'>共享底層陣列：最常見的坑</a><ul><li><a href='#真實世界的版本'>真實世界的版本</a></li></ul></li><li><a href='#append-與擴容'>append 與擴容</a><ul><li><a href='#擴容規則go-118-起'>擴容規則（Go 1.18 起）</a></li><li><a href='#親眼看擴容'>親眼看擴容</a></li><li><a href='#先配置容量最有效的最佳化之一'>先配置容量：最有效的最佳化之一</a></li></ul></li><li><a href='#記憶體洩漏小-slice-綁住大陣列'>記憶體洩漏：小 slice 綁住大陣列</a><ul><li><a href='#指標元素的洩漏'>指標元素的洩漏</a></li></ul></li><li><a href='#slices-套件別再自己寫了'>slices 套件：別再自己寫了</a></li><li><a href='#nil-slice-與空-slice'>nil slice 與空 slice</a></li></ul></nav></aside>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#slice-就是一個三欄位的-struct'>slice 就是一個三欄位的 struct</a></li><li><a href='#共享底層陣列最常見的坑'>共享底層陣列：最常見的坑</a><ul><li><a href='#真實世界的版本'>真實世界的版本</a></li></ul></li><li><a href='#append-與擴容'>append 與擴容</a><ul><li><a href='#擴容規則go-118-起'>擴容規則（Go 1.18 起）</a></li><li><a href='#親眼看擴容'>親眼看擴容</a></li><li><a href='#先配置容量最有效的最佳化之一'>先配置容量：最有效的最佳化之一</a></li></ul></li><li><a href='#記憶體洩漏小-slice-綁住大陣列'>記憶體洩漏：小 slice 綁住大陣列</a><ul><li><a href='#指標元素的洩漏'>指標元素的洩漏</a></li></ul></li><li><a href='#實務上最常出錯的五件事'>實務上最常出錯的五件事</a><ul><li><a href='#1-傳進函式改元素會影響呼叫端append-不一定'>① 傳進函式：改元素會影響呼叫端，append 不一定</a></li><li><a href='#2-append-的回傳值一定要接'>② append 的回傳值一定要接</a></li><li><a href='#3-copy-只複製兩者長度的較小值'>③ copy 只複製「兩者長度的較小值」</a></li><li><a href='#4-排序會就地修改原始-slice'>④ 排序會就地修改原始 slice</a></li><li><a href='#5-從迴圈收集指標時的陷阱'>⑤ 從迴圈收集指標時的陷阱</a></li></ul></li><li><a href='#slices-套件別再自己寫了'>slices 套件：別再自己寫了</a></li><li><a href='#nil-slice-與空-slice'>nil slice 與空 slice</a></li></ul></nav></aside>
 </div>
 
 <div class="scrim" hidden></div>

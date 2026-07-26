@@ -69,6 +69,7 @@
 <li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
 <li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
 <li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+<li><a href='errors.html'><span class='num'>3.4</span><span class='txt'>錯誤處理與傳遞</span></a></li>
 </ul></details>
 <details class='part'>
 <summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
@@ -207,6 +208,284 @@ serve(conn):
 
 </div>
 <hr />
+<h2 id="servemux用內建的還是自己建一個">ServeMux：用內建的，還是自己建一個<a class="headerlink" href="#servemux用內建的還是自己建一個" title="Permanent link">#</a></h2>
+<h3 id="這是什麼">這是什麼<a class="headerlink" href="#這是什麼" title="Permanent link">#</a></h3>
+<p><code>ServeMux</code> 是 Go 的<strong>路由器</strong>：把「請求的路徑」對應到「處理它的 handler」。</p>
+<p>你會看到兩種啟動寫法，很多人搞不清楚差在哪：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// 寫法 A：最原始的 sample</span>
+<span class="nx">http</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;GET /ok&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">h</span><span class="p">)</span>
+<span class="nx">http</span><span class="p">.</span><span class="nx">ListenAndServe</span><span class="p">(</span><span class="s">&quot;:8080&quot;</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span><span class="p">)</span>
+
+<span class="c1">// 寫法 B：自己建一個</span>
+<span class="nx">mux</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">NewServeMux</span><span class="p">()</span>
+<span class="nx">mux</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;GET /ok&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">h</span><span class="p">)</span>
+<span class="nx">http</span><span class="p">.</span><span class="nx">ListenAndServe</span><span class="p">(</span><span class="s">&quot;:8080&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">mux</span><span class="p">)</span>
+</pre></div>
+
+<p><strong>路由功能上，兩者完全相同。</strong> <code>http.HandleFunc</code> 只是 <code>http.DefaultServeMux.HandleFunc</code> 的薄包裝；<code>ListenAndServe</code> 的第二個參數傳 <code>nil</code> 時，<code>net/http</code> 內部會把它換成 <code>http.DefaultServeMux</code>。</p>
+<p>也就是說，寫法 A 不是「沒用 mux」，而是<strong>用了一個 net/http 幫你建好的全域 mux</strong>。pattern 語法、優先序規則、<code>{id}</code> 參數——全部一模一樣。</p>
+<div class="admonition note">
+<p class="admonition-title">這是 Go 標準庫的固定慣例</p>
+<p>一旦看懂這個模式，很多套件都是同一回事：<strong>套件層級的便利函式背後都藏著一個全域實例</strong>，同時再提供建構函式讓你自己造。</p>
+<table>
+<thead>
+<tr>
+<th>便利寫法（操作全域）</th>
+<th>明確寫法（自己的實例）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>http.HandleFunc(...)</code></td>
+<td><code>http.NewServeMux()</code></td>
+</tr>
+<tr>
+<td><code>http.Get(url)</code></td>
+<td><code>&amp;http.Client{...}</code></td>
+</tr>
+<tr>
+<td><code>log.Println(...)</code></td>
+<td><code>log.New(...)</code></td>
+</tr>
+<tr>
+<td><code>flag.String(...)</code></td>
+<td><code>flag.NewFlagSet(...)</code></td>
+</tr>
+<tr>
+<td><code>slog.Info(...)</code></td>
+<td><code>slog.New(handler)</code></td>
+</tr>
+</tbody>
+</table>
+<p>左欄存在是為了讓 hello world 只要三行；右欄存在是為了讓正式程式能設定它、替換它、測試時隔離它。看到 <code>NewXxx()</code> 出現，通常代表作者從「隨便跑跑」切換到「這要正式用」。</p>
+</div>
+<h3 id="該用哪一個">該用哪一個<a class="headerlink" href="#該用哪一個" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>情境</th>
+<th>建議</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>教學範例、一次性腳本、本機實驗</td>
+<td>全域寫法，少打幾個字沒差</td>
+</tr>
+<tr>
+<td>任何會上線的服務</td>
+<td><strong>一律自己建</strong></td>
+</tr>
+<tr>
+<td>需要套中介層</td>
+<td>自己建（雖然 <code>Recoverer(http.DefaultServeMux)</code> 也能動）</td>
+</tr>
+<tr>
+<td>需要多個 server（對外 + 內部）</td>
+<td>一定要自己建</td>
+</tr>
+<tr>
+<td>需要寫測試</td>
+<td>一定要自己建</td>
+</tr>
+</tbody>
+</table>
+<h3 id="實務問題一第三方套件會偷偷改你的路由表">實務問題一：第三方套件會偷偷改你的路由表<a class="headerlink" href="#實務問題一第三方套件會偷偷改你的路由表" title="Permanent link">#</a></h3>
+<p>這是最該知道的一個。<code>DefaultServeMux</code> 是全域變數，<strong>任何套件的 <code>init()</code> 都能往裡面註冊</strong>，包括你根本沒直接 import 的間接相依。</p>
+<p>最有名的是 <code>net/http/pprof</code>：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;net/http&quot;</span>
+
+<span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="s">&quot;net/http/pprof&quot;</span><span class="w"> </span><span class="c1">// ← 只是匿名 import，一行都沒呼叫</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">probe</span><span class="p">(</span><span class="nx">mux</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">ServeMux</span><span class="p">,</span><span class="w"> </span><span class="nx">paths</span><span class="w"> </span><span class="o">...</span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">paths</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">req</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">NewRequest</span><span class="p">(</span><span class="s">&quot;GET&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;http://example.com&quot;</span><span class="o">+</span><span class="nx">p</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span><span class="p">)</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">pattern</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">mux</span><span class="p">.</span><span class="nx">Handler</span><span class="p">(</span><span class="nx">req</span><span class="p">);</span><span class="w"> </span><span class="nx">pattern</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;   %-24s ⚠ 已註冊 → %s\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="p">,</span><span class="w"> </span><span class="nx">pattern</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;   %-24s 未註冊 (404)\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">mine</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">NewServeMux</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">mine</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;GET /api/users&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{})</span>
+
+<span class="w">    </span><span class="nx">paths</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="p">{</span><span class="s">&quot;/api/users&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;/debug/pprof/&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;/debug/pprof/heap&quot;</span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;http.DefaultServeMux ← ListenAndServe(addr, nil) 用的就是它&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">probe</span><span class="p">(</span><span class="nx">http</span><span class="p">.</span><span class="nx">DefaultServeMux</span><span class="p">,</span><span class="w"> </span><span class="nx">paths</span><span class="o">...</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;\n自己建的 mux&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">probe</span><span class="p">(</span><span class="nx">mine</span><span class="p">,</span><span class="w"> </span><span class="nx">paths</span><span class="o">...</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>http.DefaultServeMux ← ListenAndServe(addr, nil) 用的就是它
+   /api/users               未註冊 (404)
+   /debug/pprof/            ⚠ 已註冊 → GET /debug/pprof/
+   /debug/pprof/heap        ⚠ 已註冊 → GET /debug/pprof/
+
+自己建的 mux
+   /api/users               ⚠ 已註冊 → GET /api/users
+   /debug/pprof/            未註冊 (404)
+   /debug/pprof/heap        未註冊 (404)
+</pre></div>
+
+<p><strong>一行匿名 import，公開服務上就多了這些端點：</strong></p>
+<table>
+<thead>
+<tr>
+<th>路徑</th>
+<th>洩漏什麼</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/debug/pprof/heap</code></td>
+<td>堆積快照，含記憶體中的資料</td>
+</tr>
+<tr>
+<td><code>/debug/pprof/goroutine?debug=2</code></td>
+<td>所有 goroutine 的完整呼叫堆疊</td>
+</tr>
+<tr>
+<td><code>/debug/pprof/profile</code></td>
+<td>30 秒 CPU 剖析——也能當 DoS 用</td>
+</tr>
+<tr>
+<td><code>/debug/pprof/cmdline</code></td>
+<td>完整命令列參數（常含設定與密鑰）</td>
+</tr>
+</tbody>
+</table>
+<p><code>expvar</code> 也一樣，它會註冊 <code>/debug/vars</code>。</p>
+<p><strong>怎麼檢查自己有沒有中招</strong>：把上面那個 <code>probe</code> 函式貼進你的專案跑一次就知道。</p>
+<p><strong>怎麼解決</strong>：自己建 mux，並且用<strong>兩個 server</strong>——對外與對內分開，內部那個只綁 <code>localhost</code>：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;log/slog&quot;</span>
+<span class="w">    </span><span class="s">&quot;net/http&quot;</span>
+<span class="w">    </span><span class="s">&quot;net/http/pprof&quot;</span><span class="w"> </span><span class="c1">// ← 非匿名，手動註冊</span>
+<span class="w">    </span><span class="s">&quot;time&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 對外：只有你明確註冊的東西</span>
+<span class="w">    </span><span class="nx">api</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">NewServeMux</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">api</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;GET /api/users/{id}&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">getUser</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">public</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Server</span><span class="p">{</span>
+<span class="w">        </span><span class="nx">Addr</span><span class="p">:</span><span class="w">              </span><span class="s">&quot;:8080&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">Handler</span><span class="p">:</span><span class="w">           </span><span class="nx">api</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">ReadHeaderTimeout</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">IdleTimeout</span><span class="p">:</span><span class="w">       </span><span class="mi">120</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="c1">// 對內：pprof 與健康檢查，明確註冊、只綁 localhost</span>
+<span class="w">    </span><span class="nx">admin</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">NewServeMux</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">admin</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;GET /debug/pprof/&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">pprof</span><span class="p">.</span><span class="nx">Index</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">admin</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;GET /debug/pprof/profile&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">pprof</span><span class="p">.</span><span class="nx">Profile</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">admin</span><span class="p">.</span><span class="nx">Handle</span><span class="p">(</span><span class="s">&quot;GET /debug/pprof/heap&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">pprof</span><span class="p">.</span><span class="nx">Handler</span><span class="p">(</span><span class="s">&quot;heap&quot;</span><span class="p">))</span>
+<span class="w">    </span><span class="nx">admin</span><span class="p">.</span><span class="nx">Handle</span><span class="p">(</span><span class="s">&quot;GET /debug/pprof/goroutine&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">pprof</span><span class="p">.</span><span class="nx">Handler</span><span class="p">(</span><span class="s">&quot;goroutine&quot;</span><span class="p">))</span>
+<span class="w">    </span><span class="nx">admin</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;GET /healthz&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">w</span><span class="p">.</span><span class="nx">Write</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="s">&quot;ok&quot;</span><span class="p">))</span>
+<span class="w">    </span><span class="p">})</span>
+
+<span class="w">    </span><span class="nx">internal</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Server</span><span class="p">{</span>
+<span class="w">        </span><span class="nx">Addr</span><span class="p">:</span><span class="w">              </span><span class="s">&quot;127.0.0.1:6060&quot;</span><span class="p">,</span><span class="w"> </span><span class="c1">// ← 外面連不到</span>
+<span class="w">        </span><span class="nx">Handler</span><span class="p">:</span><span class="w">           </span><span class="nx">admin</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">ReadHeaderTimeout</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Error</span><span class="p">(</span><span class="s">&quot;internal&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;err&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">internal</span><span class="p">.</span><span class="nx">ListenAndServe</span><span class="p">())</span><span class="w"> </span><span class="p">}()</span>
+<span class="w">    </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Error</span><span class="p">(</span><span class="s">&quot;public&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;err&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">public</span><span class="p">.</span><span class="nx">ListenAndServe</span><span class="p">())</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">getUser</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">w</span><span class="p">.</span><span class="nx">Write</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="nx">r</span><span class="p">.</span><span class="nx">PathValue</span><span class="p">(</span><span class="s">&quot;id&quot;</span><span class="p">)))</span>
+<span class="p">}</span>
+</pre></div>
+
+<h3 id="實務問題二測試互相污染">實務問題二：測試互相污染<a class="headerlink" href="#實務問題二測試互相污染" title="Permanent link">#</a></h3>
+<p>全域 mux 只有一份，而且<strong>沒有「移除路由」的 API</strong>。所以測試註冊的東西清不掉，會一路累積：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;net/http&quot;</span>
+<span class="w">    </span><span class="s">&quot;net/http/httptest&quot;</span>
+<span class="w">    </span><span class="s">&quot;testing&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">TestA_我先塞了一個假路由</span><span class="p">(</span><span class="nx">t</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">T</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">http</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;GET /orders&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">w</span><span class="p">.</span><span class="nx">Write</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="s">&quot;假的訂單&quot;</span><span class="p">))</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">TestB_我什麼都沒註冊</span><span class="p">(</span><span class="nx">t</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">T</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">req</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">httptest</span><span class="p">.</span><span class="nx">NewRequest</span><span class="p">(</span><span class="s">&quot;GET&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;/orders&quot;</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span><span class="p">)</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">pattern</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">DefaultServeMux</span><span class="p">.</span><span class="nx">Handler</span><span class="p">(</span><span class="nx">req</span><span class="p">);</span><span class="w"> </span><span class="nx">pattern</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">t</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;被污染了：我沒註冊 /orders，卻看得到 %q&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">pattern</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>--- PASS: TestA_我先塞了一個假路由
+--- FAIL: TestB_我什麼都沒註冊
+    被污染了：我沒註冊 /orders，卻看得到 &quot;GET /orders&quot;
+</pre></div>
+
+<p><code>TestB</code> 單獨跑會過，跟 <code>TestA</code> 一起跑就掛——這種 bug 特別難查。</p>
+<p><strong>還有第二個問題</strong>：同一個 pattern 註冊兩次會 <strong>panic</strong>，所以你沒辦法寫「同一路由、多種設定」的表格測試。</p>
+<p><strong>解法：把路由建構包成函式，每個測試拿一份新的。</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// 正式程式碼</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">NewRouter</span><span class="p">(</span><span class="nx">svc</span><span class="w"> </span><span class="o">*</span><span class="nx">Service</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">ServeMux</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">mux</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">NewServeMux</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">mux</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;GET /users&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">svc</span><span class="p">.</span><span class="nx">listUsers</span><span class="p">)</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">mux</span>
+<span class="p">}</span>
+
+<span class="c1">// 測試</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">TestRouter</span><span class="p">(</span><span class="nx">t</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">T</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">cases</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">name</span><span class="p">,</span><span class="w"> </span><span class="nx">want</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">}{</span>
+<span class="w">        </span><span class="p">{</span><span class="s">&quot;中文版&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;使用者清單&quot;</span><span class="p">},</span>
+<span class="w">        </span><span class="p">{</span><span class="s">&quot;英文版&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;user list&quot;</span><span class="p">},</span>
+<span class="w">        </span><span class="p">{</span><span class="s">&quot;空清單&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="p">},</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">tc</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">cases</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">t</span><span class="p">.</span><span class="nx">Run</span><span class="p">(</span><span class="nx">tc</span><span class="p">.</span><span class="nx">name</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">t</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">T</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">mux</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">NewRouter</span><span class="p">(</span><span class="nx">newFakeService</span><span class="p">(</span><span class="nx">tc</span><span class="p">.</span><span class="nx">want</span><span class="p">))</span><span class="w"> </span><span class="c1">// ← 每個子測試一份全新的</span>
+
+<span class="w">            </span><span class="nx">rec</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">httptest</span><span class="p">.</span><span class="nx">NewRecorder</span><span class="p">()</span>
+<span class="w">            </span><span class="nx">mux</span><span class="p">.</span><span class="nx">ServeHTTP</span><span class="p">(</span><span class="nx">rec</span><span class="p">,</span><span class="w"> </span><span class="nx">httptest</span><span class="p">.</span><span class="nx">NewRequest</span><span class="p">(</span><span class="s">&quot;GET&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;/users&quot;</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span><span class="p">))</span>
+
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="nx">got</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">rec</span><span class="p">.</span><span class="nx">Body</span><span class="p">.</span><span class="nx">String</span><span class="p">();</span><span class="w"> </span><span class="nx">got</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nx">tc</span><span class="p">.</span><span class="nx">want</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="nx">t</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;got %q, want %q&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">got</span><span class="p">,</span><span class="w"> </span><span class="nx">tc</span><span class="p">.</span><span class="nx">want</span><span class="p">)</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">})</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>三個子測試 = 三個獨立物件，各自註冊各自的，跑完就被 GC 回收。它們之間沒有任何共用狀態，順序換掉結果也一樣。</p>
+<div class="admonition tip">
+<p class="admonition-title">一句話記憶</p>
+<blockquote>
+<p>全域 = 大家共用一張桌子，你放的東西別人看得到、也收不走。
+自建 = 每個人自己一張桌子，用完就丟。</p>
+</blockquote>
+<p>「可測試性」常常不取決於你怎麼寫測試，而取決於<strong>被測的東西能不能被建立第二份</strong>。</p>
+</div>
+<hr />
 <h2 id="servemux-的路由">ServeMux 的路由<a class="headerlink" href="#servemux-的路由" title="Permanent link">#</a></h2>
 <div class="admonition version">
 <p class="admonition-title">Go 1.22：ServeMux 支援方法與路徑參數</p>
@@ -316,7 +595,132 @@ GET /users/{id}     比  /users/{id}    更具體  → 前者勝
 </div>
 <hr />
 <h2 id="中介層">中介層<a class="headerlink" href="#中介層" title="Permanent link">#</a></h2>
-<p>Go 沒有內建的中介層機制，但 <code>http.Handler</code> 介面讓它變得非常自然：</p>
+<h3 id="這是什麼_1">這是什麼<a class="headerlink" href="#這是什麼_1" title="Permanent link">#</a></h3>
+<p>中介層（middleware）是一個<strong>吃 <code>http.Handler</code>、吐 <code>http.Handler</code></strong> 的函式。它把原本的 handler 包起來，在前後插入自己的邏輯（記錄、認證、限流、recover）。</p>
+<p>Go 沒有內建的中介層機制，但 <code>http.Handler</code> 介面讓它自然成立：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">Middleware</span><span class="p">(</span><span class="nx">next</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">Handler</span><span class="p">)</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">Handler</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">HandlerFunc</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 請求進來時</span>
+<span class="w">        </span><span class="nx">next</span><span class="p">.</span><span class="nx">ServeHTTP</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">)</span>
+<span class="w">        </span><span class="c1">// 回應出去後</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>能一層包一層，是因為 <code>http.HandlerFunc</code> 這個轉換：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">HandlerFunc</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="nx">Request</span><span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">f</span><span class="w"> </span><span class="nx">HandlerFunc</span><span class="p">)</span><span class="w"> </span><span class="nx">ServeHTTP</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">f</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
+</pre></div>
+
+<p><code>http.Handler</code> 是介面，只要有 <code>ServeHTTP</code> 方法就算數。<code>http.HandlerFunc(fn)</code> 是一次<strong>型別轉換</strong>，把普通函式轉成一個帶有 <code>ServeHTTP</code> 方法的型別，藉此滿足介面。</p>
+<h3 id="執行時機包裝時-vs-服務時">執行時機：包裝時 vs 服務時<a class="headerlink" href="#執行時機包裝時-vs-服務時" title="Permanent link">#</a></h3>
+<p>這是中介層最容易誤解的地方，也是實務 bug 的主要來源。<strong>外層函式本體只跑一次，回傳的 closure 每個請求跑一次。</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;net/http&quot;</span>
+<span class="w">    </span><span class="s">&quot;net/http/httptest&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">Demo</span><span class="p">(</span><span class="nx">next</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">Handler</span><span class="p">)</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">Handler</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;[A] 外層本體 —— 包裝時，只有這一次&quot;</span><span class="p">)</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">HandlerFunc</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;    [B] closure —— 每個請求一次:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">URL</span><span class="p">.</span><span class="nx">Path</span><span class="p">)</span>
+<span class="w">        </span><span class="k">defer</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;    [D] defer —— 每個請求一次:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">URL</span><span class="p">.</span><span class="nx">Path</span><span class="p">)</span>
+<span class="w">        </span><span class="nx">next</span><span class="p">.</span><span class="nx">ServeHTTP</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">)</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">mux</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">NewServeMux</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">mux</span><span class="p">.</span><span class="nx">HandleFunc</span><span class="p">(</span><span class="s">&quot;GET /ok&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;        [C] handler 本體&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">})</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;--- 啟動階段 ---&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">h</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">Demo</span><span class="p">(</span><span class="nx">mux</span><span class="p">)</span><span class="w"> </span><span class="c1">// ← Demo 在這裡被呼叫，就這麼一次</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;\n--- 請求 %d ---\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">i</span><span class="p">)</span>
+<span class="w">        </span><span class="nx">h</span><span class="p">.</span><span class="nx">ServeHTTP</span><span class="p">(</span><span class="nx">httptest</span><span class="p">.</span><span class="nx">NewRecorder</span><span class="p">(),</span><span class="w"> </span><span class="nx">httptest</span><span class="p">.</span><span class="nx">NewRequest</span><span class="p">(</span><span class="s">&quot;GET&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;/ok&quot;</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span><span class="p">))</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>--- 啟動階段 ---
+[A] 外層本體 —— 包裝時，只有這一次
+
+--- 請求 1 ---
+    [B] closure —— 每個請求一次: /ok
+        [C] handler 本體
+    [D] defer —— 每個請求一次: /ok
+
+--- 請求 2 ---
+    [B] closure —— 每個請求一次: /ok
+        [C] handler 本體
+    [D] defer —— 每個請求一次: /ok
+</pre></div>
+
+<p><code>[A]</code> 只出現一次，<code>[B]</code>／<code>[D]</code> 每個請求都出現。</p>
+<p>原因很單純：<code>Demo(mux)</code> 是普通的函式呼叫，在 <code>ListenAndServe</code> 求值引數時就執行完了。存進 server 的是它<strong>回傳的那個 closure</strong>，之後每個請求由 server 的 goroutine 呼叫它的 <code>ServeHTTP</code>：</p>
+<div class="hl" data-lang="text"><pre><span></span>ListenAndServe
+  └─ 接受連線 → 每條連線一個 goroutine
+       └─ 讀出請求 → handler.ServeHTTP(w, r)   ← 就是那個 closure
+            ├─ [B] closure 開始，註冊 defer
+            ├─ next.ServeHTTP(w, r) → mux 路由 → [C] 你的 handler
+            └─ [D] defer 執行（正常回傳或 panic 都會）
+</pre></div>
+
+<h3 id="實務問題把初始化寫進-closure">實務問題：把初始化寫進 closure<a class="headerlink" href="#實務問題把初始化寫進-closure" title="Permanent link">#</a></h3>
+<p>知道時機之後，這個 bug 就很明顯了——但它不會報錯，只會安靜地失效：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 限流完全沒有作用</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">RateLimiter</span><span class="p">(</span><span class="nx">next</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">Handler</span><span class="p">)</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">Handler</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">HandlerFunc</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">limiter</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">rate</span><span class="p">.</span><span class="nx">NewLimiter</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="mi">30</span><span class="p">)</span><span class="w"> </span><span class="c1">// ← 每個請求都建一個新的！</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">limiter</span><span class="p">.</span><span class="nx">Allow</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w">              </span><span class="c1">//    永遠 Allow，因為 burst 是滿的</span>
+<span class="w">            </span><span class="nx">http</span><span class="p">.</span><span class="nx">Error</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;too many requests&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">StatusTooManyRequests</span><span class="p">)</span>
+<span class="w">            </span><span class="k">return</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">next</span><span class="p">.</span><span class="nx">ServeHTTP</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">)</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ 放在 return 之前 —— 全服務共用一個，只建一次</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">RateLimiter</span><span class="p">(</span><span class="nx">next</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">Handler</span><span class="p">)</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">Handler</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">limiter</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">rate</span><span class="p">.</span><span class="nx">NewLimiter</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="mi">30</span><span class="p">)</span>
+
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">HandlerFunc</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">limiter</span><span class="p">.</span><span class="nx">Allow</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">http</span><span class="p">.</span><span class="nx">Error</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;too many requests&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">StatusTooManyRequests</span><span class="p">)</span>
+<span class="w">            </span><span class="k">return</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="nx">next</span><span class="p">.</span><span class="nx">ServeHTTP</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">)</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>同樣的規則適用於：編譯正規表示式、解析模板、建立連線池、載入設定、初始化 metrics counter。</p>
+<p><strong>判準</strong>：這個東西是「全服務共用一份」還是「每個請求一份」？前者放外層，後者放 closure。</p>
+<h3 id="實務問題順序反直覺">實務問題：順序反直覺<a class="headerlink" href="#實務問題順序反直覺" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">handler</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">Logging</span><span class="p">(</span><span class="nx">Recoverer</span><span class="p">(</span><span class="nx">Auth</span><span class="p">(</span><span class="nx">mux</span><span class="p">)))</span>
+</pre></div>
+
+<p><strong>包裝是由內而外</strong>（<code>Auth(mux)</code> 先算出來），但<strong>請求流向是由外而內</strong>：</p>
+<div class="hl" data-lang="text"><pre><span></span>請求 → Logging → Recoverer → Auth → mux → handler
+回應 ← Logging ← Recoverer ← Auth ← mux ← handler
+</pre></div>
+
+<p>實務上的取捨：</p>
+<ul>
+<li><code>Recoverer</code> 越外層，保護範圍越大。</li>
+<li>但要放在 <code>Logging</code> <strong>裡面</strong>，否則 panic 的請求不會出現在存取日誌裡（<code>Logging</code> 的 <code>defer</code> 會先被 panic 跳過）。</li>
+<li><code>Auth</code> 要在業務 handler 之前，但通常在 <code>Logging</code> 之後——你會想記錄到「被拒絕的請求」。</li>
+</ul>
+<p>一般順序：<code>Logging → Recoverer → CORS → 限流 → Auth → 業務 handler</code>。</p>
+<h3 id="串接多個中介層">串接多個中介層<a class="headerlink" href="#串接多個中介層" title="Permanent link">#</a></h3>
 <div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
@@ -631,7 +1035,7 @@ GET /users/{id}     比  /users/{id}    更具體  → 前者勝
 </table>
 <hr />
 <p>下一節談 <code>database/sql</code>：連線池、prepared statement 與那些容易漏掉的 <code>Close</code>。</p></article><nav class='pager'><a class='prev' href='json.html'><span>上一節</span><strong>7.1 encoding/json</strong></a><a class='next' href='database.html'><span>下一節</span><strong>7.3 database/sql</strong></a></nav></main>
-  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#伺服器每連線一個-goroutine'>伺服器：每連線一個 goroutine</a></li><li><a href='#逾時唯一最重要的設定'>逾時：唯一最重要的設定</a></li><li><a href='#servemux-的路由'>ServeMux 的路由</a><ul><li><a href='#模式語法'>模式語法</a></li><li><a href='#優先順序規則'>優先順序規則</a></li></ul></li><li><a href='#中介層'>中介層</a></li><li><a href='#客戶端transport-與連線池'>客戶端：Transport 與連線池</a><ul><li><a href='#兩個最常見的效能問題'>兩個最常見的效能問題</a></li><li><a href='#一定要傳-context'>一定要傳 context</a></li></ul></li><li><a href='#優雅關閉'>優雅關閉</a></li><li><a href='#http2-與-http3'>HTTP/2 與 HTTP/3</a></li><li><a href='#檢查清單'>檢查清單</a></li></ul></nav></aside>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#伺服器每連線一個-goroutine'>伺服器：每連線一個 goroutine</a></li><li><a href='#逾時唯一最重要的設定'>逾時：唯一最重要的設定</a></li><li><a href='#servemux用內建的還是自己建一個'>ServeMux：用內建的，還是自己建一個</a><ul><li><a href='#這是什麼'>這是什麼</a></li><li><a href='#該用哪一個'>該用哪一個</a></li><li><a href='#實務問題一第三方套件會偷偷改你的路由表'>實務問題一：第三方套件會偷偷改你的路由表</a></li><li><a href='#實務問題二測試互相污染'>實務問題二：測試互相污染</a></li></ul></li><li><a href='#servemux-的路由'>ServeMux 的路由</a><ul><li><a href='#模式語法'>模式語法</a></li><li><a href='#優先順序規則'>優先順序規則</a></li></ul></li><li><a href='#中介層'>中介層</a><ul><li><a href='#這是什麼_1'>這是什麼</a></li><li><a href='#執行時機包裝時-vs-服務時'>執行時機：包裝時 vs 服務時</a></li><li><a href='#實務問題把初始化寫進-closure'>實務問題：把初始化寫進 closure</a></li><li><a href='#實務問題順序反直覺'>實務問題：順序反直覺</a></li><li><a href='#串接多個中介層'>串接多個中介層</a></li></ul></li><li><a href='#客戶端transport-與連線池'>客戶端：Transport 與連線池</a><ul><li><a href='#兩個最常見的效能問題'>兩個最常見的效能問題</a></li><li><a href='#一定要傳-context'>一定要傳 context</a></li></ul></li><li><a href='#優雅關閉'>優雅關閉</a></li><li><a href='#http2-與-http3'>HTTP/2 與 HTTP/3</a></li><li><a href='#檢查清單'>檢查清單</a></li></ul></nav></aside>
 </div>
 
 <div class="scrim" hidden></div>

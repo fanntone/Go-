@@ -57,8 +57,15 @@ def go_blocks(text: str) -> list[str]:
 
     return out
 
-# 這些範例需要外部環境（C 工具鏈、被嵌入的實體檔案），不列入檢查
-SKIP_MARKERS = ('import "C"', "//go:build ignore", "//go:embed")
+# 不列入檢查的範例：
+#   - 需要外部環境（C 工具鏈、被嵌入的實體檔案）
+#   - 刻意示範會被 go vet 抓到的錯誤（章節中會標註這行註解）
+SKIP_MARKERS = (
+    'import "C"',
+    "//go:build ignore",
+    "//go:embed",
+    "go vet 會抓到這個錯誤",
+)
 
 STDLIB_PREFIXES = None  # 由 `go list std` 動態取得
 

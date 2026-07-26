@@ -69,6 +69,7 @@
 <li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
 <li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
 <li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+<li><a href='errors.html'><span class='num'>3.4</span><span class='txt'>錯誤處理與傳遞</span></a></li>
 </ul></details>
 <details class='part' open>
 <summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
@@ -383,6 +384,7 @@ exit status 2
 <hr />
 <h2 id="什麼時候該-panic">什麼時候該 panic<a class="headerlink" href="#什麼時候該-panic" title="Permanent link">#</a></h2>
 <p>Go 的核心原則：<strong>panic 用於「程式有 bug」，error 用於「預期內的失敗」。</strong></p>
+<p>（error 那一半——誰該接住它、怎麼跨越多層傳遞、goroutine 裡的錯誤該去哪——見 <a href="errors.html">錯誤處理與傳遞</a>。）</p>
 <h3 id="該用-error">該用 error<a class="headerlink" href="#該用-error" title="Permanent link">#</a></h3>
 <div class="hl" data-lang="go"><pre><span></span><span class="c1">// 檔案可能不存在 —— 這是正常世界的一部分</span>
 <span class="kd">func</span><span class="w"> </span><span class="nx">readConfig</span><span class="p">(</span><span class="nx">path</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">Config</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>

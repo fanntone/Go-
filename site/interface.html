@@ -69,6 +69,7 @@
 <li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
 <li class='active'><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
 <li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+<li><a href='errors.html'><span class='num'>3.4</span><span class='txt'>錯誤處理與傳遞</span></a></li>
 </ul></details>
 <details class='part'>
 <summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
@@ -377,6 +378,251 @@ nil
 <p>混入介面型別的 case 會破壞這個最佳化，因為介面判定需要查 itab。效能敏感的地方，考慮把介面 case 拆到 <code>default</code> 分支裡另外處理。</p>
 </div>
 <hr />
+<h2 id="常見錯誤與解法">常見錯誤與解法<a class="headerlink" href="#常見錯誤與解法" title="Permanent link">#</a></h2>
+<p>介面的問題有兩類：<strong>執行期才炸的</strong>（nil 陷阱、比較 panic、斷言失敗）與<strong>編譯不過但訊息不好懂的</strong>（方法集）。兩類的根因都是「介面值其實是 (型別, 資料) 這一對」這件事沒有內化。</p>
+<table>
+<thead>
+<tr>
+<th>症狀</th>
+<th>原因</th>
+<th>解法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>err != nil</code> 但印出來是 <code>&lt;nil&gt;</code></td>
+<td>裝了 nil 指標的介面不等於 nil</td>
+<td>函式內不要用具體錯誤型別的變數</td>
+</tr>
+<tr>
+<td><code>X does not implement Y (method Z has pointer receiver)</code></td>
+<td>方法集規則</td>
+<td>傳 <code>&amp;x</code> 而非 <code>x</code></td>
+</tr>
+<tr>
+<td><code>panic: comparing uncomparable type</code></td>
+<td>動態型別不可比較</td>
+<td>別用 <code>==</code>，改用 <code>reflect.DeepEqual</code> 或 <code>go-cmp</code></td>
+</tr>
+<tr>
+<td><code>panic: interface conversion</code></td>
+<td>單值型別斷言失敗</td>
+<td>一律用雙值形式</td>
+</tr>
+<tr>
+<td>熱路徑效能不如預期</td>
+<td>介面呼叫無法內聯</td>
+<td>具體型別、泛型、或 PGO 去虛擬化</td>
+</tr>
+<tr>
+<td>改介面就要動一堆檔案</td>
+<td>介面定義在生產端且太大</td>
+<td>在消費端定義最小介面</td>
+</tr>
+</tbody>
+</table>
+<h3 id="1-介面比較會在執行期-panic">① 介面比較會在執行期 panic<a class="headerlink" href="#1-介面比較會在執行期-panic" title="Permanent link">#</a></h3>
+<p>這個很少人知道，但踩到很痛——<strong>它編譯得過，只在執行期炸</strong>：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">a</span><span class="w"> </span><span class="kt">any</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">}</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">b</span><span class="w"> </span><span class="kt">any</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">}</span>
+
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;panic:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nb">recover</span><span class="p">())</span><span class="w"> </span><span class="p">}()</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">a</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nx">b</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>panic: runtime error: comparing uncomparable type []int
+</pre></div>
+
+<p>介面的 <code>==</code> 會先比型別，型別相同才比值。但 <strong>slice、map、func 是不可比較的型別</strong>，比到值的時候 runtime 只能 panic。</p>
+<p>更隱蔽的版本是<strong>把含 slice 欄位的 struct 當 map 鍵</strong>：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Key</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ID</span><span class="w">   </span><span class="kt">int</span>
+<span class="w">    </span><span class="nx">Tags</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="w"> </span><span class="c1">// ← 讓整個 struct 變成不可比較</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// 直接用 map[Key]string 是編譯錯誤，但透過 any 就繞過檢查了</span>
+<span class="w">    </span><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">any</span><span class="p">]</span><span class="kt">string</span><span class="p">{}</span>
+
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;panic:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nb">recover</span><span class="p">())</span><span class="w"> </span><span class="p">}()</span>
+<span class="w">    </span><span class="nx">m</span><span class="p">[</span><span class="nx">Key</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="p">{</span><span class="s">&quot;a&quot;</span><span class="p">}}]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;x&quot;</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>panic: runtime error: hash of unhashable type main.Key
+</pre></div>
+
+<p><strong>判斷準則</strong>：只要動態型別可能含 slice、map、func，就不要用 <code>==</code>、不要當 map 鍵。要比較內容用 <code>reflect.DeepEqual</code>（測試裡建議用 <code>google/go-cmp</code>，錯誤訊息好得多）。</p>
+<div class="admonition tip">
+<p class="admonition-title">怎麼提早發現</p>
+<p>這類問題編譯期抓不到。實務做法是<strong>在型別上加一個編譯期斷言</strong>，強制它可比較：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">Key</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ID</span><span class="w">   </span><span class="kt">int</span>
+<span class="w">    </span><span class="nx">Tags</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span>
+<span class="p">}</span>
+
+<span class="c1">// 如果 Key 變成不可比較，這行會編譯失敗</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="nx">Key</span><span class="p">]</span><span class="kd">struct</span><span class="p">{}{}</span>
+</pre></div>
+
+<p>把它放在定義旁邊，之後有人加了 slice 欄位就會立刻編譯不過，而不是上線後才 panic。</p>
+</div>
+<h3 id="2-單值型別斷言">② 單值型別斷言<a class="headerlink" href="#2-單值型別斷言" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">v</span><span class="p">.(</span><span class="kt">string</span><span class="p">)</span><span class="w">      </span><span class="c1">// ✗ 型別不對就 panic</span>
+<span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">v</span><span class="p">.(</span><span class="kt">string</span><span class="p">)</span><span class="w">  </span><span class="c1">// ✓ 失敗回傳零值與 false</span>
+</pre></div>
+
+<p><strong>幾乎總是該用雙值形式</strong>，除非你能百分之百確定型別（例如剛剛才自己裝進去的）。</p>
+<p>處理外部輸入時特別重要：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ JSON 裡的 id 是字串的話，直接 panic</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">badParse</span><span class="p">(</span><span class="nx">data</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">any</span>
+<span class="w">    </span><span class="nx">json</span><span class="p">.</span><span class="nx">Unmarshal</span><span class="p">(</span><span class="nx">data</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">m</span><span class="p">)</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nb">int</span><span class="p">(</span><span class="nx">m</span><span class="p">[</span><span class="s">&quot;id&quot;</span><span class="p">].(</span><span class="kt">float64</span><span class="p">))</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">goodParse</span><span class="p">(</span><span class="nx">data</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">any</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Unmarshal</span><span class="p">(</span><span class="nx">data</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">m</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">f</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">m</span><span class="p">[</span><span class="s">&quot;id&quot;</span><span class="p">].(</span><span class="kt">float64</span><span class="p">)</span><span class="w"> </span><span class="c1">// JSON 數字一律是 float64</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;id 不是數字，實際是 %T&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">[</span><span class="s">&quot;id&quot;</span><span class="p">])</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nb">int</span><span class="p">(</span><span class="nx">f</span><span class="p">),</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>錯誤訊息裡用 <code>%T</code> 印出實際型別，除錯時省很多時間。</p>
+<h3 id="3-熱路徑上的介面問題不是呼叫開銷">③ 熱路徑上的介面：問題不是呼叫開銷<a class="headerlink" href="#3-熱路徑上的介面問題不是呼叫開銷" title="Permanent link">#</a></h3>
+<p>介面方法呼叫本身只比直接呼叫慢 1–2 奈秒。<strong>真正的代價是它無法被內聯</strong>——而內聯失敗會連帶讓常數傳播、邊界檢查消除全部失效。</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;testing&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Adder</span><span class="w"> </span><span class="kd">interface</span><span class="p">{</span><span class="w"> </span><span class="nx">Add</span><span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Impl</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">i</span><span class="w"> </span><span class="nx">Impl</span><span class="p">)</span><span class="w"> </span><span class="nx">Add</span><span class="p">(</span><span class="nx">x</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nx">i</span><span class="p">.</span><span class="nx">n</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nx">x</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">viaInterface</span><span class="p">(</span><span class="nx">a</span><span class="w"> </span><span class="nx">Adder</span><span class="p">,</span><span class="w"> </span><span class="nx">times</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">sum</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">times</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">sum</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">a</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="nx">sum</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">sum</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">viaConcrete</span><span class="p">(</span><span class="nx">a</span><span class="w"> </span><span class="nx">Impl</span><span class="p">,</span><span class="w"> </span><span class="nx">times</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">sum</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">times</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">sum</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">a</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="nx">sum</span><span class="p">)</span><span class="w"> </span><span class="c1">// 可以被內聯成單純的加法</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">sum</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">impl</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">Impl</span><span class="p">{</span><span class="mi">1</span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">r1</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">testing</span><span class="p">.</span><span class="nx">Benchmark</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">b</span><span class="p">.</span><span class="nx">N</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">viaInterface</span><span class="p">(</span><span class="nx">impl</span><span class="p">,</span><span class="w"> </span><span class="mi">1000</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="w">    </span><span class="nx">r2</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">testing</span><span class="p">.</span><span class="nx">Benchmark</span><span class="p">(</span><span class="kd">func</span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">B</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">b</span><span class="p">.</span><span class="nx">N</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">viaConcrete</span><span class="p">(</span><span class="nx">impl</span><span class="p">,</span><span class="w"> </span><span class="mi">1000</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">})</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;interface:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r1</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;concrete: &quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r2</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>差距通常在數倍而非數十 %，取決於被內聯後編譯器還能做多少最佳化。</p>
+<p><strong>但不要因此就不用介面。</strong> 判準是：</p>
+<ul>
+<li><strong>這段程式碼每秒跑幾百萬次嗎？</strong> 不是的話，可讀性遠比這點差距重要。</li>
+<li><strong>量測過嗎？</strong> 用 <code>-gcflags="-m"</code> 確認內聯真的被擋住、用 pprof 確認它真的是熱點。</li>
+<li><strong>能用 PGO 嗎？</strong> Go 1.21+ 的推測式去虛擬化能在熱點自動把介面呼叫變回直接呼叫，見 <a href="escape-inline.html#pgoprofile-guided-optimization">PGO</a>。</li>
+</ul>
+<h3 id="4-過早抽象只有一個實作就定介面">④ 過早抽象：只有一個實作就定介面<a class="headerlink" href="#4-過早抽象只有一個實作就定介面" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 只有一個實作，介面純粹是額外的一層</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">UserRepository</span><span class="w"> </span><span class="kd">interface</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="w"> </span><span class="kt">int64</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">User</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">Create</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">u</span><span class="w"> </span><span class="o">*</span><span class="nx">User</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span>
+<span class="w">    </span><span class="nx">Update</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">u</span><span class="w"> </span><span class="o">*</span><span class="nx">User</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span>
+<span class="w">    </span><span class="nx">Delete</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="w"> </span><span class="kt">int64</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span>
+<span class="w">    </span><span class="nx">List</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">filter</span><span class="w"> </span><span class="nx">Filter</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="o">*</span><span class="nx">User</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">postgresUserRepository</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">db</span><span class="w"> </span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="c1">// 唯一的實作</span>
+</pre></div>
+
+<p>這種寫法從 Java/C# 帶過來的人特別容易寫。它的問題是：</p>
+<ul>
+<li>跳到定義會跳到介面，還要再找一次實作</li>
+<li>加一個方法要改兩個地方</li>
+<li>為了「可以換成 MySQL」而抽象，但那一天通常不會來</li>
+</ul>
+<p><strong>Go 的慣例是反過來的</strong>：先寫具體型別，等到<strong>真的出現第二個實作或測試需要替換</strong>時，再在<strong>使用端</strong>定義最小介面：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// repository 套件：直接提供具體型別</span>
+<span class="kn">package</span><span class="w"> </span><span class="nx">repository</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">UserRepo</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">db</span><span class="w"> </span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">New</span><span class="p">(</span><span class="nx">db</span><span class="w"> </span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="nx">UserRepo</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">...</span><span class="w"> </span><span class="p">}</span>
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">UserRepo</span><span class="p">)</span><span class="w"> </span><span class="nx">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="w"> </span><span class="kt">int64</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">User</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">...</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">// report 套件：我只需要讀，就只定義讀</span>
+<span class="kn">package</span><span class="w"> </span><span class="nx">report</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">userGetter</span><span class="w"> </span><span class="kd">interface</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Get</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="w"> </span><span class="kt">int64</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">User</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">Generate</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">g</span><span class="w"> </span><span class="nx">userGetter</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">...</span><span class="w"> </span><span class="p">}</span>
+</pre></div>
+
+<p>好處：<code>report</code> 不需要 import <code>repository</code>，測試時傳一個只有 <code>Get</code> 的假物件就好，而且 <code>repository</code> 加新方法完全不影響 <code>report</code>。</p>
+<h3 id="5-回傳介面">⑤ 回傳介面<a class="headerlink" href="#5-回傳介面" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 呼叫端拿不到具體型別的其他方法，之後加方法還是破壞性變更</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">NewClient</span><span class="p">(</span><span class="nx">addr</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="nx">Client</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">...</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">// ✓ 回傳具體型別</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">NewClient</span><span class="p">(</span><span class="nx">addr</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">...</span><span class="w"> </span><span class="p">}</span>
+</pre></div>
+
+<p>Go 諺語：<strong>接受介面，回傳具體型別</strong>。</p>
+<p>回傳介面唯一合理的時機是「真的有多個實作、而呼叫端不該知道是哪一個」——例如工廠函式依設定回傳不同的儲存後端。</p>
+<div class="admonition warning">
+<p class="admonition-title">回傳介面還有 nil 陷阱</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">New</span><span class="p">()</span><span class="w"> </span><span class="nx">Storage</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">s</span><span class="w"> </span><span class="o">*</span><span class="nx">S3Storage</span><span class="w"> </span><span class="c1">// nil</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">s</span><span class="w">         </span><span class="c1">// ✗ 回傳的介面不是 nil</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>跟 <a href="#nil-介面的經典陷阱">nil 介面陷阱</a> 是同一個問題。回傳具體型別 <code>*S3Storage</code> 就不會有這件事——<code>nil</code> 就是 <code>nil</code>。</p>
+</div>
+<hr />
 <h2 id="介面的設計建議">介面的設計建議<a class="headerlink" href="#介面的設計建議" title="Permanent link">#</a></h2>
 <p>技術細節之外，幾條實務原則：</p>
 <h3 id="介面要小">介面要小<a class="headerlink" href="#介面要小" title="Permanent link">#</a></h3>
@@ -432,7 +678,7 @@ nil
 </ul>
 <hr />
 <p>下一節談反射。它建立在介面的 <code>_type</code> 描述子之上，是同一套機制的延伸。</p></article><nav class='pager'><a class='prev' href='calling-convention.html'><span>上一節</span><strong>3.1 函式呼叫與呼叫慣例</strong></a><a class='next' href='reflect.html'><span>下一節</span><strong>3.3 反射 reflect</strong></a></nav></main>
-  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#介面值就是兩個指標'>介面值就是兩個指標</a><ul><li><a href='#有方法的介面iface'>有方法的介面：iface</a></li><li><a href='#空介面-anyeface'>空介面 any：eface</a></li></ul></li><li><a href='#itab-從哪裡來'>itab 從哪裡來</a></li><li><a href='#裝箱把值放進介面'>裝箱：把值放進介面</a><ul><li><a href='#runtime-的兩個最佳化'>runtime 的兩個最佳化</a></li></ul></li><li><a href='#nil-介面的經典陷阱'>nil 介面的經典陷阱</a><ul><li><a href='#為什麼'>為什麼</a></li><li><a href='#三個正確寫法'>三個正確寫法</a></li></ul></li><li><a href='#型別斷言與型別-switch'>型別斷言與型別 switch</a><ul><li><a href='#兩種斷言形式'>兩種斷言形式</a></li><li><a href='#斷言的成本'>斷言的成本</a></li><li><a href='#型別-switch'>型別 switch</a></li></ul></li><li><a href='#介面的設計建議'>介面的設計建議</a><ul><li><a href='#介面要小'>介面要小</a></li><li><a href='#在消費端定義介面不在生產端'>在消費端定義介面，不在生產端</a></li><li><a href='#回傳具體型別接受介面'>回傳具體型別，接受介面</a></li><li><a href='#什麼時候不要用介面'>什麼時候不要用介面</a></li></ul></li></ul></nav></aside>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#介面值就是兩個指標'>介面值就是兩個指標</a><ul><li><a href='#有方法的介面iface'>有方法的介面：iface</a></li><li><a href='#空介面-anyeface'>空介面 any：eface</a></li></ul></li><li><a href='#itab-從哪裡來'>itab 從哪裡來</a></li><li><a href='#裝箱把值放進介面'>裝箱：把值放進介面</a><ul><li><a href='#runtime-的兩個最佳化'>runtime 的兩個最佳化</a></li></ul></li><li><a href='#nil-介面的經典陷阱'>nil 介面的經典陷阱</a><ul><li><a href='#為什麼'>為什麼</a></li><li><a href='#三個正確寫法'>三個正確寫法</a></li></ul></li><li><a href='#型別斷言與型別-switch'>型別斷言與型別 switch</a><ul><li><a href='#兩種斷言形式'>兩種斷言形式</a></li><li><a href='#斷言的成本'>斷言的成本</a></li><li><a href='#型別-switch'>型別 switch</a></li></ul></li><li><a href='#常見錯誤與解法'>常見錯誤與解法</a><ul><li><a href='#1-介面比較會在執行期-panic'>① 介面比較會在執行期 panic</a></li><li><a href='#2-單值型別斷言'>② 單值型別斷言</a></li><li><a href='#3-熱路徑上的介面問題不是呼叫開銷'>③ 熱路徑上的介面：問題不是呼叫開銷</a></li><li><a href='#4-過早抽象只有一個實作就定介面'>④ 過早抽象：只有一個實作就定介面</a></li><li><a href='#5-回傳介面'>⑤ 回傳介面</a></li></ul></li><li><a href='#介面的設計建議'>介面的設計建議</a><ul><li><a href='#介面要小'>介面要小</a></li><li><a href='#在消費端定義介面不在生產端'>在消費端定義介面，不在生產端</a></li><li><a href='#回傳具體型別接受介面'>回傳具體型別，接受介面</a></li><li><a href='#什麼時候不要用介面'>什麼時候不要用介面</a></li></ul></li></ul></nav></aside>
 </div>
 
 <div class="scrim" hidden></div>

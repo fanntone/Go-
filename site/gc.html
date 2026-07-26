@@ -69,6 +69,7 @@
 <li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
 <li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
 <li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+<li><a href='errors.html'><span class='num'>3.4</span><span class='txt'>錯誤處理與傳遞</span></a></li>
 </ul></details>
 <details class='part'>
 <summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
@@ -477,6 +478,201 @@ go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </sp
 <li><strong><code>unsafe</code> 手動管理</strong> —— 極端情況才考慮，風險很高</li>
 </ul>
 <hr />
+<h2 id="正式環境的六個典型問題">正式環境的六個典型問題<a class="headerlink" href="#正式環境的六個典型問題" title="Permanent link">#</a></h2>
+<p>前面的調校流程是通則。這一節換成<strong>症狀導向</strong>——你在監控上看到什麼、代表什麼、該怎麼辦。</p>
+<table>
+<thead>
+<tr>
+<th>症狀</th>
+<th>最可能的原因</th>
+<th>先做什麼</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>容器被 OOMKilled，但 <code>HeapAlloc</code> 看起來很低</td>
+<td>GC 目標超過容器上限</td>
+<td>設 <code>GOMEMLIMIT</code></td>
+</tr>
+<tr>
+<td>RSS 一直不降，看起來像洩漏</td>
+<td><code>HeapIdle</code> 沒歸還，不是洩漏</td>
+<td>比對 <code>HeapReleased</code></td>
+</tr>
+<tr>
+<td>存活集持續成長</td>
+<td>真的洩漏</td>
+<td><code>heap</code> 剖析看 <code>inuse_space</code></td>
+</tr>
+<tr>
+<td>GC 每秒好幾次、CPU 佔比高</td>
+<td>配置速率太高</td>
+<td><code>heap</code> 剖析看 <code>alloc_space</code></td>
+</tr>
+<tr>
+<td>CPU 幾乎全在 GC、服務停擺</td>
+<td>GC 死亡螺旋</td>
+<td>放寬 <code>GOMEMLIMIT</code> 或降存活集</td>
+</tr>
+<tr>
+<td>STW 從幾十微秒漲到數毫秒</td>
+<td>goroutine 太多、堆疊總量大</td>
+<td>看 <code>gctrace</code> 的 <code>MB stacks</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="1-容器被-oomkilled但堆積看起來很小">① 容器被 OOMKilled，但堆積看起來很小<a class="headerlink" href="#1-容器被-oomkilled但堆積看起來很小" title="Permanent link">#</a></h3>
+<p>這是最常見也最容易誤診的一個。典型情境：</p>
+<div class="hl" data-lang="text"><pre><span></span>容器 limit:     512 MiB
+HeapAlloc:      約 200 MiB
+結果:           Pod 被 OOMKilled
+</pre></div>
+
+<p><strong>原因</strong>：<code>GOGC=100</code> 的意思是「堆積長到存活量的兩倍才 GC」。存活量 200 MiB → GC 目標 400 MiB → 加上 goroutine 堆疊、runtime 結構、執行檔本身，RSS 輕鬆超過 512 MiB。</p>
+<p><strong>Go runtime 完全不知道容器的記憶體上限</strong>（CPU 上限在 1.25 之後知道了，記憶體則從來不會自動偵測）。</p>
+<p><strong>解法</strong>：</p>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GOMEMLIMIT</span><span class="o">=</span>440MiB<span class="w"> </span>./app
+</pre></div>
+
+<p>或在程式裡：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="s">&quot;runtime/debug&quot;</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">init</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">debug</span><span class="p">.</span><span class="nx">SetMemoryLimit</span><span class="p">(</span><span class="mi">440</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">20</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>留 10–15% 給非堆積用量。如果用 Kubernetes，可以直接從 limit 推導：</p>
+<div class="hl" data-lang="yaml"><pre><span></span><span class="nt">env</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">GOMEMLIMIT</span>
+<span class="w">    </span><span class="nt">valueFrom</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">resourceFieldRef</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">resource</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">limits.memory</span>
+<span class="w">        </span><span class="nt">divisor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<span class="w">  </span><span class="c1"># 注意：這樣拿到的是 100% 的 limit，實務上建議另外算成 85–90%</span>
+</pre></div>
+
+<div class="admonition warning">
+<p class="admonition-title"><code>GOMEMLIMIT</code> 涵蓋的範圍</p>
+<p>它管的是 <strong>Go runtime 管理的記憶體總量</strong>（堆積 + 堆疊 + runtime 內部結構），<strong>不含</strong>：</p>
+<ul>
+<li>cgo 配置的記憶體</li>
+<li>執行檔與共享函式庫的映射</li>
+<li>作業系統的檔案快取</li>
+</ul>
+<p>所以有用 cgo 的服務要留更多餘裕。</p>
+</div>
+<h3 id="2-rss-不降那不是洩漏">② RSS 不降：那不是洩漏<a class="headerlink" href="#2-rss-不降那不是洩漏" title="Permanent link">#</a></h3>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">snapshot</span><span class="p">(</span><span class="nx">label</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">MemStats</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">ReadMemStats</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">m</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%-10s HeapAlloc=%4d MB  HeapIdle=%4d MB  HeapReleased=%4d MB\n&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">label</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapAlloc</span><span class="o">&gt;&gt;</span><span class="mi">20</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapIdle</span><span class="o">&gt;&gt;</span><span class="mi">20</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">.</span><span class="nx">HeapReleased</span><span class="o">&gt;&gt;</span><span class="mi">20</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">snapshot</span><span class="p">(</span><span class="s">&quot;啟動&quot;</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">data</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([][]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="mi">200</span><span class="p">)</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">data</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">data</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="o">&lt;&lt;</span><span class="mi">20</span><span class="p">)</span><span class="w"> </span><span class="c1">// 共 200 MB</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">snapshot</span><span class="p">(</span><span class="s">&quot;配置後&quot;</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">data</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">nil</span>
+<span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GC</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">snapshot</span><span class="p">(</span><span class="s">&quot;GC 後&quot;</span><span class="p">)</span><span class="w"> </span><span class="c1">// HeapAlloc 掉了，但 HeapIdle 很高</span>
+<span class="p">}</span>
+</pre></div>
+
+<p><strong>判斷準則</strong>：</p>
+<ul>
+<li><code>HeapAlloc</code> 下降但 <code>HeapIdle</code> 很高 → <strong>記憶體被 Go 佔著沒還給 OS，不是洩漏</strong>。scavenger 會漸進歸還。</li>
+<li><code>HeapAlloc</code> 持續成長 → <strong>真的洩漏</strong>，去做 <code>heap</code> 剖析。</li>
+</ul>
+<p>急著要 RSS 下降（例如批次任務跑完）可以：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="s">&quot;runtime/debug&quot;</span>
+
+<span class="nx">debug</span><span class="p">.</span><span class="nx">FreeOSMemory</span><span class="p">()</span><span class="w"> </span><span class="c1">// 強制 GC + 盡量歸還</span>
+</pre></div>
+
+<p>但它會觸發一次完整的 STW GC，<strong>絕不要放在請求路徑或定時任務裡</strong>。</p>
+<h3 id="3-gc-太頻繁">③ GC 太頻繁<a class="headerlink" href="#3-gc-太頻繁" title="Permanent link">#</a></h3>
+<p><code>gctrace</code> 上看到每秒好幾次 GC、<code>GCCPUFraction</code> 超過 10%：</p>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </span>-sample_index<span class="o">=</span>alloc_space<span class="w"> </span>-http<span class="o">=</span>:8081<span class="w"> </span>http://localhost:6060/debug/pprof/allocs
+</pre></div>
+
+<p><strong>注意是 <code>alloc_space</code> 不是 <code>inuse_space</code></strong>——前者是「總共配置了多少」（GC 壓力來源），後者是「現在還活著多少」（洩漏來源）。這兩個常常指向完全不同的地方。</p>
+<p>找到熱點後，優先順序是：減少配置 → 提高 <code>GOGC</code> → 其他。詳見<a href="allocator.html#減少配置的實用清單">減少配置的實用清單</a>。</p>
+<h3 id="4-gc-死亡螺旋">④ GC 死亡螺旋<a class="headerlink" href="#4-gc-死亡螺旋" title="Permanent link">#</a></h3>
+<p>症狀非常明顯：<strong>CPU 幾乎 100% 都在 GC，服務等同停擺，但沒有崩潰</strong>。</p>
+<p>成因是 <code>GOMEMLIMIT</code> 設得比「存活集本身」還小。runtime 為了守住上限會不斷觸發 GC，但每次都回收不到東西——因為那些記憶體真的還在用。</p>
+<div class="hl" data-lang="text"><pre><span></span>存活集:        450 MiB
+GOMEMLIMIT:    400 MiB
+→ 永遠達不到目標 → 連續 GC → CPU 被吃光
+</pre></div>
+
+<p><code>GOMEMLIMIT</code> 是<strong>軟性</strong>上限，Go 不會為了守住它而殺掉你的程式，只會一直嘗試。</p>
+<p><strong>診斷</strong>：<code>gctrace</code> 的 GC 編號快速跳動、<code>GCCPUFraction</code> 逼近 1.0。</p>
+<p><strong>解法</strong>：放寬上限、降低存活集（真正的修法），或加一個保險絲——</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="s">&quot;runtime/debug&quot;</span>
+
+<span class="c1">// Go 1.19+：設定一個底線，避免完全失控</span>
+<span class="nx">debug</span><span class="p">.</span><span class="nx">SetGCPercent</span><span class="p">(</span><span class="mi">50</span><span class="p">)</span><span class="w"> </span><span class="c1">// 搭配 GOMEMLIMIT 使用</span>
+</pre></div>
+
+<p>根治還是要讓存活集降下來。<strong><code>GOMEMLIMIT</code> 不能拿來當「記憶體不夠」的解方</strong>，它只能防止「配置太快導致超標」。</p>
+<h3 id="5-stw-變長">⑤ STW 變長<a class="headerlink" href="#5-stw-變長" title="Permanent link">#</a></h3>
+<p>Go GC 的設計目標是 STW 不隨堆積大小成長。如果你看到 STW 從幾十微秒漲到數毫秒，堆積大小通常不是原因：</p>
+<div class="hl" data-lang="text"><pre><span></span>gc 42 @120.5s 4%: 0.03+18+2.1 ms clock, ..., 890 MB stacks, ...
+                            ^^^                ^^^^^^^^^^^^
+                            第三段 STW 變長      goroutine 堆疊總量
+</pre></div>
+
+<p><strong><code>MB stacks</code> 是關鍵</strong>。STW 階段要掃描所有 goroutine 的堆疊，goroutine 數量或堆疊大小失控就會拉長它。</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// 監控 goroutine 數量 —— 最便宜的預警</span>
+<span class="nx">runtime</span><span class="p">.</span><span class="nx">NumGoroutine</span><span class="p">()</span>
+</pre></div>
+
+<p>常見成因：goroutine 洩漏（見 <a href="channel.html#goroutine-洩漏">channel</a>）、或深遞迴讓個別堆疊長得很大（見 <a href="stack.html">堆疊記憶體管理</a>）。</p>
+<h3 id="6-指標密集的資料結構">⑥ 指標密集的資料結構<a class="headerlink" href="#6-指標密集的資料結構" title="Permanent link">#</a></h3>
+<p>如果你有一棵常變動的樹或圖，GC 期間效能會明顯掉。原因有兩個：<strong>每次指標寫入都要走寫入屏障</strong>，而且<strong>掃描要一個一個追指標</strong>。</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 每個節點一次配置，掃描要追 N 次指標</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">Node</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Value</span><span class="w">    </span><span class="kt">int</span>
+<span class="w">    </span><span class="nx">Children</span><span class="w"> </span><span class="p">[]</span><span class="o">*</span><span class="nx">Node</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ 用索引取代指標</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">Node</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Value</span><span class="w">    </span><span class="kt">int</span>
+<span class="w">    </span><span class="nx">Children</span><span class="w"> </span><span class="p">[]</span><span class="kt">int32</span><span class="w"> </span><span class="c1">// 索引，不是指標</span>
+<span class="p">}</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">Tree</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">nodes</span><span class="w"> </span><span class="p">[]</span><span class="nx">Node</span><span class="w"> </span><span class="c1">// 一整塊連續記憶體</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">t</span><span class="w"> </span><span class="o">*</span><span class="nx">Tree</span><span class="p">)</span><span class="w"> </span><span class="nx">Child</span><span class="p">(</span><span class="nx">n</span><span class="w"> </span><span class="o">*</span><span class="nx">Node</span><span class="p">,</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="nx">Node</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">t</span><span class="p">.</span><span class="nx">nodes</span><span class="p">[</span><span class="nx">n</span><span class="p">.</span><span class="nx">Children</span><span class="p">[</span><span class="nx">i</span><span class="p">]]</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>改成索引之後：</p>
+<ul>
+<li><strong>寫入屏障消失</strong>——<code>int32</code> 不是指標</li>
+<li><strong>GC 掃描變快</strong>——如果 <code>[]Node</code> 整體不含指標，GC 可以直接跳過整塊</li>
+<li><strong>快取友善</strong>——節點連續存放</li>
+</ul>
+<p>代價是失去型別安全（索引可能越界或指向錯誤的節點），所以只在<strong>量測確認 GC 是瓶頸</strong>之後才做這種改寫。</p>
+<hr />
 <h2 id="常見誤解">常見誤解<a class="headerlink" href="#常見誤解" title="Permanent link">#</a></h2>
 <p><strong>「GC 會壓縮記憶體、消除碎片。」</strong> Go 的 GC <strong>不搬移物件</strong>。碎片靠 size class 機制減輕，但不會被消除。</p>
 <p><strong>「呼叫 <code>runtime.GC()</code> 可以優化效能。」</strong> 相反。它會強制一次完整的 STW GC，通常讓事情更糟。只在基準測試裡建立乾淨起點時才用。</p>
@@ -485,7 +681,7 @@ go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </sp
 <p><strong>「GC 停頓會隨堆積變大而變長。」</strong> 標記<strong>總時間</strong>會，但 <strong>STW 時間</strong>不會（那是 Go GC 的核心設計目標）。堆積 100 GB 的服務，STW 仍應維持在數百微秒。</p>
 <hr />
 <p>下一節是 Part 6 的最後一節：goroutine 的堆疊怎麼從 2 KB 長到需要的大小。</p></article><nav class='pager'><a class='prev' href='allocator.html'><span>上一節</span><strong>6.1 記憶體配置器</strong></a><a class='next' href='stack.html'><span>下一節</span><strong>6.3 堆疊記憶體管理</strong></a></nav></main>
-  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#go-的-gc-是什麼類型'>Go 的 GC 是什麼類型</a></li><li><a href='#三色標記'>三色標記</a></li><li><a href='#寫入屏障'>寫入屏障</a></li><li><a href='#四個階段'>四個階段</a><ul><li><a href='#協助標記mutator-assist'>協助標記（mutator assist）</a></li></ul></li><li><a href='#gogc-與-gomemlimit'>GOGC 與 GOMEMLIMIT</a><ul><li><a href='#gogc以百分比控制'>GOGC：以百分比控制</a></li><li><a href='#gomemlimit軟性記憶體上限'>GOMEMLIMIT：軟性記憶體上限</a></li><li><a href='#推薦的容器設定'>推薦的容器設定</a></li></ul></li><li><a href='#green-tea-gc'>Green Tea GC</a></li><li><a href='#讀-gctrace'>讀 gctrace</a></li><li><a href='#調校流程'>調校流程</a><ul><li><a href='#第一步先量測'>第一步：先量測</a></li><li><a href='#第二步減少配置最有效'>第二步：減少配置（最有效）</a></li><li><a href='#第三步才調參數'>第三步：才調參數</a></li><li><a href='#第四步考慮架構層面'>第四步：考慮架構層面</a></li></ul></li><li><a href='#常見誤解'>常見誤解</a></li></ul></nav></aside>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#go-的-gc-是什麼類型'>Go 的 GC 是什麼類型</a></li><li><a href='#三色標記'>三色標記</a></li><li><a href='#寫入屏障'>寫入屏障</a></li><li><a href='#四個階段'>四個階段</a><ul><li><a href='#協助標記mutator-assist'>協助標記（mutator assist）</a></li></ul></li><li><a href='#gogc-與-gomemlimit'>GOGC 與 GOMEMLIMIT</a><ul><li><a href='#gogc以百分比控制'>GOGC：以百分比控制</a></li><li><a href='#gomemlimit軟性記憶體上限'>GOMEMLIMIT：軟性記憶體上限</a></li><li><a href='#推薦的容器設定'>推薦的容器設定</a></li></ul></li><li><a href='#green-tea-gc'>Green Tea GC</a></li><li><a href='#讀-gctrace'>讀 gctrace</a></li><li><a href='#調校流程'>調校流程</a><ul><li><a href='#第一步先量測'>第一步：先量測</a></li><li><a href='#第二步減少配置最有效'>第二步：減少配置（最有效）</a></li><li><a href='#第三步才調參數'>第三步：才調參數</a></li><li><a href='#第四步考慮架構層面'>第四步：考慮架構層面</a></li></ul></li><li><a href='#正式環境的六個典型問題'>正式環境的六個典型問題</a><ul><li><a href='#1-容器被-oomkilled但堆積看起來很小'>① 容器被 OOMKilled，但堆積看起來很小</a></li><li><a href='#2-rss-不降那不是洩漏'>② RSS 不降：那不是洩漏</a></li><li><a href='#3-gc-太頻繁'>③ GC 太頻繁</a></li><li><a href='#4-gc-死亡螺旋'>④ GC 死亡螺旋</a></li><li><a href='#5-stw-變長'>⑤ STW 變長</a></li><li><a href='#6-指標密集的資料結構'>⑥ 指標密集的資料結構</a></li></ul></li><li><a href='#常見誤解'>常見誤解</a></li></ul></nav></aside>
 </div>
 
 <div class="scrim" hidden></div>

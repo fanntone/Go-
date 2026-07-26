@@ -258,7 +258,20 @@ func main() {
 ```
 
 !!! danger "不要把 pprof 端點暴露到公網"
-    `net/http/pprof` 會註冊到 `http.DefaultServeMux`。如果你的對外服務剛好也用 `DefaultServeMux`，這些端點就跟著上線了，任何人都能拉走你的堆積快照與完整呼叫堆疊。務必綁在 `localhost`，或掛在另一個只有內網能連的 mux 上。
+    上面那行 `_ "net/http/pprof"` 是**匿名 import**——它一行程式碼都沒被呼叫，卻會在 `init()` 時把 `/debug/pprof/*` 註冊到全域的 `http.DefaultServeMux`。
+
+    如果你的對外服務用 `http.ListenAndServe(addr, nil)`（`nil` 就是 `DefaultServeMux`），這些端點就跟著上線了：
+
+    | 路徑 | 洩漏什麼 |
+    | --- | --- |
+    | `/debug/pprof/heap` | 堆積快照，含記憶體中的資料 |
+    | `/debug/pprof/goroutine?debug=2` | 所有 goroutine 的完整呼叫堆疊 |
+    | `/debug/pprof/profile` | 30 秒 CPU 剖析——也能當 DoS 用 |
+    | `/debug/pprof/cmdline` | 完整命令列參數（常含設定與密鑰） |
+
+    更麻煩的是它會**間接發生**：你沒有直接 import，但某個第三方相依 import 了，結果一樣。
+
+    正確做法是自己建 mux、非匿名 import `net/http/pprof` 手動註冊，並把它綁在只有內網能連的位址上。完整說明與可執行的自我檢查程式碼見 [net/http：ServeMux 該用哪一個](http.html#servemux用內建的還是自己建一個)。
 
 常用的剖析種類：
 

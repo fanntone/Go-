@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3.4 錯誤處理與傳遞 — Go 底層原理筆記</title>
+<meta name="description" content="error 就是一個介面、誰該接住錯誤、%w 與 errors.Is/As 的包裝鏈，以及為什麼 goroutine 是錯誤傳遞鏈的斷點。">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐹</text></svg>">
+<script>
+  // 先套用主題，避免載入時閃爍
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body class="chapter">
+
+<a class="skip" href="#main">跳到主要內容</a>
+
+<header class="topbar">
+  <button class="iconbtn navtoggle" aria-label="開關目錄" aria-expanded="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <a class="brand" href="index.html"><span class="brand-mark">Go</span>Go 底層原理筆記</a>
+  <div class="topbar-right">
+    <button class="searchbtn" aria-label="搜尋">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span>搜尋</span><kbd>/</kbd>
+    </button>
+    <button class="iconbtn themetoggle" aria-label="切換亮／暗色主題">
+      <svg class="i-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg class="i-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar"><nav class="booknav" aria-label="全書目錄">
+<details class='part'>
+<summary><span class='part-kicker'>Part 0</span><span class='part-title'>開始之前</span></summary>
+<ul>
+<li><a href='layers.html'><span class='num'>0.1</span><span class='txt'>分層心智模型與用語約定</span></a></li>
+<li><a href='toolbox.html'><span class='num'>0.2</span><span class='txt'>打開黑盒子的工具箱</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 1</span><span class='part-title'>編譯器</span></summary>
+<ul>
+<li><a href='pipeline.html'><span class='num'>1.1</span><span class='txt'>編譯流程總覽</span></a></li>
+<li><a href='parser.html'><span class='num'>1.2</span><span class='txt'>詞法與語法分析</span></a></li>
+<li><a href='typecheck.html'><span class='num'>1.3</span><span class='txt'>型別檢查與泛型實例化</span></a></li>
+<li><a href='ssa.html'><span class='num'>1.4</span><span class='txt'>中間表示與 SSA</span></a></li>
+<li><a href='escape-inline.html'><span class='num'>1.5</span><span class='txt'>逃逸分析、內聯與 PGO</span></a></li>
+<li><a href='link.html'><span class='num'>1.6</span><span class='txt'>機器碼生成與連結</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 2</span><span class='part-title'>資料結構</span></summary>
+<ul>
+<li><a href='array.html'><span class='num'>2.1</span><span class='txt'>陣列 array</span></a></li>
+<li><a href='slice.html'><span class='num'>2.2</span><span class='txt'>切片 slice</span></a></li>
+<li><a href='map.html'><span class='num'>2.3</span><span class='txt'>雜湊表 map</span></a></li>
+<li><a href='string.html'><span class='num'>2.4</span><span class='txt'>字串 string</span></a></li>
+</ul></details>
+<details class='part' open>
+<summary><span class='part-kicker'>Part 3</span><span class='part-title'>語言核心</span></summary>
+<ul>
+<li><a href='calling-convention.html'><span class='num'>3.1</span><span class='txt'>函式呼叫與呼叫慣例</span></a></li>
+<li><a href='interface.html'><span class='num'>3.2</span><span class='txt'>介面 interface</span></a></li>
+<li><a href='reflect.html'><span class='num'>3.3</span><span class='txt'>反射 reflect</span></a></li>
+<li class='active'><a href='errors.html'><span class='num'>3.4</span><span class='txt'>錯誤處理與傳遞</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 4</span><span class='part-title'>關鍵字</span></summary>
+<ul>
+<li><a href='for-range.html'><span class='num'>4.1</span><span class='txt'>for 與 range</span></a></li>
+<li><a href='select.html'><span class='num'>4.2</span><span class='txt'>select</span></a></li>
+<li><a href='defer.html'><span class='num'>4.3</span><span class='txt'>defer</span></a></li>
+<li><a href='panic.html'><span class='num'>4.4</span><span class='txt'>panic 與 recover</span></a></li>
+<li><a href='make-new.html'><span class='num'>4.5</span><span class='txt'>make 與 new</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 5</span><span class='part-title'>並行</span></summary>
+<ul>
+<li><a href='context.html'><span class='num'>5.1</span><span class='txt'>context</span></a></li>
+<li><a href='sync.html'><span class='num'>5.2</span><span class='txt'>同步原語與鎖</span></a></li>
+<li><a href='timer.html'><span class='num'>5.3</span><span class='txt'>計時器 timer</span></a></li>
+<li><a href='channel.html'><span class='num'>5.4</span><span class='txt'>channel</span></a></li>
+<li><a href='scheduler.html'><span class='num'>5.5</span><span class='txt'>GMP 排程器</span></a></li>
+<li><a href='netpoller.html'><span class='num'>5.6</span><span class='txt'>網路輪詢器 netpoller</span></a></li>
+<li><a href='sysmon.html'><span class='num'>5.7</span><span class='txt'>系統監控 sysmon</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 6</span><span class='part-title'>記憶體管理</span></summary>
+<ul>
+<li><a href='allocator.html'><span class='num'>6.1</span><span class='txt'>記憶體配置器</span></a></li>
+<li><a href='gc.html'><span class='num'>6.2</span><span class='txt'>垃圾回收器</span></a></li>
+<li><a href='stack.html'><span class='num'>6.3</span><span class='txt'>堆疊記憶體管理</span></a></li>
+</ul></details>
+<details class='part'>
+<summary><span class='part-kicker'>Part 7</span><span class='part-title'>標準函式庫與進階主題</span></summary>
+<ul>
+<li><a href='json.html'><span class='num'>7.1</span><span class='txt'>encoding/json</span></a></li>
+<li><a href='http.html'><span class='num'>7.2</span><span class='txt'>net/http</span></a></li>
+<li><a href='database.html'><span class='num'>7.3</span><span class='txt'>database/sql</span></a></li>
+<li><a href='cgo.html'><span class='num'>7.4</span><span class='txt'>cgo</span></a></li>
+<li><a href='codegen.html'><span class='num'>7.5</span><span class='txt'>程式碼生成</span></a></li>
+</ul></details>
+</nav></aside>
+  <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>語言核心</p><h1><span class='h1num'>3.4</span>錯誤處理與傳遞</h1><p class='lede'>error 就是一個介面、誰該接住錯誤、%w 與 errors.Is/As 的包裝鏈，以及為什麼 goroutine 是錯誤傳遞鏈的斷點。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="error-只是一個介面">error 只是一個介面<a class="headerlink" href="#error-只是一個介面" title="Permanent link">#</a></h2>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="kd">interface</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Error</span><span class="p">()</span><span class="w"> </span><span class="kt">string</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>整個標準庫就這樣定義。沒有基底類別、沒有例外階層、沒有 <code>throws</code> 宣告。<strong>回傳 error 就是回傳一個介面值</strong>——所以 <a href="interface.html">介面</a> 那節講的一切都適用，包括最有名的那個坑：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">var</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">*</span><span class="nx">MyError</span><span class="w">   </span><span class="c1">// nil 指標</span>
+<span class="k">return</span><span class="w"> </span><span class="nx">err</span><span class="w">         </span><span class="c1">// ✗ 裝箱後介面不是 nil</span>
+</pre></div>
+
+<p>細節見 <a href="interface.html#nil-介面的經典陷阱">nil 介面的經典陷阱</a>。這是 error 相關 bug 的第一名。</p>
+<hr />
+<h2 id="誰該接住錯誤">誰該接住錯誤<a class="headerlink" href="#誰該接住錯誤" title="Permanent link">#</a></h2>
+<p>這是最常被問、也最少被講清楚的問題。「每一層都要 <code>if err != nil</code> 往上傳，那到底誰處理？」</p>
+<p>判準不是深度，是：<strong>握有「該怎麼辦」所需資訊的那一層。</strong></p>
+<p>看一個四層的例子：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;errors&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">var</span><span class="w"> </span><span class="nx">ErrNotFound</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;找不到資料&quot;</span><span class="p">)</span>
+
+<span class="c1">// ── 第 4 層（最底）：只知道「查不到」</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">queryDB</span><span class="p">(</span><span class="nx">id</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">42</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">ErrNotFound</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+
+<span class="c1">// ── 第 3 層：加上下文，不做決定</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">repoGet</span><span class="p">(</span><span class="nx">id</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">queryDB</span><span class="p">(</span><span class="nx">id</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;repo.Get(%d): %w&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+
+<span class="c1">// ── 第 2 層：同上</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">serviceLoad</span><span class="p">(</span><span class="nx">id</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">repoGet</span><span class="p">(</span><span class="nx">id</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;service.Load: %w&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+
+<span class="c1">// ── 第 1 層：邊界，這裡才做決定</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">handle</span><span class="p">(</span><span class="nx">id</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">serviceLoad</span><span class="p">(</span><span class="nx">id</span><span class="p">)</span>
+<span class="w">    </span><span class="k">switch</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="kc">nil</span><span class="p">:</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="mi">200</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">Is</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span><span class="w"> </span><span class="nx">ErrNotFound</span><span class="p">):</span><span class="w"> </span><span class="c1">// 穿過三層包裝仍認得出來</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;   完整訊息: %v\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="mi">404</span>
+<span class="w">    </span><span class="k">default</span><span class="p">:</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="mi">500</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">42</span><span class="p">}</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;id=%-3d → HTTP %d\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">,</span><span class="w"> </span><span class="nx">handle</span><span class="p">(</span><span class="nx">id</span><span class="p">))</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>id=1   → HTTP 200
+   完整訊息: service.Load: repo.Get(42): 找不到資料
+id=42  → HTTP 404
+</pre></div>
+
+<p><code>repoGet</code> 拿到 <code>ErrNotFound</code> 時，它<strong>沒有能力</strong>判斷這該變成 404、該重試、還是根本是正常情況——那取決於呼叫者在做什麼。所以它不該決定，只該把資訊補足後往上傳。</p>
+<h3 id="常見的邊界">常見的邊界<a class="headerlink" href="#常見的邊界" title="Permanent link">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>邊界</th>
+<th>做的決定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>HTTP handler</td>
+<td>轉成 status code 與回應主體</td>
+</tr>
+<tr>
+<td>gRPC interceptor</td>
+<td>轉成 <code>codes.NotFound</code> 等狀態碼</td>
+</tr>
+<tr>
+<td><code>main()</code></td>
+<td>記錄後 <code>os.Exit(1)</code></td>
+</tr>
+<tr>
+<td>worker 迴圈</td>
+<td>重試／跳過這一筆／整個停掉</td>
+</tr>
+<tr>
+<td>CLI 指令</td>
+<td>印到 stderr + 設定 exit code</td>
+</tr>
+<tr>
+<td>測試</td>
+<td><code>t.Fatal</code> / <code>t.Error</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="中間層只做兩件事">中間層只做兩件事<a class="headerlink" href="#中間層只做兩件事" title="Permanent link">#</a></h3>
+<ol>
+<li><strong>加上下文</strong>（我是誰、輸入是什麼）</li>
+<li><strong>往上傳</strong></li>
+</ol>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✓ 中間層該長的樣子</span>
+<span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">repoGet</span><span class="p">(</span><span class="nx">id</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;service.Load: %w&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="admonition warning">
+<p class="admonition-title">反模式：每一層都 log</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 同一個錯誤會在日誌裡出現四次</span>
+<span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">repoGet</span><span class="p">(</span><span class="nx">id</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Error</span><span class="p">(</span><span class="s">&quot;repo get failed&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;err&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span><span class="w">   </span><span class="c1">// ← 不要</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;service.Load: %w&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>這會讓日誌爆量，而且很難判斷「到底發生了幾次錯誤」。</p>
+<p>規則：<strong>中間層只包裝，邊界才 log 一次</strong>。包裝時累積的上下文已經足以還原整條路徑。</p>
+</div>
+<hr />
+<h2 id="w-與包裝鏈"><code>%w</code> 與包裝鏈<a class="headerlink" href="#w-與包裝鏈" title="Permanent link">#</a></h2>
+<div class="admonition version">
+<p class="admonition-title">Go 1.13 起：<code>%w</code>、<code>errors.Is</code>、<code>errors.As</code></p>
+<p>在此之前，要判斷錯誤型別只能用 <code>err == ErrFoo</code>（一包裝就失效）或字串比對（更糟）。Go 1.13 引入了錯誤包裝機制，這是 Go 錯誤處理最重要的一次演進。</p>
+</div>
+<p><code>fmt.Errorf</code> 的 <code>%w</code> 與 <code>%v</code> 差在<strong>有沒有保留原始錯誤</strong>：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;errors&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">var</span><span class="w"> </span><span class="nx">ErrBase</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;底層錯誤&quot;</span><span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">wrapped</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;外層: %w&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">ErrBase</span><span class="p">)</span><span class="w"> </span><span class="c1">// 保留</span>
+<span class="w">    </span><span class="nx">flat</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;外層: %v&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">ErrBase</span><span class="p">)</span><span class="w">    </span><span class="c1">// 只留字串</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">wrapped</span><span class="p">)</span><span class="w">                       </span><span class="c1">// 外層: 底層錯誤</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">flat</span><span class="p">)</span><span class="w">                          </span><span class="c1">// 外層: 底層錯誤 ← 印出來一樣！</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">errors</span><span class="p">.</span><span class="nx">Is</span><span class="p">(</span><span class="nx">wrapped</span><span class="p">,</span><span class="w"> </span><span class="nx">ErrBase</span><span class="p">))</span><span class="w">   </span><span class="c1">// true</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">errors</span><span class="p">.</span><span class="nx">Is</span><span class="p">(</span><span class="nx">flat</span><span class="p">,</span><span class="w"> </span><span class="nx">ErrBase</span><span class="p">))</span><span class="w">      </span><span class="c1">// false ← 鏈斷了</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">errors</span><span class="p">.</span><span class="nx">Unwrap</span><span class="p">(</span><span class="nx">wrapped</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nx">ErrBase</span><span class="p">)</span><span class="w"> </span><span class="c1">// true</span>
+<span class="p">}</span>
+</pre></div>
+
+<p><strong>兩者印出來完全一樣，但一個能被 <code>errors.Is</code> 認出、一個不行。</strong> 這是很容易漏掉的差異——預設就用 <code>%w</code>。</p>
+<h3 id="errorsis比對特定的錯誤值"><code>errors.Is</code>：比對特定的錯誤值<a class="headerlink" href="#errorsis比對特定的錯誤值" title="Permanent link">#</a></h3>
+<p>適合<strong>哨兵錯誤（sentinel error）</strong>——那些代表某種狀況、不需要攜帶額外資料的錯誤：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">var</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="nx">ErrNotFound</span><span class="w">     </span><span class="p">=</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;找不到資料&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">ErrPermission</span><span class="w">   </span><span class="p">=</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;權限不足&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">ErrRateLimited</span><span class="w">  </span><span class="p">=</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;超過速率限制&quot;</span><span class="p">)</span>
+<span class="p">)</span>
+
+<span class="k">if</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">Is</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span><span class="w"> </span><span class="nx">ErrNotFound</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="mi">404</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>標準庫也有一堆：<code>io.EOF</code>、<code>sql.ErrNoRows</code>、<code>os.ErrNotExist</code>、<code>context.Canceled</code>、<code>context.DeadlineExceeded</code>。</p>
+<h3 id="errorsas取出帶欄位的錯誤"><code>errors.As</code>：取出帶欄位的錯誤<a class="headerlink" href="#errorsas取出帶欄位的錯誤" title="Permanent link">#</a></h3>
+<p>當錯誤需要<strong>攜帶資料</strong>時，定義自己的型別：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;errors&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">type</span><span class="w"> </span><span class="nx">ValidationError</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Field</span><span class="w">  </span><span class="kt">string</span>
+<span class="w">    </span><span class="nx">Reason</span><span class="w"> </span><span class="kt">string</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">e</span><span class="w"> </span><span class="o">*</span><span class="nx">ValidationError</span><span class="p">)</span><span class="w"> </span><span class="nx">Error</span><span class="p">()</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Sprintf</span><span class="p">(</span><span class="s">&quot;欄位 %s 無效: %s&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">e</span><span class="p">.</span><span class="nx">Field</span><span class="p">,</span><span class="w"> </span><span class="nx">e</span><span class="p">.</span><span class="nx">Reason</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">validate</span><span class="p">(</span><span class="nx">age</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">age</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">ValidationError</span><span class="p">{</span><span class="nx">Field</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;age&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">Reason</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;不可為負數&quot;</span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;建立使用者: %w&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">validate</span><span class="p">(</span><span class="o">-</span><span class="mi">5</span><span class="p">))</span>
+
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">ve</span><span class="w"> </span><span class="o">*</span><span class="nx">ValidationError</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">As</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">ve</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="c1">// 從鏈中找出這個型別</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;有問題的欄位:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">ve</span><span class="p">.</span><span class="nx">Field</span><span class="p">)</span><span class="w">  </span><span class="c1">// age</span>
+<span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;原因:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">ve</span><span class="p">.</span><span class="nx">Reason</span><span class="p">)</span><span class="w">        </span><span class="c1">// 不可為負數</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="admonition tip">
+<p class="admonition-title"><code>Is</code> 還是 <code>As</code>？</p>
+<ul>
+<li><strong>不需要額外資料</strong> → 哨兵錯誤 + <code>errors.Is</code></li>
+<li><strong>需要知道細節</strong>（哪個欄位、重試幾次、HTTP 狀態碼） → 自訂型別 + <code>errors.As</code></li>
+</ul>
+<p>注意 <code>errors.As</code> 的第二個參數必須是<strong>指標的指標</strong>（<code>&amp;ve</code>，其中 <code>ve</code> 是 <code>*ValidationError</code>），因為它要寫入。傳錯會 panic。</p>
+</div>
+<h3 id="errorsjoin多個錯誤合成一個"><code>errors.Join</code>：多個錯誤合成一個<a class="headerlink" href="#errorsjoin多個錯誤合成一個" title="Permanent link">#</a></h3>
+<div class="admonition version">
+<p class="admonition-title">Go 1.20 起</p>
+<p>以前要回報多個錯誤只能自己拼字串或引入第三方套件。</p>
+</div>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;errors&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">var</span><span class="w"> </span><span class="nx">ErrA</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;錯誤 A&quot;</span><span class="p">)</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">ErrB</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;錯誤 B&quot;</span><span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">Join</span><span class="p">(</span><span class="nx">ErrA</span><span class="p">,</span><span class="w"> </span><span class="nx">ErrB</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">errors</span><span class="p">.</span><span class="nx">Is</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span><span class="w"> </span><span class="nx">ErrA</span><span class="p">))</span><span class="w"> </span><span class="c1">// true</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">errors</span><span class="p">.</span><span class="nx">Is</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span><span class="w"> </span><span class="nx">ErrB</span><span class="p">))</span><span class="w"> </span><span class="c1">// true ← 兩個都認得</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>錯誤 A
+錯誤 B
+true
+true
+</pre></div>
+
+<p><code>Join</code> 會忽略 <code>nil</code>，所以可以放心地把可能為 nil 的錯誤丟進去。這對「收集多個驗證失敗」或「等一組並行工作」特別好用。</p>
+<hr />
+<h2 id="goroutine-是傳遞鏈的斷點">goroutine 是傳遞鏈的斷點<a class="headerlink" href="#goroutine-是傳遞鏈的斷點" title="Permanent link">#</a></h2>
+<p>這是整章最重要的一節。</p>
+<p><code>return err</code> 的意思是「交給我的呼叫者」。但 <strong><code>go func()</code> 沒有呼叫者</strong>：</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">doWork</span><span class="p">();</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w">   </span><span class="c1">// ← 回到哪裡？沒有。錯誤就此消失</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}()</span>
+</pre></div>
+
+<figure class="diagram"><svg viewBox="0 0 700 300" role="img" aria-label="錯誤在 goroutine 邊界中斷"><text class="d-t-b" x="15" y="20">一般呼叫：錯誤沿著堆疊往回傳</text><rect class="d-box-o" x="15" y="32" width="130" height="34" rx="4"/><text class="d-t-s d-mid" x="80" y="54">main / handler</text><rect class="d-box" x="165" y="32" width="130" height="34" rx="4"/><text class="d-t-s d-mid" x="230" y="54">service</text><rect class="d-box" x="315" y="32" width="130" height="34" rx="4"/><text class="d-t-s d-mid" x="380" y="54">repo</text><rect class="d-box" x="465" y="32" width="130" height="34" rx="4"/><text class="d-t-s d-mid" x="530" y="54">db</text><path class="d-line-a" d="M461 78 L319 78" marker-end="url(#are1)"/><path class="d-line-a" d="M311 78 L169 78" marker-end="url(#are1)"/><path class="d-line-a" d="M161 78 L19 78" marker-end="url(#are1)"/><text class="d-t-a d-mid" x="300" y="98">err 逐層往上，每層加上下文 → 邊界做決定</text><line class="d-dash" x1="15" y1="120" x2="685" y2="120"/><text class="d-t-b" x="15" y="148">go func()：鏈斷在這裡</text><rect class="d-box-o" x="15" y="160" width="130" height="34" rx="4"/><text class="d-t-s d-mid" x="80" y="182">handler</text><rect class="d-box-d" x="230" y="160" width="200" height="34" rx="4"/><text class="d-t-s d-mid" x="330" y="182">go func() { … }</text><rect class="d-box" x="465" y="160" width="130" height="34" rx="4"/><text class="d-t-s d-mid" x="530" y="182">doWork()</text><path class="d-line-a" d="M461 206 L434 206" marker-end="url(#are1)"/><text class="d-t-a" x="240" y="222">err 回到這裡就沒了 —— 沒有呼叫者</text><path class="d-dash" d="M226 178 L149 178"/><text class="d-t-s" x="150" y="160">✗ 傳不回去</text><rect class="d-box-a" x="15" y="240" width="670" height="46" rx="6"/><text class="d-t-b" x="30" y="262">同樣的道理：goroutine 裡的 panic 也沒有上層可以展開 → 直接終止整個行程</text><text class="d-t-s" x="30" y="280">所以每一個 go 陳述式，都必須明確回答一個問題：「錯誤要去哪裡？」</text><defs><marker id="are1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--accent)"/></marker></defs></svg><figcaption><b>goroutine 沒有呼叫者。</b>這同時解釋了兩件事：為什麼 goroutine 裡的 error 會憑空消失，以及為什麼 goroutine 裡的 panic 會殺掉整個行程（見 <a href="panic.html">panic 與 recover</a>）。兩者根因相同。</figcaption></figure>
+
+<h3 id="規則每個-go-都要有錯誤出口">規則：每個 <code>go</code> 都要有錯誤出口<a class="headerlink" href="#規則每個-go-都要有錯誤出口" title="Permanent link">#</a></h3>
+<p>答不出「錯誤去哪裡」就是 bug。三種給法：</p>
+<p><strong>① <code>errgroup</code> —— 有子任務要等的話，這是預設答案</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="s">&quot;golang.org/x/sync/errgroup&quot;</span>
+
+<span class="nx">g</span><span class="p">,</span><span class="w"> </span><span class="nx">ctx</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">errgroup</span><span class="p">.</span><span class="nx">WithContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
+<span class="nx">g</span><span class="p">.</span><span class="nx">SetLimit</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span><span class="w"> </span><span class="c1">// 順便限制並行度</span>
+
+<span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">ids</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">g</span><span class="p">.</span><span class="nx">Go</span><span class="p">(</span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">serviceLoad</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">)</span><span class="w"> </span><span class="c1">// ← 出口就是回傳值</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="p">}</span>
+
+<span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">g</span><span class="p">.</span><span class="nx">Wait</span><span class="p">();</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="c1">// 回傳第一個錯誤，並自動取消 ctx</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="p">}</span>
+</pre></div>
+
+<p><strong>② 自己收集 —— 需要「全部跑完並拿到所有錯誤」時</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;errors&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;sync&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">var</span><span class="w"> </span><span class="nx">ErrNotFound</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;找不到資料&quot;</span><span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">load</span><span class="p">(</span><span class="nx">id</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">42</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;load(%d): %w&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">,</span><span class="w"> </span><span class="nx">ErrNotFound</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">fanOut</span><span class="p">(</span><span class="nx">ids</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="p">(</span>
+<span class="w">        </span><span class="nx">mu</span><span class="w">   </span><span class="nx">sync</span><span class="p">.</span><span class="nx">Mutex</span>
+<span class="w">        </span><span class="nx">errs</span><span class="w"> </span><span class="p">[]</span><span class="kt">error</span>
+<span class="w">        </span><span class="nx">wg</span><span class="w">   </span><span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+<span class="w">    </span><span class="p">)</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">ids</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Add</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="w">        </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">defer</span><span class="w"> </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Done</span><span class="p">()</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">load</span><span class="p">(</span><span class="nx">id</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
+<span class="w">                </span><span class="nx">errs</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">errs</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span><span class="w"> </span><span class="c1">// ← 出口：收集到共用 slice</span>
+<span class="w">                </span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}()</span>
+<span class="w">    </span><span class="p">}</span>
+
+<span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">Join</span><span class="p">(</span><span class="nx">errs</span><span class="o">...</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">fanOut</span><span class="p">([]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">42</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">42</span><span class="p">})</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;仍認得原始錯誤:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">Is</span><span class="p">(</span><span class="nx">err</span><span class="p">,</span><span class="w"> </span><span class="nx">ErrNotFound</span><span class="p">))</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>load(42): 找不到資料
+load(42): 找不到資料
+仍認得原始錯誤: true
+</pre></div>
+
+<p><strong>③ fire-and-forget —— 沒人等的話，出口就是日誌</strong></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">safeGo</span><span class="p">(</span><span class="nx">fn</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">recover</span><span class="p">();</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">                </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Error</span><span class="p">(</span><span class="s">&quot;goroutine panic&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;err&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;stack&quot;</span><span class="p">,</span><span class="w"> </span><span class="nb">string</span><span class="p">(</span><span class="nx">debug</span><span class="p">.</span><span class="nx">Stack</span><span class="p">()))</span>
+<span class="w">            </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}()</span>
+
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">fn</span><span class="p">();</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Error</span><span class="p">(</span><span class="s">&quot;background task failed&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;err&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span><span class="w"> </span><span class="c1">// ← 出口</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}()</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="admonition danger">
+<p class="admonition-title">fire-and-forget 一定要自己 recover</p>
+<p>HTTP 中介層的 recover <strong>保護不到你在 handler 裡開的 goroutine</strong>——它們是不同的 goroutine，展開路徑完全分開。</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">handler</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="nx">doBackgroundWork</span><span class="p">()</span><span class="w">   </span><span class="c1">// ✗ 這裡面 panic，整個服務下線</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>這是 Go 服務最常見的當機原因。詳見 <a href="panic.html#在服務邊界攔截-panic">在服務邊界攔截 panic</a>。</p>
+</div>
+<hr />
+<h2 id="什麼時候用-panic-而不是-error">什麼時候用 panic 而不是 error<a class="headerlink" href="#什麼時候用-panic-而不是-error" title="Permanent link">#</a></h2>
+<p>一句話：<strong>error 用於「預期內的失敗」，panic 用於「程式有 bug」。</strong></p>
+<table>
+<thead>
+<tr>
+<th>情況</th>
+<th>用什麼</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>檔案不存在、網路失敗、輸入格式錯誤</td>
+<td>error</td>
+</tr>
+<tr>
+<td>查無資料、權限不足、超過配額</td>
+<td>error</td>
+</tr>
+<tr>
+<td>索引越界、nil 解參照（自己寫錯）</td>
+<td>panic（runtime 幫你發）</td>
+</tr>
+<tr>
+<td>內建常數的正規表示式編譯失敗</td>
+<td>panic（<code>MustCompile</code> 慣例）</td>
+</tr>
+<tr>
+<td>初始化必要資源失敗且無法繼續</td>
+<td>panic 或 <code>log.Fatal</code>（僅限 <code>main</code>）</td>
+</tr>
+</tbody>
+</table>
+<p>完整討論見 <a href="panic.html#什麼時候該-panic">panic 與 recover</a>。</p>
+<div class="admonition warning">
+<p class="admonition-title">函式庫不要用 <code>log.Fatal</code></p>
+<p><code>log.Fatal</code> 內部呼叫 <code>os.Exit</code>，<strong>不會執行任何 <code>defer</code></strong>。在函式庫裡用它，會讓呼叫端所有的清理邏輯失效，而且對方完全沒有機會處理。</p>
+<p><code>log.Fatal</code> 只屬於 <code>main</code>。</p>
+</div>
+<hr />
+<h2 id="檢查清單">檢查清單<a class="headerlink" href="#檢查清單" title="Permanent link">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>項目</th>
+<th>理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>✓ 包裝用 <code>%w</code> 不用 <code>%v</code></td>
+<td>否則 <code>errors.Is</code>／<code>As</code> 會失效</td>
+</tr>
+<tr>
+<td>✓ 中間層只加上下文，不 log</td>
+<td>避免同一個錯誤被記錄多次</td>
+</tr>
+<tr>
+<td>✓ 判斷用 <code>errors.Is</code>／<code>As</code>，不用 <code>==</code> 或字串比對</td>
+<td>包裝後仍然正確</td>
+</tr>
+<tr>
+<td>✓ 每個 <code>go</code> 都有明確的錯誤出口</td>
+<td>否則錯誤會憑空消失</td>
+</tr>
+<tr>
+<td>✓ fire-and-forget 的 goroutine 自己 <code>recover</code></td>
+<td>否則一次 panic 就整個服務下線</td>
+</tr>
+<tr>
+<td>✓ 回傳 <code>error</code> 的函式不要用具體錯誤型別的變數</td>
+<td>避免 nil 介面陷阱</td>
+</tr>
+<tr>
+<td>✓ CI 跑 <code>errcheck</code></td>
+<td>自動抓出「回傳了 error 卻沒接」</td>
+</tr>
+</tbody>
+</table>
+<p><code>errcheck</code> 已包含在 <code>golangci-lint</code> 裡：</p>
+<div class="hl" data-lang="bash"><pre><span></span>golangci-lint<span class="w"> </span>run<span class="w"> </span>--enable<span class="o">=</span>errcheck<span class="w"> </span>./...
+</pre></div>
+
+<p>這是錯誤處理中唯一能被完全自動化的部分，很值得放進 CI。</p></article><nav class='pager'><a class='prev' href='reflect.html'><span>上一節</span><strong>3.3 反射 reflect</strong></a><a class='next' href='for-range.html'><span>下一節</span><strong>4.1 for 與 range</strong></a></nav></main>
+  <aside class="rail"><nav class='pagetoc' aria-label='本頁目錄'><p class='pagetoc-h'>本頁章節</p><ul><li><a href='#error-只是一個介面'>error 只是一個介面</a></li><li><a href='#誰該接住錯誤'>誰該接住錯誤</a><ul><li><a href='#常見的邊界'>常見的邊界</a></li><li><a href='#中間層只做兩件事'>中間層只做兩件事</a></li></ul></li><li><a href='#w-與包裝鏈'>%w 與包裝鏈</a><ul><li><a href='#errorsis比對特定的錯誤值'>errors.Is：比對特定的錯誤值</a></li><li><a href='#errorsas取出帶欄位的錯誤'>errors.As：取出帶欄位的錯誤</a></li><li><a href='#errorsjoin多個錯誤合成一個'>errors.Join：多個錯誤合成一個</a></li></ul></li><li><a href='#goroutine-是傳遞鏈的斷點'>goroutine 是傳遞鏈的斷點</a><ul><li><a href='#規則每個-go-都要有錯誤出口'>規則：每個 go 都要有錯誤出口</a></li></ul></li><li><a href='#什麼時候用-panic-而不是-error'>什麼時候用 panic 而不是 error</a></li><li><a href='#檢查清單'>檢查清單</a></li></ul></nav></aside>
+</div>
+
+<div class="scrim" hidden></div>
+
+<dialog class="searchbox" id="searchbox">
+  <form method="dialog" class="searchbox-head">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <input type="search" id="q" placeholder="搜尋章節、關鍵字…（例如 GMP、逃逸分析、Swiss Table）" autocomplete="off">
+    <button value="close" class="esc">Esc</button>
+  </form>
+  <div class="searchbox-results" id="results"></div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>
