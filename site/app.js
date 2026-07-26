@@ -32,8 +32,9 @@
   /* ---------- 程式碼區塊：語言標籤 + 複製 ---------- */
   const LANG = {
     go: 'Go', text: '輸出', bash: 'Shell', shell: 'Shell', console: 'Shell',
-    asm: '組合語言', nasm: '組合語言', gas: '組合語言', diff: 'Diff',
-    json: 'JSON', yaml: 'YAML', sql: 'SQL', c: 'C', ebnf: 'EBNF', html: 'HTML',
+    powershell: 'PowerShell', asm: '組合語言', nasm: '組合語言', gas: '組合語言',
+    diff: 'Diff', json: 'JSON', yaml: 'YAML', sql: 'SQL', c: 'C', ebnf: 'EBNF',
+    html: 'HTML', dockerfile: 'Dockerfile', makefile: 'Makefile', toml: 'TOML',
   };
 
   document.querySelectorAll('.prose .hl').forEach((block) => {

@@ -109,7 +109,7 @@
 </nav></aside>
   <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>並行</p><h1><span class='h1num'>5.4</span>channel</h1><p class='lede'>hchan 的結構、有無緩衝的差異、直接交遞最佳化、關閉的規則，以及 goroutine 洩漏的成因與防範。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="hchan-的結構">hchan 的結構<a class="headerlink" href="#hchan-的結構" title="Permanent link">#</a></h2>
 <p>channel 在 runtime 裡是 <code>hchan</code>（<code>runtime/chan.go</code>），關鍵欄位：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">hchan</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">hchan</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">qcount</span><span class="w">   </span><span class="kt">uint</span><span class="w">           </span><span class="c1">// 緩衝區目前有幾個元素</span>
 <span class="w">    </span><span class="nx">dataqsiz</span><span class="w"> </span><span class="kt">uint</span><span class="w">           </span><span class="c1">// 緩衝區容量（make 的第二個參數）</span>
 <span class="w">    </span><span class="nx">buf</span><span class="w">      </span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="w"> </span><span class="c1">// 環形緩衝區</span>
@@ -122,7 +122,7 @@
 <span class="w">    </span><span class="nx">sendq</span><span class="w">    </span><span class="nx">waitq</span><span class="w">          </span><span class="c1">// 等待傳送的 goroutine 佇列</span>
 <span class="w">    </span><span class="nx">lock</span><span class="w">     </span><span class="nx">mutex</span><span class="w">          </span><span class="c1">// 保護以上所有欄位</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <figure class="diagram"><svg viewBox="0 0 700 310" role="img" aria-label="hchan 的內部結構"><rect class="d-box-a" x="15" y="14" width="300" height="150" rx="6"/><text class="d-t-b" x="30" y="36">hchan</text><rect class="d-box" x="30" y="46" width="270" height="24" rx="3"/><text class="d-t-m" x="40" y="63">qcount=2　dataqsiz=4</text><rect class="d-box" x="30" y="74" width="270" height="24" rx="3"/><text class="d-t-m" x="40" y="91">sendx=3　recvx=1</text><rect class="d-box" x="30" y="102" width="270" height="24" rx="3"/><text class="d-t-m" x="40" y="119">closed=0　lock</text><rect class="d-box" x="30" y="130" width="270" height="24" rx="3"/><text class="d-t-m" x="40" y="147">buf → 環形緩衝區</text><text class="d-t-b" x="360" y="36">環形緩衝區 buf（容量 4）</text><rect class="d-box" x="360" y="46" width="76" height="42" rx="4"/><text class="d-t-s d-mid" x="398" y="66">空</text><text class="d-t-s d-mid" x="398" y="82">[0]</text><rect class="d-box-o" x="436" y="46" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="474" y="66">v1</text><text class="d-t-s d-mid" x="474" y="82">[1] ← recvx</text><rect class="d-box-o" x="512" y="46" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="550" y="66">v2</text><text class="d-t-s d-mid" x="550" y="82">[2]</text><rect class="d-box" x="588" y="46" width="76" height="42" rx="4"/><text class="d-t-s d-mid" x="626" y="66">空</text><text class="d-t-s d-mid" x="626" y="82">[3] ← sendx</text><text class="d-t-s" x="360" y="112">讀寫指標繞圈前進，滿了 sendx 追上 recvx</text><text class="d-t-b" x="15" y="196">等待佇列（雙向鏈結串列，元素是 sudog）</text><rect class="d-box-w" x="15" y="206" width="325" height="70" rx="6"/><text class="d-t-b" x="28" y="228">sendq — 想送但送不出去的 goroutine</text><text class="d-t-s" x="28" y="248">每個 sudog 記錄：g 指標、要傳送的值的位址</text><text class="d-t-s" x="28" y="266">緩衝區滿 或 無緩衝且沒人接 → 掛在這裡休眠</text><rect class="d-box-w" x="360" y="206" width="325" height="70" rx="6"/><text class="d-t-b" x="373" y="228">recvq — 想收但收不到的 goroutine</text><text class="d-t-s" x="373" y="248">每個 sudog 記錄：g 指標、接收目標的位址</text><text class="d-t-s" x="373" y="266">緩衝區空 或 無緩衝且沒人送 → 掛在這裡休眠</text><text class="d-t-s" x="15" y="300">所有操作都在 lock 保護下進行。channel 是有鎖的資料結構 —— 這是它比 atomic 慢的原因。</text></svg><figcaption><b>hchan 三大部件。</b>環形緩衝區存資料、兩個等待佇列存被阻塞的 goroutine、一把鎖保護全部。無緩衝 channel 的 <code>dataqsiz</code> 是 0，只靠兩個佇列運作。</figcaption></figure>
 
@@ -130,32 +130,32 @@
 <h2 id="傳送的三條路徑">傳送的三條路徑<a class="headerlink" href="#傳送的三條路徑" title="Permanent link">#</a></h2>
 <p><code>ch &lt;- v</code> 被改寫成 <code>runtime.chansend1(ch, &amp;v)</code>，內部依情況走三條路：</p>
 <h3 id="路徑一有人在等接收-直接交遞">路徑一：有人在等接收 → 直接交遞<a class="headerlink" href="#路徑一有人在等接收-直接交遞" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="text"><pre><span></span><code>if recvq 不為空 {
+<div class="hl" data-lang="text"><pre><span></span>if recvq 不為空 {
     取出一個等待的接收者
     把 v 直接複製到「它的接收目標位址」   ← 跳過緩衝區！
     喚醒它
     return
 }
-</code></pre></div>
+</pre></div>
 
 <p><strong>這是最快的路徑。</strong> 資料從傳送者的堆疊<strong>直接寫進接收者的堆疊</strong>，完全不經過 channel 的緩衝區——省下一次記憶體複製。</p>
 <p>這個最佳化叫<strong>直接交遞（direct handoff）</strong>，是 Go channel 效能的關鍵之一。</p>
 <h3 id="路徑二緩衝區還有空間-放進去">路徑二：緩衝區還有空間 → 放進去<a class="headerlink" href="#路徑二緩衝區還有空間-放進去" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="text"><pre><span></span><code>if qcount &lt; dataqsiz {
+<div class="hl" data-lang="text"><pre><span></span>if qcount &lt; dataqsiz {
     把 v 複製到 buf[sendx]
     sendx = (sendx + 1) % dataqsiz
     qcount++
     return
 }
-</code></pre></div>
+</pre></div>
 
 <h3 id="路徑三都不行-掛起休眠">路徑三：都不行 → 掛起休眠<a class="headerlink" href="#路徑三都不行-掛起休眠" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="text"><pre><span></span><code>建立一個 sudog，記下「我要送的值在哪」
+<div class="hl" data-lang="text"><pre><span></span>建立一個 sudog，記下「我要送的值在哪」
 把 sudog 加入 sendq
 呼叫 gopark 讓出 CPU
 
 （之後被某個接收者喚醒，那時值已經被對方取走了）
-</code></pre></div>
+</pre></div>
 
 <p>接收 <code>&lt;-ch</code> 的邏輯完全對稱。</p>
 <div class="admonition note">
@@ -165,7 +165,7 @@
 <hr />
 <h2 id="無緩衝-vs-有緩衝語意的差別">無緩衝 vs 有緩衝：語意的差別<a class="headerlink" href="#無緩衝-vs-有緩衝語意的差別" title="Permanent link">#</a></h2>
 <p>這不只是效能問題，是<strong>同步保證</strong>的差別。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -191,15 +191,15 @@
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;  傳送完成，耗時 %v\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Since</span><span class="p">(</span><span class="nx">start</span><span class="p">).</span><span class="nx">Round</span><span class="p">(</span><span class="mi">10</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">))</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;  但接收方還沒拿到&quot;</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>=== 無緩衝 ===
+<div class="hl" data-lang="text"><pre><span></span>=== 無緩衝 ===
   接收: 1
   傳送完成，耗時 50ms
 === 有緩衝 ===
   傳送完成，耗時 0s
   但接收方還沒拿到
-</code></pre></div>
+</pre></div>
 
 <table>
 <thead>
@@ -269,7 +269,7 @@
 </tr>
 </tbody>
 </table>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -297,11 +297,11 @@
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">()</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="誰該關閉">誰該關閉<a class="headerlink" href="#誰該關閉" title="Permanent link">#</a></h3>
 <p><strong>核心原則：由傳送方關閉，而且只能有一個關閉者。</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✓ 單一生產者：生產者關閉</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✓ 單一生產者：生產者關閉</span>
 <span class="kd">func</span><span class="w"> </span><span class="nx">produce</span><span class="p">(</span><span class="nx">n</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">ch</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span>
 <span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
@@ -312,10 +312,10 @@
 <span class="w">    </span><span class="p">}()</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">ch</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>多個生產者時，用 <code>WaitGroup</code> 協調：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -352,10 +352,10 @@
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;收到&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">n</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;筆&quot;</span><span class="p">)</span><span class="w"> </span><span class="c1">// 12</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="需要停止訊號時另開一個-channel">需要「停止訊號」時，另開一個 channel<a class="headerlink" href="#需要停止訊號時另開一個-channel" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -394,7 +394,7 @@
 <span class="w">    </span><span class="nb">close</span><span class="p">(</span><span class="nx">done</span><span class="p">)</span><span class="w"> </span><span class="c1">// ✓ 關閉是廣播：所有 worker 同時收到</span>
 <span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>關閉一個 channel 是最乾淨的一對多廣播機制。</strong> 這也是 <code>context.Done()</code> 的實作原理。</p>
 <p>（實務上直接用 <code>context</code> 就好，上面只是說明機制。）</p>
@@ -402,7 +402,7 @@
 <h2 id="goroutine-洩漏">goroutine 洩漏<a class="headerlink" href="#goroutine-洩漏" title="Permanent link">#</a></h2>
 <p>這是 Go 服務最常見的資源問題。<strong>每個洩漏的 goroutine 至少佔 2 KB 堆疊</strong>，加上它持有的所有物件都無法被 GC。</p>
 <h3 id="成因一傳送到沒人接收的-channel">成因一：傳送到沒人接收的 channel<a class="headerlink" href="#成因一傳送到沒人接收的-channel" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -435,14 +435,14 @@
 <span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GC</span><span class="p">()</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;goroutine 數：%d → %d\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">before</span><span class="p">,</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">NumGoroutine</span><span class="p">())</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>goroutine 數：1 → 101
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>goroutine 數：1 → 101
+</pre></div>
 
 <p>100 個 goroutine 永遠卡在 <code>ch &lt;- 42</code>。</p>
 <p><strong>解法一：用容量 1 的緩衝 channel。</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">fixed1</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">fixed1</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">ch</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="c1">// ✓ 就算沒人接，傳送也能完成</span>
 <span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="mi">10</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>
@@ -450,11 +450,11 @@
 <span class="w">    </span><span class="p">}()</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">ch</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>這是「<strong>只送一次結果</strong>」場景的標準做法。goroutine 送完就結束，channel 之後會被 GC。</p>
 <p><strong>解法二：用 context 讓 goroutine 知道要放棄。</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">fixed2</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">fixed2</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">ch</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span>
 <span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
@@ -468,18 +468,18 @@
 <span class="w">    </span><span class="p">}()</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">ch</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="成因二從沒人傳送也不會關閉的-channel-接收">成因二：從沒人傳送、也不會關閉的 channel 接收<a class="headerlink" href="#成因二從沒人傳送也不會關閉的-channel-接收" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 如果 producer 出錯提早結束而沒 close，這裡永遠卡住</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 如果 producer 出錯提早結束而沒 close，這裡永遠卡住</span>
 <span class="k">for</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">ch</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">process</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>永遠用 <code>defer close(ch)</code></strong>，確保不管怎麼結束都會關閉。</p>
 <h3 id="成因三忘記-waitgroupdone">成因三：忘記 <code>WaitGroup.Done</code><a class="headerlink" href="#成因三忘記-waitgroupdone" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗</span>
 <span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">work</span><span class="p">();</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="c1">// 忘了 wg.Done()，Wait 永遠不返回</span>
@@ -494,11 +494,11 @@
 <span class="w">        </span><span class="k">return</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}()</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="偵測洩漏">偵測洩漏<a class="headerlink" href="#偵測洩漏" title="Permanent link">#</a></h3>
 <p><strong>方法一：<code>runtime.NumGoroutine()</code></strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">TestNoLeak</span><span class="p">(</span><span class="nx">t</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">T</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">TestNoLeak</span><span class="p">(</span><span class="nx">t</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">T</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">before</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">NumGoroutine</span><span class="p">()</span>
 
 <span class="w">    </span><span class="nx">doWork</span><span class="p">()</span>
@@ -508,18 +508,18 @@
 <span class="w">        </span><span class="nx">t</span><span class="p">.</span><span class="nx">Errorf</span><span class="p">(</span><span class="s">&quot;goroutine 洩漏：%d → %d&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">before</span><span class="p">,</span><span class="w"> </span><span class="nx">after</span><span class="p">)</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>方法二：<code>go.uber.org/goleak</code></strong>（推薦）</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">TestMain</span><span class="p">(</span><span class="nx">m</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">M</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">TestMain</span><span class="p">(</span><span class="nx">m</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">M</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">goleak</span><span class="p">.</span><span class="nx">VerifyTestMain</span><span class="p">(</span><span class="nx">m</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>它會在測試結束時檢查有沒有殘留的 goroutine，並印出它們的堆疊追蹤。加進既有專案常常會發現一堆意外的洩漏。</p>
 <p><strong>方法三：pprof</strong></p>
-<div class="hl" data-lang="bash"><pre><span></span><code>curl<span class="w"> </span><span class="s2">&quot;http://localhost:6060/debug/pprof/goroutine?debug=2&quot;</span>
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>curl<span class="w"> </span><span class="s2">&quot;http://localhost:6060/debug/pprof/goroutine?debug=2&quot;</span>
+</pre></div>
 
 <p>會列出所有 goroutine 的完整堆疊。持續成長的服務，隔一段時間抓兩次比對，就能找出洩漏點。</p>
 <div class="admonition version">
@@ -529,7 +529,7 @@
 <hr />
 <h2 id="常見模式">常見模式<a class="headerlink" href="#常見模式" title="Permanent link">#</a></h2>
 <h3 id="工作池worker-pool">工作池（worker pool）<a class="headerlink" href="#工作池worker-pool" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -571,11 +571,11 @@
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">workerPool</span><span class="p">([]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="mi">6</span><span class="p">,</span><span class="w"> </span><span class="mi">7</span><span class="p">,</span><span class="w"> </span><span class="mi">8</span><span class="p">},</span><span class="w"> </span><span class="mi">3</span><span class="p">)))</span><span class="w"> </span><span class="c1">// 8</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>注意 <code>resCh</code> 的緩衝設成 <code>len(jobs)</code>——這確保 worker 不會因為結果沒人收而阻塞，<code>wg.Wait()</code> 才能順利返回。</p>
 <h3 id="號誌semaphore限制並行數">號誌（semaphore）：限制並行數<a class="headerlink" href="#號誌semaphore限制並行數" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -604,14 +604,14 @@
 <span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;10 個任務、並行 3、耗時約 %v\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Since</span><span class="p">(</span><span class="nx">start</span><span class="p">).</span><span class="nx">Round</span><span class="p">(</span><span class="mi">10</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>10 個任務、並行 3、耗時約 80ms
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>10 個任務、並行 3、耗時約 80ms
+</pre></div>
 
 <p>（也可以用 <code>errgroup.SetLimit</code> 或 <code>golang.org/x/sync/semaphore</code>，後者支援加權。）</p>
 <h3 id="pipeline">pipeline<a class="headerlink" href="#pipeline" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -643,7 +643,7 @@
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">()</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>每一段都遵守同樣的契約：<strong>接收一個唯讀 channel，回傳一個唯讀 channel，自己負責關閉輸出。</strong></p>
 <div class="admonition tip">

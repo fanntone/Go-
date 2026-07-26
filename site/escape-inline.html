@@ -120,7 +120,7 @@
 <h3 id="基本規則">基本規則<a class="headerlink" href="#基本規則" title="Permanent link">#</a></h3>
 <p>Go 的規則可以濃縮成一句話：<strong>如果編譯器不能證明「這個變數的生命週期不超過建立它的函式」，就把它配置在堆積。</strong></p>
 <p>這跟 C++ 完全相反。C++ 預設放堆疊，你要 <code>new</code> 才上堆積，回傳區域變數的位址是未定義行為。Go 讓編譯器自己判斷，所以下面這段在 Go 裡完全安全：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -138,16 +138,16 @@
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">NewConfig</span><span class="p">())</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m&quot;</span><span class="w"> </span>./main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m&quot;</span><span class="w"> </span>./main.go
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>./main.go:12:2: moved to heap: c
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>./main.go:12:2: moved to heap: c
+</pre></div>
 
 <h3 id="六種常見的逃逸情況">六種常見的逃逸情況<a class="headerlink" href="#六種常見的逃逸情況" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -194,9 +194,9 @@
 <span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">f4</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">f5</span><span class="p">()</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>./main.go:10:2: moved to heap: t
+<div class="hl" data-lang="text"><pre><span></span>./main.go:10:2: moved to heap: t
 ./main.go:16:2: moved to heap: t
 ./main.go:16:14: ... argument does not escape
 ./main.go:22:2: moved to heap: t
@@ -204,13 +204,13 @@
 ./main.go:32:2: moved to heap: n
 ./main.go:33:9: func literal escapes to heap
 ./main.go:38:2: moved to heap: t
-</code></pre></div>
+</pre></div>
 
 <p>第 ② 個特別值得注意。<code>fmt.Println(t)</code> 看起來人畜無害，但 <code>t</code> 被塞進 <code>any</code> 介面，而 <code>fmt</code> 內部會用反射存取它，編譯器無法證明它不會被留下來，於是逃逸。<strong>這就是為什麼在熱路徑上呼叫 <code>fmt</code> 系列函式代價不小。</strong></p>
 <h3 id="逃逸分析的真實規則不是大小">逃逸分析的真實規則：不是「大小」<a class="headerlink" href="#逃逸分析的真實規則不是大小" title="Permanent link">#</a></h3>
 <p>網路上常見的說法是「大物件會逃逸到堆積」，這<strong>不準確</strong>。真正的規則是<strong>生命週期</strong>，大小只是次要條件。</p>
 <p>不過確實有大小上限：預設情況下，超過 <strong>10 MB</strong> 左右的區域變數（<code>maxStackVarSize</code>）或超過 <strong>64 KB</strong> 的隱式配置（<code>maxImplicitStackVarSize</code>，例如 <code>new(T)</code>、複合字面值）會被移到堆積，因為 goroutine 堆疊放不下。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">big</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">big</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">arr</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">20</span><span class="p">]</span><span class="kt">byte</span><span class="w"> </span><span class="c1">// 1 MB，仍在堆疊上</span>
 <span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">arr</span>
 <span class="p">}</span>
@@ -219,10 +219,10 @@
 <span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">arr</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">24</span><span class="p">]</span><span class="kt">byte</span><span class="w"> </span><span class="c1">// 16 MB，超過上限 → 移到堆積</span>
 <span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">arr</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="make-的兩種情況"><code>make</code> 的兩種情況<a class="headerlink" href="#make-的兩種情況" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">known</span><span class="p">()</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">known</span><span class="p">()</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">8</span><span class="p">)</span><span class="w"> </span><span class="c1">// 常數大小、不逃逸 → 直接在堆疊上開一塊</span>
 <span class="w">    </span><span class="nx">s</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">1</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
@@ -232,7 +232,7 @@
 <span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">([]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="nx">n</span><span class="p">)</span><span class="w"> </span><span class="c1">// n 是變數 → 編譯期不知道大小 → 堆積</span>
 <span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">s</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition version">
 <p class="admonition-title">Go 1.26：更多 slice 可以放堆疊</p>
@@ -242,7 +242,7 @@
 <h3 id="為什麼不能強制放堆疊">為什麼不能「強制放堆疊」<a class="headerlink" href="#為什麼不能強制放堆疊" title="Permanent link">#</a></h3>
 <p>Go 沒有提供 <code>//go:stackalloc</code> 之類的指示詞，這是刻意的：<strong>逃逸分析是記憶體安全的一部分</strong>。如果讓你強制一個真的會逃逸的變數放堆疊，函式回傳後那個指標就懸空了，Go 的記憶體安全保證會被打破。</p>
 <p>想減少堆積配置，正確做法是<strong>改寫程式碼讓它不逃逸</strong>：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 每次呼叫都配置一個新的 buffer</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 每次呼叫都配置一個新的 buffer</span>
 <span class="kd">func</span><span class="w"> </span><span class="nx">format</span><span class="p">(</span><span class="nx">vals</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">sb</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">Builder</span>
 <span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">vals</span><span class="w"> </span><span class="p">{</span>
@@ -259,7 +259,7 @@
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">dst</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <hr />
 <h2 id="內聯">內聯<a class="headerlink" href="#內聯" title="Permanent link">#</a></h2>
@@ -313,18 +313,18 @@
 </tbody>
 </table>
 <p>觀察方式：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m -m&quot;</span><span class="w"> </span>./main.go<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>findstr<span class="w"> </span><span class="s2">&quot;inline&quot;</span>
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m -m&quot;</span><span class="w"> </span>./main.go<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>findstr<span class="w"> </span><span class="s2">&quot;inline&quot;</span>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>./main.go:5:6: can inline add with cost 4 as: func(int, int) int { return a + b }
+<div class="hl" data-lang="text"><pre><span></span>./main.go:5:6: can inline add with cost 4 as: func(int, int) int { return a + b }
 ./main.go:9:6: cannot inline heavy: function too complex: cost 132 exceeds budget 80
 ./main.go:20:13: inlining call to add
-</code></pre></div>
+</pre></div>
 
 <p><code>cost 132 exceeds budget 80</code> 直接告訴你差多少。</p>
 <h3 id="內聯的連鎖效應">內聯的連鎖效應<a class="headerlink" href="#內聯的連鎖效應" title="Permanent link">#</a></h3>
 <p>內聯真正的價值不在省下 <code>CALL</code> 指令，而在<strong>打開最佳化的視野</strong>。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="c1">//go:noinline</span>
 <span class="kd">func</span><span class="w"> </span><span class="nx">lenNoInline</span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
@@ -348,13 +348,13 @@
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nb">println</span><span class="p">(</span><span class="nx">withInline</span><span class="p">([]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">}),</span><span class="w"> </span><span class="nx">withoutInline</span><span class="p">([]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">}))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-d=ssa/check_bce/debug=1&quot;</span><span class="w"> </span>./main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-d=ssa/check_bce/debug=1&quot;</span><span class="w"> </span>./main.go
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>./main.go:20:9: Found IsInBounds
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>./main.go:20:9: Found IsInBounds
+</pre></div>
 
 <p>只有 <code>withoutInline</code> 那一行留下邊界檢查。內聯讓編譯器看穿了 <code>lenInline</code>，於是 <code>prove</code> pass 能推導出 <code>len(s) &gt; 0</code>，索引 <code>s[0]</code> 一定安全。</p>
 <h3 id="中端內聯與跨套件內聯">中端內聯與跨套件內聯<a class="headerlink" href="#中端內聯與跨套件內聯" title="Permanent link">#</a></h3>
@@ -381,7 +381,7 @@
 <p>編譯器的靜態啟發式規則不知道<strong>哪些程式碼真的是熱點</strong>。PGO 的作法是：先跑一次真實負載收集 CPU 剖析檔，再把它餵給編譯器，讓編譯器對熱點函式放寬內聯預算、對熱點介面呼叫做推測式去虛擬化、調整基本區塊的排列以改善指令快取命中。</p>
 <h3 id="三步驟">三步驟<a class="headerlink" href="#三步驟" title="Permanent link">#</a></h3>
 <p><strong>① 收集剖析檔。</strong> 在<strong>正式環境</strong>的真實負載下收集，這點很重要——用測試資料收集出來的剖析檔會誤導編譯器。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;log&quot;</span>
@@ -393,30 +393,30 @@
 <span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">log</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">http</span><span class="p">.</span><span class="nx">ListenAndServe</span><span class="p">(</span><span class="s">&quot;localhost:6060&quot;</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span><span class="p">))</span><span class="w"> </span><span class="p">}()</span>
 <span class="w">    </span><span class="c1">// ... 你的服務</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="bash"><pre><span></span><code>curl<span class="w"> </span>-o<span class="w"> </span>cpu.pprof<span class="w"> </span><span class="s2">&quot;http://localhost:6060/debug/pprof/profile?seconds=60&quot;</span>
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>curl<span class="w"> </span>-o<span class="w"> </span>cpu.pprof<span class="w"> </span><span class="s2">&quot;http://localhost:6060/debug/pprof/profile?seconds=60&quot;</span>
+</pre></div>
 
 <p><strong>② 放進專案根目錄，命名為 <code>default.pgo</code>。</strong></p>
-<div class="hl" data-lang="bash"><pre><span></span><code>cp<span class="w"> </span>cpu.pprof<span class="w"> </span>./default.pgo
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>cp<span class="w"> </span>cpu.pprof<span class="w"> </span>./default.pgo
+</pre></div>
 
 <p><code>go build</code> 會<strong>自動偵測</strong>主套件目錄下的 <code>default.pgo</code> 並啟用 PGO，不需要額外旗標。想指定其他檔案：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-pgo<span class="o">=</span>./profiles/prod-2026-07.pprof<span class="w"> </span>-o<span class="w"> </span>app<span class="w"> </span>.
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-pgo<span class="o">=</span>./profiles/prod-2026-07.pprof<span class="w"> </span>-o<span class="w"> </span>app<span class="w"> </span>.
+</pre></div>
 
 <p>想關掉：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-pgo<span class="o">=</span>off<span class="w"> </span>-o<span class="w"> </span>app<span class="w"> </span>.
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-pgo<span class="o">=</span>off<span class="w"> </span>-o<span class="w"> </span>app<span class="w"> </span>.
+</pre></div>
 
 <p><strong>③ 驗證有生效。</strong></p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m&quot;</span><span class="w"> </span>.<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>findstr<span class="w"> </span><span class="s2">&quot;PGO&quot;</span>
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m&quot;</span><span class="w"> </span>.<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>findstr<span class="w"> </span><span class="s2">&quot;PGO&quot;</span>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>./handler.go:42:6: can inline processRequest with cost 156 as: ... (hot, PGO budget 2000)
+<div class="hl" data-lang="text"><pre><span></span>./handler.go:42:6: can inline processRequest with cost 156 as: ... (hot, PGO budget 2000)
 ./handler.go:88:14: PGO devirtualizing interface call to (*json.Encoder).Encode
-</code></pre></div>
+</pre></div>
 
 <h3 id="實務建議">實務建議<a class="headerlink" href="#實務建議" title="Permanent link">#</a></h3>
 <ul>
@@ -424,8 +424,8 @@
 <li><strong>定期更新，但不用太頻繁。</strong> 每季或每次大改版更新一次即可。過期的剖析檔仍然有用（Go 保證舊剖析檔不會讓效能倒退），只是收益遞減。</li>
 <li><strong>合併多份剖析檔</strong>以涵蓋不同流量模式：</li>
 </ul>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </span>-proto<span class="w"> </span>peak.pprof<span class="w"> </span>offpeak.pprof<span class="w"> </span>&gt;<span class="w"> </span>default.pgo
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </span>-proto<span class="w"> </span>peak.pprof<span class="w"> </span>offpeak.pprof<span class="w"> </span>&gt;<span class="w"> </span>default.pgo
+</pre></div>
 
 <ul>
 <li><strong>注意編譯時間會變長。</strong> PGO 建置通常慢 5–15%，因為要做更多內聯。</li>

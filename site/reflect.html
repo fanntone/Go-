@@ -116,7 +116,7 @@
 <hr />
 <h2 id="定律一介面-反射物件">定律一：介面 → 反射物件<a class="headerlink" href="#定律一介面-反射物件" title="Permanent link">#</a></h2>
 <p><code>reflect.TypeOf</code> 與 <code>reflect.ValueOf</code> 的參數型別都是 <code>any</code>。這不是巧合——<strong>反射的輸入永遠是一個介面值</strong>，它拆的就是上一節講的 <code>eface</code> 兩欄位結構。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -136,11 +136,11 @@
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">.</span><span class="nx">Float</span><span class="p">())</span><span class="w">     </span><span class="c1">// 3.14</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">.</span><span class="nx">Type</span><span class="p">()</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nx">t</span><span class="p">)</span><span class="w"> </span><span class="c1">// true</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="type-與-kind-的差別"><code>Type</code> 與 <code>Kind</code> 的差別<a class="headerlink" href="#type-與-kind-的差別" title="Permanent link">#</a></h3>
 <p>這兩個很容易混淆，但差別很重要：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -164,16 +164,16 @@
 <span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%-20s Kind=%-10s\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">String</span><span class="p">(),</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">Kind</span><span class="p">())</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>main.Celsius         Kind=float64   
+<div class="hl" data-lang="text"><pre><span></span>main.Celsius         Kind=float64   
 main.Point           Kind=struct    
 *main.Point          Kind=ptr       
 []int                Kind=slice     
 map[string]int       Kind=map       
 chan int             Kind=chan      
 func()               Kind=func      
-</code></pre></div>
+</pre></div>
 
 <ul>
 <li><strong><code>Type</code></strong> 是完整的型別身分，包含套件路徑與名稱。<code>Celsius</code> 與 <code>float64</code> 是不同的 <code>Type</code>。</li>
@@ -182,7 +182,7 @@ func()               Kind=func
 <p>寫通用程式碼時<strong>幾乎總是用 <code>Kind</code> 分支</strong>，因為你不可能列舉所有可能的具名型別。</p>
 <hr />
 <h2 id="定律二反射物件-介面">定律二：反射物件 → 介面<a class="headerlink" href="#定律二反射物件-介面" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -200,12 +200,12 @@ func()               Kind=func
 <span class="w">    </span><span class="c1">// 也有型別特定的取值方法（更快，但 Kind 不對會 panic）</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">.</span><span class="nx">Int</span><span class="p">())</span><span class="w"> </span><span class="c1">// 42</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>Value.Interface()</code> 是反射與一般程式碼之間的橋。注意它回傳 <code>any</code>，會有裝箱成本。</p>
 <hr />
 <h2 id="定律三可設定性">定律三：可設定性<a class="headerlink" href="#定律三可設定性" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -221,16 +221,16 @@ func()               Kind=func
 <span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;panic:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nb">recover</span><span class="p">())</span><span class="w"> </span><span class="p">}()</span>
 <span class="w">    </span><span class="nx">v</span><span class="p">.</span><span class="nx">SetFloat</span><span class="p">(</span><span class="mf">2.71</span><span class="p">)</span><span class="w"> </span><span class="c1">// panic</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>false
+<div class="hl" data-lang="text"><pre><span></span>false
 panic: reflect: reflect.Value.SetFloat using unaddressable value
-</code></pre></div>
+</pre></div>
 
 <h3 id="為什麼不能設定">為什麼不能設定<a class="headerlink" href="#為什麼不能設定" title="Permanent link">#</a></h3>
 <p>因為 <code>reflect.ValueOf(x)</code> 拿到的是 <strong><code>x</code> 的一份複本</strong>。<code>ValueOf</code> 的參數是 <code>any</code>，傳進去的當下就已經複製了。就算能修改，改到的也是那份複本，原本的 <code>x</code> 完全不受影響——這種靜默失效比 panic 糟糕，所以 <code>reflect</code> 直接禁止。</p>
 <h3 id="正確做法傳指標再-elem">正確做法：傳指標，再 <code>Elem()</code><a class="headerlink" href="#正確做法傳指標再-elem" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -249,7 +249,7 @@ panic: reflect: reflect.Value.SetFloat using unaddressable value
 <span class="w">    </span><span class="nx">v</span><span class="p">.</span><span class="nx">SetFloat</span><span class="p">(</span><span class="mf">2.71</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">x</span><span class="p">)</span><span class="w"> </span><span class="c1">// 2.71 ← 原本的變數真的被改了</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="可設定的三個條件">可設定的三個條件<a class="headerlink" href="#可設定的三個條件" title="Permanent link">#</a></h3>
 <p>一個 <code>reflect.Value</code> 要可設定，必須同時滿足：</p>
@@ -258,7 +258,7 @@ panic: reflect: reflect.Value.SetFloat using unaddressable value
 <li><strong>不是未匯出的欄位</strong> —— 小寫開頭的欄位即使可定址也不能設定。</li>
 <li><strong>不是從 map 直接取出的元素</strong> —— map 元素不可定址（原因見 <a href="map.html#不能取-map-元素的位址">map</a>）。</li>
 </ol>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -294,13 +294,13 @@ panic: reflect: reflect.Value.SetFloat using unaddressable value
 <span class="w">    </span><span class="nx">mv</span><span class="p">.</span><span class="nx">SetMapIndex</span><span class="p">(</span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="s">&quot;a&quot;</span><span class="p">),</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="mi">99</span><span class="p">))</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">m</span><span class="p">)</span><span class="w"> </span><span class="c1">// map[a:99]</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>注意 slice 那個例子：<strong>不需要傳 <code>&amp;s</code></strong>。因為 slice 標頭裡的 <code>array</code> 指標指向的元素本來就在別的地方，<code>Index(i)</code> 拿到的是真正的元素位址。</p>
 <hr />
 <h2 id="struct-tag反射最常見的用途">struct tag：反射最常見的用途<a class="headerlink" href="#struct-tag反射最常見的用途" title="Permanent link">#</a></h2>
 <p>struct tag 是附在欄位後面的字串字面值，編譯器完全不解讀它，只是原封不動存進型別中繼資料。真正解讀它的是使用反射的函式庫。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -328,13 +328,13 @@ panic: reflect: reflect.Value.SetFloat using unaddressable value
 <span class="w">        </span><span class="p">)</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>ID     exported=true  json=&quot;id&quot;             db=&quot;user_id&quot;  validate=&quot;required&quot;
+<div class="hl" data-lang="text"><pre><span></span>ID     exported=true  json=&quot;id&quot;             db=&quot;user_id&quot;  validate=&quot;required&quot;
 Name   exported=true  json=&quot;name,omitempty&quot; db=&quot;name&quot;     validate=&quot;min=2,max=50&quot;
 Email  exported=true  json=&quot;email&quot;          db=&quot;email&quot;    validate=&quot;email&quot;
 pw     exported=false json=&quot;-&quot;              db=&quot;&quot;         validate=&quot;&quot;
-</code></pre></div>
+</pre></div>
 
 <h3 id="tag-的格式規則">tag 的格式規則<a class="headerlink" href="#tag-的格式規則" title="Permanent link">#</a></h3>
 <p>慣例格式是 <code>`key1:"value1" key2:"value2"`</code>：</p>
@@ -347,14 +347,15 @@ pw     exported=false json=&quot;-&quot;              db=&quot;&quot;         va
 <div class="admonition tip">
 <p class="admonition-title">用 <code>go vet</code> 抓 tag 錯誤</p>
 <p><code>go vet</code> 的 <code>structtag</code> 檢查會抓出格式錯誤與重複的 tag 鍵：</p>
-<p><code>bash
-go vet ./...</code></p>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>vet<span class="w"> </span>./...
+</pre></div>
+
 <p>這是少數能在編譯期抓到 tag 問題的方法，建議放進 CI。</p>
 </div>
 <hr />
 <h2 id="反射的成本">反射的成本<a class="headerlink" href="#反射的成本" title="Permanent link">#</a></h2>
 <p>反射慢，但慢多少？做個實測：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -395,13 +396,13 @@ go vet ./...</code></p>
 <span class="w">    </span><span class="nx">bench</span><span class="p">(</span><span class="s">&quot;reflect&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">viaReflect</span><span class="p">(</span><span class="nx">u</span><span class="p">)</span><span class="w"> </span><span class="p">})</span>
 <span class="w">    </span><span class="nx">bench</span><span class="p">(</span><span class="s">&quot;reflect(cached)&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">viaReflectCached</span><span class="p">(</span><span class="nx">cached</span><span class="p">)</span><span class="w"> </span><span class="p">})</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>典型結果：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>direct             1000000000    0.29 ns/op       0 B/op    0 allocs/op
+<div class="hl" data-lang="text"><pre><span></span>direct             1000000000    0.29 ns/op       0 B/op    0 allocs/op
 reflect              38412561   31.2  ns/op       0 B/op    0 allocs/op
 reflect(cached)     215043210    5.6  ns/op       0 B/op    0 allocs/op
-</code></pre></div>
+</pre></div>
 
 <p>約 <strong>100 倍</strong>的差距。但注意第三行：<strong>如果把 <code>reflect.Value</code> 快取起來重複使用，成本降到 20 倍</strong>。</p>
 <h3 id="成本來自哪裡">成本來自哪裡<a class="headerlink" href="#成本來自哪裡" title="Permanent link">#</a></h3>
@@ -437,7 +438,7 @@ reflect(cached)     215043210    5.6  ns/op       0 B/op    0 allocs/op
 </table>
 <h3 id="怎麼降低成本">怎麼降低成本<a class="headerlink" href="#怎麼降低成本" title="Permanent link">#</a></h3>
 <p><strong>① 快取 <code>reflect.Type</code> 的分析結果。</strong> 這是所有正經反射函式庫（<code>encoding/json</code>、ORM、驗證器）的標準做法：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -482,12 +483,12 @@ reflect(cached)     215043210    5.6  ns/op       0 B/op    0 allocs/op
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">fieldsOf</span><span class="p">(</span><span class="nx">t</span><span class="p">))</span><span class="w"> </span><span class="c1">// 第一次：走反射</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">fieldsOf</span><span class="p">(</span><span class="nx">t</span><span class="p">))</span><span class="w"> </span><span class="c1">// 第二次：查快取</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>型別分析（欄位數、tag、偏移量）只需要做一次，之後每個實例都能重用。</p>
 <p><strong>② 考慮改用程式碼生成。</strong> 如果反射是你的效能瓶頸，<code>go:generate</code> 加上程式碼產生器可以完全消除反射。這是 <code>easyjson</code>、<code>protobuf-go</code>、<code>sqlc</code> 這類工具的做法。詳見 <a href="codegen.html">程式碼生成</a>。</p>
 <p><strong>③ 泛型能取代部分反射用途。</strong> 以前要用反射處理「任意型別的 slice」，現在用泛型就好，而且是編譯期展開：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// 以前</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// 以前</span>
 <span class="kd">func</span><span class="w"> </span><span class="nx">Map</span><span class="p">(</span><span class="nx">in</span><span class="w"> </span><span class="kt">any</span><span class="p">,</span><span class="w"> </span><span class="nx">f</span><span class="w"> </span><span class="kt">any</span><span class="p">)</span><span class="w"> </span><span class="kt">any</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* 一大堆反射 */</span><span class="w"> </span><span class="p">}</span>
 
 <span class="c1">// 現在</span>
@@ -498,12 +499,12 @@ reflect(cached)     215043210    5.6  ns/op       0 B/op    0 allocs/op
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">out</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <hr />
 <h2 id="動態呼叫函式">動態呼叫函式<a class="headerlink" href="#動態呼叫函式" title="Permanent link">#</a></h2>
 <p><code>reflect</code> 可以呼叫任意函式，這是 RPC 框架與依賴注入容器的基礎。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -547,14 +548,14 @@ reflect(cached)     215043210    5.6  ns/op       0 B/op    0 allocs/op
 <span class="w">    </span><span class="nx">bad</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">fn</span><span class="p">.</span><span class="nx">Call</span><span class="p">([]</span><span class="nx">reflect</span><span class="p">.</span><span class="nx">Value</span><span class="p">{</span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="s">&quot;Go&quot;</span><span class="p">),</span><span class="w"> </span><span class="nx">reflect</span><span class="p">.</span><span class="nx">ValueOf</span><span class="p">(</span><span class="mi">0</span><span class="p">)})</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;錯誤:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">bad</span><span class="p">[</span><span class="mi">1</span><span class="p">].</span><span class="nx">Interface</span><span class="p">())</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>參數 2 個，回傳 2 個
+<div class="hl" data-lang="text"><pre><span></span>參數 2 個，回傳 2 個
   in[0]: string
   in[1]: int
 Hello, Go! Hello, Go! 
 錯誤: times 必須為正數，得到 0
-</code></pre></div>
+</pre></div>
 
 <div class="admonition danger">
 <p class="admonition-title"><code>Call</code> 的每個細節都會 panic</p>
@@ -616,7 +617,7 @@ Hello, Go! Hello, Go!
 <p>大量使用反射的框架，產出的執行檔常常比預期大好幾 MB，原因就在這裡。</p>
 </div>
 <h3 id="reflectdeepequal-的注意事項"><code>reflect.DeepEqual</code> 的注意事項<a class="headerlink" href="#reflectdeepequal-的注意事項" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -637,7 +638,7 @@ Hello, Go! Hello, Go!
 <span class="w">    </span><span class="nx">f</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{}</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">reflect</span><span class="p">.</span><span class="nx">DeepEqual</span><span class="p">(</span><span class="nx">f</span><span class="p">,</span><span class="w"> </span><span class="nx">f</span><span class="p">))</span><span class="w"> </span><span class="c1">// false</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>DeepEqual</code> 在測試裡很方便，但有幾個陷阱：nil slice ≠ 空 slice、函式永遠不等、<code>time.Time</code> 因為內部有單調時鐘欄位可能誤判。</p>
 <p>測試中建議改用 <code>github.com/google/go-cmp/cmp</code>，它的錯誤訊息會直接指出差異在哪，也支援自訂比較規則。</p>

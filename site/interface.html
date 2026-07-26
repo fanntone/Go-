@@ -110,18 +110,18 @@
   <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>語言核心</p><h1><span class='h1num'>3.2</span>介面 interface</h1><p class='lede'>iface 與 eface 的兩字組結構、itab 怎麼建立與快取、nil 介面的經典陷阱，以及型別斷言與 switch 的成本。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="介面值就是兩個指標">介面值就是兩個指標<a class="headerlink" href="#介面值就是兩個指標" title="Permanent link">#</a></h2>
 <p>Go 的介面在執行期是一個<strong>兩個字組（16 位元組）</strong>的結構。依介面有沒有方法，分成兩種。</p>
 <h3 id="有方法的介面iface">有方法的介面：<code>iface</code><a class="headerlink" href="#有方法的介面iface" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">iface</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">iface</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">tab</span><span class="w">  </span><span class="o">*</span><span class="nx">itab</span><span class="w">          </span><span class="c1">// 型別 + 方法表</span>
 <span class="w">    </span><span class="nx">data</span><span class="w"> </span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="w"> </span><span class="c1">// 指向實際資料</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="空介面-anyeface">空介面 <code>any</code>：<code>eface</code><a class="headerlink" href="#空介面-anyeface" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">eface</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">eface</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">_type</span><span class="w"> </span><span class="o">*</span><span class="nx">_type</span><span class="w">         </span><span class="c1">// 型別描述子</span>
 <span class="w">    </span><span class="nx">data</span><span class="w">  </span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="w"> </span><span class="c1">// 指向實際資料</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>差別只在第一個欄位：<code>eface</code> 沒有方法要查，所以直接放型別描述子就夠了。</p>
 <figure class="diagram"><svg viewBox="0 0 700 340" role="img" aria-label="iface 與 itab 的結構"><text class="d-t-b" x="15" y="20">var w io.Writer = os.Stdout</text><rect class="d-box-a" x="15" y="32" width="150" height="42" rx="5"/><text class="d-t-m d-mid" x="90" y="52">tab *itab</text><text class="d-t-s d-mid" x="90" y="68">8 位元組</text><rect class="d-box-a" x="165" y="32" width="150" height="42" rx="5"/><text class="d-t-m d-mid" x="240" y="52">data unsafe.Pointer</text><text class="d-t-s d-mid" x="240" y="68">8 位元組</text><rect class="d-box-w" x="15" y="110" width="290" height="176" rx="6"/><text class="d-t-b" x="28" y="132">itab（介面 + 具體型別 的配對，全域快取）</text><rect class="d-box" x="28" y="142" width="264" height="26" rx="3"/><text class="d-t-m" x="38" y="160">inter  *interfacetype  → io.Writer</text><rect class="d-box" x="28" y="170" width="264" height="26" rx="3"/><text class="d-t-m" x="38" y="188">_type  *_type          → *os.File</text><rect class="d-box" x="28" y="198" width="264" height="26" rx="3"/><text class="d-t-m" x="38" y="216">hash   uint32          型別斷言快篩</text><rect class="d-box-o" x="28" y="226" width="264" height="26" rx="3"/><text class="d-t-m" x="38" y="244">fun[0] → (*os.File).Write</text><rect class="d-box-o" x="28" y="254" width="264" height="26" rx="3"/><text class="d-t-m" x="38" y="272">fun[1] …（依介面方法排序）</text><rect class="d-box-o" x="360" y="110" width="325" height="72" rx="6"/><text class="d-t-b" x="373" y="132">實際資料</text><text class="d-t-m" x="373" y="154">os.Stdout（*os.File 值）</text><text class="d-t-s" x="373" y="172">介面只存指標；值型別裝箱時會配置一份到堆積</text><path class="d-line-a" d="M90 74 L90 106" marker-end="url(#ar11)"/><path class="d-line-a" d="M240 74 L240 92 L500 92 L500 106" marker-end="url(#ar11)"/><defs><marker id="ar11" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--accent)"/></marker></defs><line class="d-dash" x1="15" y1="300" x2="685" y2="300"/><text class="d-t-s" x="15" y="322">w.Write(b) 展開成：載入 w.tab → 取 fun[0] → 以 w.data 為接收者間接呼叫。兩次記憶體存取 + 一次間接跳轉。</text></svg><figcaption><b>介面呼叫的三步。</b>itab 的 <code>fun</code> 陣列就是方法表（類似 C++ 的 vtable），但 Go 的 itab 是 <b>(介面, 具體型別)</b> 的配對，而不是掛在型別上——因為一個型別可以滿足任意多個介面，而且是隱式的。</figcaption></figure>
@@ -130,18 +130,18 @@
 <h2 id="itab-從哪裡來">itab 從哪裡來<a class="headerlink" href="#itab-從哪裡來" title="Permanent link">#</a></h2>
 <p>itab 的產生分兩種情況：</p>
 <p><strong>① 編譯期就能確定的</strong>，由連結器產生並放進 <code>itablinks</code> 區段。例如：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">var</span><span class="w"> </span><span class="nx">w</span><span class="w"> </span><span class="nx">io</span><span class="p">.</span><span class="nx">Writer</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">Stdout</span><span class="w"> </span><span class="c1">// 編譯器知道是 (io.Writer, *os.File)</span>
-</code></pre></div>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">var</span><span class="w"> </span><span class="nx">w</span><span class="w"> </span><span class="nx">io</span><span class="p">.</span><span class="nx">Writer</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">Stdout</span><span class="w"> </span><span class="c1">// 編譯器知道是 (io.Writer, *os.File)</span>
+</pre></div>
 
 <p><strong>② 執行期才確定的</strong>，由 <code>runtime.getitab</code> 動態產生，並存進一個全域雜湊表快取。例如：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">store</span><span class="p">(</span><span class="nx">vals</span><span class="w"> </span><span class="p">[]</span><span class="kt">any</span><span class="p">,</span><span class="w"> </span><span class="nx">w</span><span class="w"> </span><span class="nx">io</span><span class="p">.</span><span class="nx">Writer</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">store</span><span class="p">(</span><span class="nx">vals</span><span class="w"> </span><span class="p">[]</span><span class="kt">any</span><span class="p">,</span><span class="w"> </span><span class="nx">w</span><span class="w"> </span><span class="nx">io</span><span class="p">.</span><span class="nx">Writer</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">vals</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">v</span><span class="p">.(</span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Stringer</span><span class="p">);</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="c1">// 具體型別要執行期才知道</span>
 <span class="w">            </span><span class="nx">io</span><span class="p">.</span><span class="nx">WriteString</span><span class="p">(</span><span class="nx">w</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">String</span><span class="p">())</span>
 <span class="w">        </span><span class="p">}</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>第一次遇到某個 (介面, 型別) 配對時，runtime 會走過具體型別的方法表，比對介面要求的方法，填好 <code>fun</code> 陣列。之後同樣的配對直接查快取。</p>
 <div class="admonition note">
@@ -152,7 +152,7 @@
 <hr />
 <h2 id="裝箱把值放進介面">裝箱：把值放進介面<a class="headerlink" href="#裝箱把值放進介面" title="Permanent link">#</a></h2>
 <p>介面的 <code>data</code> 是一個<strong>指標</strong>。所以把值型別放進介面時，需要一塊記憶體來存那個值。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -165,18 +165,18 @@
 <span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">s</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Stringer</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="c1">// 裝箱：n 的複本要放到某處</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m&quot;</span><span class="w"> </span>./main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m&quot;</span><span class="w"> </span>./main.go
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>./main.go:11:22: n escapes to heap
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>./main.go:11:22: n escapes to heap
+</pre></div>
 
 <p><strong>裝箱通常伴隨一次堆積配置</strong>。這是 <code>interface{}</code>／<code>any</code> 在熱路徑上的主要成本，也是 <code>fmt.Println</code> 比 <code>println</code> 慢很多的原因之一。</p>
 <h3 id="runtime-的兩個最佳化">runtime 的兩個最佳化<a class="headerlink" href="#runtime-的兩個最佳化" title="Permanent link">#</a></h3>
 <p><strong>① 小整數快取。</strong> runtime 有一個預先配置的 <code>staticuint64s</code> 陣列，存著 0–255 的值。裝箱一個小於 256 的整數時直接指過去，不配置：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -201,22 +201,22 @@
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;small:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r1</span><span class="p">.</span><span class="nx">MemString</span><span class="p">())</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;large:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r2</span><span class="p">.</span><span class="nx">MemString</span><span class="p">())</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>small:        0 B/op        0 allocs/op
+<div class="hl" data-lang="text"><pre><span></span>small:        0 B/op        0 allocs/op
 large:        8 B/op        1 allocs/op
-</code></pre></div>
+</pre></div>
 
 <p><strong>② 指標型別直接放。</strong> 如果具體型別本身就是指標（<code>*T</code>、<code>map</code>、<code>chan</code>、<code>func</code>），<code>data</code> 直接存那個指標，不需要額外配置。</p>
 <p><strong>這是「傳指標進介面」的一個實際好處</strong>：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">var</span><span class="w"> </span><span class="nx">w</span><span class="w"> </span><span class="nx">io</span><span class="p">.</span><span class="nx">Writer</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">myWriter</span><span class="p">{}</span><span class="w">  </span><span class="c1">// 不配置（指標直接放進 data）</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">var</span><span class="w"> </span><span class="nx">w</span><span class="w"> </span><span class="nx">io</span><span class="p">.</span><span class="nx">Writer</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">myWriter</span><span class="p">{}</span><span class="w">  </span><span class="c1">// 不配置（指標直接放進 data）</span>
 <span class="kd">var</span><span class="w"> </span><span class="nx">s</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Stringer</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">myValue</span><span class="p">{}</span><span class="w"> </span><span class="c1">// 配置一次（值要複製到堆積）</span>
-</code></pre></div>
+</pre></div>
 
 <hr />
 <h2 id="nil-介面的經典陷阱">nil 介面的經典陷阱<a class="headerlink" href="#nil-介面的經典陷阱" title="Permanent link">#</a></h2>
 <p>這大概是 Go 最常見的 bug 之一。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -239,20 +239,20 @@ large:        8 B/op        1 allocs/op
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">err</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="kc">nil</span><span class="p">)</span><span class="w">   </span><span class="c1">// false ← 這裡</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%T %v\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span><span class="w"> </span><span class="c1">// *main.MyError &lt;nil&gt;</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="為什麼">為什麼<a class="headerlink" href="#為什麼" title="Permanent link">#</a></h3>
 <p>介面值是 <code>(型別, 資料)</code> 這一對。<code>err == nil</code> 只有在<strong>兩個欄位都是零</strong>時才成立。</p>
 <p><code>return err</code> 的時候發生了裝箱：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>tab  = *itab(error, *MyError)   ← 不是 nil！
+<div class="hl" data-lang="text"><pre><span></span>tab  = *itab(error, *MyError)   ← 不是 nil！
 data = nil                       ← 這個是 nil
-</code></pre></div>
+</pre></div>
 
 <p>型別欄位有值，所以整個介面不是 nil。</p>
 <figure class="diagram"><svg viewBox="0 0 700 200" role="img" aria-label="nil 介面與含 nil 指標的介面"><text class="d-t-b" x="15" y="22">情況 A：真正的 nil 介面　var err error</text><rect class="d-box-o" x="15" y="34" width="180" height="40" rx="4"/><text class="d-t-m d-mid" x="105" y="59">tab = nil</text><rect class="d-box-o" x="195" y="34" width="180" height="40" rx="4"/><text class="d-t-m d-mid" x="285" y="59">data = nil</text><text class="d-t-a" x="400" y="59">err == nil　→　true ✓</text><text class="d-t-b" x="15" y="112">情況 B：裝了 nil 指標的介面　var p *MyError = nil; var err error = p</text><rect class="d-box-d" x="15" y="124" width="180" height="40" rx="4"/><text class="d-t-m d-mid" x="105" y="149">tab = *itab(error,*MyError)</text><rect class="d-box-o" x="195" y="124" width="180" height="40" rx="4"/><text class="d-t-m d-mid" x="285" y="149">data = nil</text><text class="d-t-a" x="400" y="149">err == nil　→　false ✗</text><text class="d-t-s" x="15" y="190">兩個欄位都要是 nil，介面才等於 nil。這是規格明定的行為，不是 bug。</text></svg><figcaption><b>兩種「nil」。</b>情況 B 裡的介面「非 nil，但裝著一個 nil 指標」。呼叫 <code>err.Error()</code> 會進到方法本體（不會立刻 panic，因為方法接收者是指標），如果方法內部解參照 <code>e.msg</code> 才會 panic。</figcaption></figure>
 
 <h3 id="三個正確寫法">三個正確寫法<a class="headerlink" href="#三個正確寫法" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✓ 寫法一：宣告成 error 型別</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✓ 寫法一：宣告成 error 型別</span>
 <span class="kd">func</span><span class="w"> </span><span class="nx">doWork1</span><span class="p">(</span><span class="nx">fail</span><span class="w"> </span><span class="kt">bool</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="c1">// 直接用介面型別</span>
 <span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">fail</span><span class="w"> </span><span class="p">{</span>
@@ -280,14 +280,14 @@ data = nil                       ← 這個是 nil
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>寫法二最好</strong> —— 早回傳（early return），沒有中間狀態。</p>
 <p><code>go vet</code> 有一個 <code>nilness</code> 分析可以抓部分這類問題，但不完整。最可靠的還是養成「函式簽章回傳 <code>error</code> 時，內部就不要用具體錯誤型別的變數」的習慣。</p>
 <hr />
 <h2 id="型別斷言與型別-switch">型別斷言與型別 switch<a class="headerlink" href="#型別斷言與型別-switch" title="Permanent link">#</a></h2>
 <h3 id="兩種斷言形式">兩種斷言形式<a class="headerlink" href="#兩種斷言形式" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -306,29 +306,29 @@ data = nil                       ← 這個是 nil
 <span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;recovered:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nb">recover</span><span class="p">())</span><span class="w"> </span><span class="p">}()</span>
 <span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">v</span><span class="p">.(</span><span class="kt">int</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>hello
+<div class="hl" data-lang="text"><pre><span></span>hello
 0 false
 recovered: interface conversion: interface {} is string, not int
-</code></pre></div>
+</pre></div>
 
 <p><strong>幾乎總是應該用雙值形式</strong>，除非你能百分之百確定型別。</p>
 <h3 id="斷言的成本">斷言的成本<a class="headerlink" href="#斷言的成本" title="Permanent link">#</a></h3>
 <p>斷言到<strong>具體型別</strong>很快——只要比對 <code>_type</code> 指標是否相同：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>CMPQ  AX, $type:string(SB)   // 一次指標比較
+<div class="hl" data-lang="text"><pre><span></span>CMPQ  AX, $type:string(SB)   // 一次指標比較
 JNE   失敗路徑
-</code></pre></div>
+</pre></div>
 
 <p>斷言到<strong>另一個介面</strong>比較貴——要查 itab 快取，可能得動態建表：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="k">if</span><span class="w"> </span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">v</span><span class="p">.(</span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Stringer</span><span class="p">);</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="c1">// 需要 (fmt.Stringer, 具體型別) 的 itab</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="k">if</span><span class="w"> </span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">v</span><span class="p">.(</span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Stringer</span><span class="p">);</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="c1">// 需要 (fmt.Stringer, 具體型別) 的 itab</span>
 <span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">s</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>第一次遇到某個型別會走 <code>runtime.getitab</code>（有鎖），之後查快取。熱路徑上大量對不同型別做介面斷言，會看到 itab 查找出現在剖析結果裡。</p>
 <h3 id="型別-switch">型別 switch<a class="headerlink" href="#型別-switch" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -357,13 +357,13 @@ JNE   失敗路徑
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">describe</span><span class="p">(</span><span class="kc">nil</span><span class="p">))</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">describe</span><span class="p">(</span><span class="mf">3.14</span><span class="p">))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>整數 42
+<div class="hl" data-lang="text"><pre><span></span>整數 42
 字串長度 2
 nil
 其他 float64
-</code></pre></div>
+</pre></div>
 
 <p>三個要注意的地方：</p>
 <ol>
@@ -380,7 +380,7 @@ nil
 <h2 id="介面的設計建議">介面的設計建議<a class="headerlink" href="#介面的設計建議" title="Permanent link">#</a></h2>
 <p>技術細節之外，幾條實務原則：</p>
 <h3 id="介面要小">介面要小<a class="headerlink" href="#介面要小" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✓ 標準庫的典範</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✓ 標準庫的典範</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">Reader</span><span class="w"> </span><span class="kd">interface</span><span class="p">{</span><span class="w"> </span><span class="nx">Read</span><span class="p">(</span><span class="nx">p</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="nx">n</span><span class="w"> </span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">Writer</span><span class="w"> </span><span class="kd">interface</span><span class="p">{</span><span class="w"> </span><span class="nx">Write</span><span class="p">(</span><span class="nx">p</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="nx">n</span><span class="w"> </span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">Closer</span><span class="w"> </span><span class="kd">interface</span><span class="p">{</span><span class="w"> </span><span class="nx">Close</span><span class="p">()</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">}</span>
@@ -391,11 +391,11 @@ nil
 <span class="w">    </span><span class="nx">Writer</span>
 <span class="w">    </span><span class="nx">Closer</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>Go 諺語：<strong>「介面越大，抽象越弱。」</strong> 單方法介面最容易被滿足、最容易被替換、最容易寫測試假物件。</p>
 <h3 id="在消費端定義介面不在生產端">在消費端定義介面，不在生產端<a class="headerlink" href="#在消費端定義介面不在生產端" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 常見的錯誤：在實作套件定義介面</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 常見的錯誤：在實作套件定義介面</span>
 <span class="kn">package</span><span class="w"> </span><span class="nx">storage</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">Storage</span><span class="w"> </span><span class="kd">interface</span><span class="w"> </span><span class="p">{</span><span class="w">   </span><span class="c1">// 定義了一個大介面，包含所有方法</span>
 <span class="w">    </span><span class="nx">Get</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
@@ -412,16 +412,16 @@ nil
 <span class="w">    </span><span class="nx">Get</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span>
 <span class="p">}</span>
 <span class="kd">func</span><span class="w"> </span><span class="nx">Generate</span><span class="p">(</span><span class="nx">r</span><span class="w"> </span><span class="nx">reader</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">...</span><span class="w"> </span><span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>這樣 <code>report</code> 套件不需要 import <code>storage</code>，測試時傳一個只有 <code>Get</code> 的假物件就好。這是 Go 跟 Java/C# 最不一樣的地方之一。</p>
 <h3 id="回傳具體型別接受介面">回傳具體型別，接受介面<a class="headerlink" href="#回傳具體型別接受介面" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✓ 建構函式回傳具體型別，呼叫端保有全部能力</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✓ 建構函式回傳具體型別，呼叫端保有全部能力</span>
 <span class="kd">func</span><span class="w"> </span><span class="nx">NewClient</span><span class="p">(</span><span class="nx">addr</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="nx">Client</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">...</span><span class="w"> </span><span class="p">}</span>
 
 <span class="c1">// ✓ 函式參數接受介面，保持彈性</span>
 <span class="kd">func</span><span class="w"> </span><span class="nx">Process</span><span class="p">(</span><span class="nx">r</span><span class="w"> </span><span class="nx">io</span><span class="p">.</span><span class="nx">Reader</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">...</span><span class="w"> </span><span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>回傳介面會限制呼叫端能用的方法，也讓之後加新方法變成破壞性變更。</p>
 <h3 id="什麼時候不要用介面">什麼時候不要用介面<a class="headerlink" href="#什麼時候不要用介面" title="Permanent link">#</a></h3>

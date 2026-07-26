@@ -109,15 +109,15 @@
 </nav></aside>
   <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>資料結構</p><h1><span class='h1num'>2.2</span>切片 slice</h1><p class='lede'>三欄位標頭、append 的擴容規則、共享底層陣列造成的別名陷阱，以及三索引切片與記憶體洩漏。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="slice-就是一個三欄位的-struct">slice 就是一個三欄位的 struct<a class="headerlink" href="#slice-就是一個三欄位的-struct" title="Permanent link">#</a></h2>
 <p>理解 slice 的一切，只需要記住這個結構（<code>runtime/slice.go</code>）：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">slice</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">slice</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">array</span><span class="w"> </span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="w"> </span><span class="c1">// 指向底層陣列的第一個元素</span>
 <span class="w">    </span><span class="nx">len</span><span class="w">   </span><span class="kt">int</span><span class="w">            </span><span class="c1">// 目前長度</span>
 <span class="w">    </span><span class="nx">cap</span><span class="w">   </span><span class="kt">int</span><span class="w">            </span><span class="c1">// 從 array 起算到底層陣列結尾的容量</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>就這樣，24 個位元組（64 位元平台）。<strong>slice 不擁有資料，它只是一個「看向某段陣列的視窗」。</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -137,18 +137,18 @@
 <span class="w">    </span><span class="nx">h</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">(</span><span class="o">*</span><span class="nx">header</span><span class="p">)(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">s</span><span class="p">))</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;array=%#x len=%d cap=%d\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">h</span><span class="p">.</span><span class="nx">array</span><span class="p">,</span><span class="w"> </span><span class="nx">h</span><span class="p">.</span><span class="nx">len</span><span class="p">,</span><span class="w"> </span><span class="nx">h</span><span class="p">.</span><span class="nx">cap</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>24
+<div class="hl" data-lang="text"><pre><span></span>24
 array=0xc0000160c0 len=3 cap=10
-</code></pre></div>
+</pre></div>
 
 <figure class="diagram"><svg viewBox="0 0 700 260" role="img" aria-label="slice 標頭與底層陣列的關係"><text class="d-t-b" x="15" y="20">arr := [8]int{0,1,2,3,4,5,6,7}</text><rect class="d-box" x="15" y="30" width="72" height="40" rx="4"/><text class="d-t-m d-mid" x="51" y="55">0</text><rect class="d-box" x="87" y="30" width="72" height="40" rx="4"/><text class="d-t-m d-mid" x="123" y="55">1</text><rect class="d-box-a" x="159" y="30" width="72" height="40" rx="4"/><text class="d-t-m d-mid" x="195" y="55">2</text><rect class="d-box-a" x="231" y="30" width="72" height="40" rx="4"/><text class="d-t-m d-mid" x="267" y="55">3</text><rect class="d-box-a" x="303" y="30" width="72" height="40" rx="4"/><text class="d-t-m d-mid" x="339" y="55">4</text><rect class="d-box-w" x="375" y="30" width="72" height="40" rx="4"/><text class="d-t-m d-mid" x="411" y="55">5</text><rect class="d-box-w" x="447" y="30" width="72" height="40" rx="4"/><text class="d-t-m d-mid" x="483" y="55">6</text><rect class="d-box" x="519" y="30" width="72" height="40" rx="4"/><text class="d-t-m d-mid" x="555" y="55">7</text><text class="d-t-s d-mid" x="51" y="86">[0]</text><text class="d-t-s d-mid" x="195" y="86">[2]</text><text class="d-t-s d-mid" x="411" y="86">[5]</text><text class="d-t-s d-mid" x="555" y="86">[7]</text><text class="d-t-a" x="15" y="122">s := arr[2:5]　→　len=3　cap=6</text><path class="d-line-a" d="M159 108 L159 74" marker-end="url(#ar8a)"/><line class="d-line-a" x1="159" y1="108" x2="375" y2="108"/><text class="d-t-a d-mid" x="267" y="103">len = 3</text><line class="d-dash" x1="375" y1="108" x2="591" y2="108"/><text class="d-t-s d-mid" x="483" y="103">cap 延伸到底層陣列結尾 = 6</text><text class="d-t-b" x="15" y="158">s2 := arr[2:5:5]　→　len=3　cap=3（三索引切片限制了容量）</text><line class="d-line" x1="159" y1="172" x2="375" y2="172"/><path class="d-line" d="M375 172 L375 164" /><text class="d-t-s" x="385" y="176">cap 被切在這裡，append 一定會重新配置</text><line class="d-dash" x1="15" y1="196" x2="683" y2="196"/><text class="d-t-s" x="15" y="220">關鍵：s[0] 就是 arr[2]。改 s[0] 等於改 arr[2] —— 它們是同一塊記憶體。</text><text class="d-t-s" x="15" y="242">append(s, x) 在 cap 還夠時會直接寫進 arr[5]，把原本的 5 蓋掉。</text><defs><marker id="ar8a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--accent)"/></marker></defs></svg><figcaption><b>切片就是開一個視窗。</b><code>arr[low:high]</code> 產生的 slice：<code>len = high - low</code>，<code>cap = len(arr) - low</code>。三索引形式 <code>arr[low:high:max]</code> 則讓 <code>cap = max - low</code>。</figcaption></figure>
 
 <hr />
 <h2 id="共享底層陣列最常見的坑">共享底層陣列：最常見的坑<a class="headerlink" href="#共享底層陣列最常見的坑" title="Permanent link">#</a></h2>
 <p>因為 slice 只是視窗，<strong>兩個 slice 可以看向同一塊記憶體</strong>。這是效能的來源，也是 bug 的來源。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -164,12 +164,12 @@ array=0xc0000160c0 len=3 cap=10
 <span class="w">    </span><span class="nx">s</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">append</span><span class="p">(</span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">arr</span><span class="p">)</span><span class="w"> </span><span class="c1">// [0 1 999 3 4 -1 6 7] ← arr[5] 被 append 蓋掉了</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>append</code> 沒有超出容量，所以直接寫進底層陣列的下一格——<strong>把不屬於 <code>s</code> 的資料蓋掉了</strong>。</p>
 <h3 id="真實世界的版本">真實世界的版本<a class="headerlink" href="#真實世界的版本" title="Permanent link">#</a></h3>
 <p>這個坑在切分資料時最常出現：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -190,42 +190,43 @@ array=0xc0000160c0 len=3 cap=10
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;head=%q tail=%q\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">head</span><span class="p">,</span><span class="w"> </span><span class="nx">tail</span><span class="p">)</span>
 <span class="w">    </span><span class="c1">// head=&quot;HEAD!&quot; tail=&quot;ody&quot;  ← tail 的第一個位元組被吃掉了</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>head</code> 的 <code>cap</code> 是 8（延伸到底層結尾），所以 <code>append</code> 直接寫進 <code>data[4]</code>，也就是 <code>tail[0]</code>。</p>
 <p><strong>解法：三索引切片。</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✓ 正確版本</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✓ 正確版本</span>
 <span class="kd">func</span><span class="w"> </span><span class="nx">splitGood</span><span class="p">(</span><span class="nx">data</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">head</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">data</span><span class="p">[:</span><span class="mi">4</span><span class="p">:</span><span class="mi">4</span><span class="p">]</span><span class="w"> </span><span class="c1">// cap 也切成 4</span>
 <span class="w">    </span><span class="nx">tail</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">data</span><span class="p">[</span><span class="mi">4</span><span class="p">:]</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">head</span><span class="p">,</span><span class="w"> </span><span class="nx">tail</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>現在 <code>head</code> 的 <code>cap</code> 是 4，任何 <code>append</code> 都會觸發重新配置，不會碰到 <code>tail</code>。</p>
 <div class="admonition tip">
 <p class="admonition-title">什麼時候該用三索引切片</p>
 <p><strong>只要你把 slice 的一部分交給別人，就該考慮限制 cap。</strong> 這是函式庫作者的基本禮儀：</p>
-<p><code>go
-func (b *Buffer) Bytes() []byte {
-    return b.buf[:b.n:b.n] // 呼叫端 append 不會弄壞 Buffer 的內部狀態
-}</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="o">*</span><span class="nx">Buffer</span><span class="p">)</span><span class="w"> </span><span class="nx">Bytes</span><span class="p">()</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">b</span><span class="p">.</span><span class="nx">buf</span><span class="p">[:</span><span class="nx">b</span><span class="p">.</span><span class="nx">n</span><span class="p">:</span><span class="nx">b</span><span class="p">.</span><span class="nx">n</span><span class="p">]</span><span class="w"> </span><span class="c1">// 呼叫端 append 不會弄壞 Buffer 的內部狀態</span>
+<span class="p">}</span>
+</pre></div>
+
 </div>
 <hr />
 <h2 id="append-與擴容">append 與擴容<a class="headerlink" href="#append-與擴容" title="Permanent link">#</a></h2>
 <p><code>s = append(s, x)</code> 被編譯器改寫成大致這樣的邏輯：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>if len(s)+1 &gt; cap(s) {
+<div class="hl" data-lang="text"><pre><span></span>if len(s)+1 &gt; cap(s) {
     s = runtime.growslice(s, len(s)+1)   // 配置更大的陣列並複製過去
 }
 s = s[:len(s)+1]
 s[len(s)-1] = x
-</code></pre></div>
+</pre></div>
 
 <p><strong>注意 <code>append</code> 一定要接回傳值。</strong> 因為它可能回傳一個全新的標頭（指向新陣列）。忘記接住是 Go 新手最常見的錯誤之一，<code>go vet</code> 會抓（<code>lostcancel</code> 之外的 <code>appends</code> 檢查）。</p>
 <h3 id="擴容規則go-118-起">擴容規則（Go 1.18 起）<a class="headerlink" href="#擴容規則go-118-起" title="Permanent link">#</a></h3>
 <p><code>runtime.growslice</code> 的成長邏輯分三步。</p>
 <p><strong>第一步：算出「期望容量」<code>newcap</code>。</strong></p>
-<div class="hl" data-lang="text"><pre><span></span><code>newLen = 需要的新長度
+<div class="hl" data-lang="text"><pre><span></span>newLen = 需要的新長度
 if newLen &gt; 2 * oldCap {
     newcap = newLen                    // 一次加太多，直接照需求給
 } else if oldCap &lt; 256 {
@@ -236,7 +237,7 @@ if newLen &gt; 2 * oldCap {
         newcap += (newcap + 3*256) / 4 // 大 slice：每次約成長 1.25 倍
     }
 }
-</code></pre></div>
+</pre></div>
 
 <p><strong>第二步：換算成位元組數，並對齊到記憶體配置器的 size class。</strong></p>
 <p>這一步由 <code>roundupsize</code> 完成。記憶體配置器只提供固定的幾十種區塊大小（見 <a href="allocator.html">記憶體配置器</a>），所以實際拿到的容量通常<strong>大於</strong>計算出來的 <code>newcap</code>。</p>
@@ -247,7 +248,7 @@ if newLen &gt; 2 * oldCap {
 <p>Go 1.18 改成上面的版本：門檻從 <strong>1024 降到 256</strong>，而且成長公式改成 <code>newcap += (newcap + 3*256) / 4</code>，讓成長率從 2 倍<strong>平滑地</strong>過渡到 1.25 倍，而不是斷崖式切換。這減少了在門檻附近的記憶體浪費。</p>
 </div>
 <h3 id="親眼看擴容">親眼看擴容<a class="headerlink" href="#親眼看擴容" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -262,9 +263,9 @@ if newLen &gt; 2 * oldCap {
 <span class="w">        </span><span class="p">}</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>len=1     cap=1
+<div class="hl" data-lang="text"><pre><span></span>len=1     cap=1
 len=2     cap=2
 len=3     cap=4
 len=5     cap=8
@@ -278,7 +279,7 @@ len=513   cap=848
 len=849   cap=1280
 len=1281  cap=1792
 len=1793  cap=2560
-</code></pre></div>
+</pre></div>
 
 <p>前面幾次是漂亮的 2 的冪（翻倍 + size class 剛好對齊）。過了 256 之後就不是了：<code>512 → 848</code> 是因為 <code>512 + (512 + 768)/4 = 832</code>，再對齊到 size class 變成 848。</p>
 <div class="admonition warning">
@@ -286,7 +287,7 @@ len=1793  cap=2560
 <p>擴容規則是<strong>實作細節</strong>，Go 團隊改過好幾次，未來還可能再改。寫測試斷言 <code>cap(s) == 848</code> 這種事，升級版本時就會壞掉。</p>
 </div>
 <h3 id="先配置容量最有效的最佳化之一">先配置容量：最有效的最佳化之一<a class="headerlink" href="#先配置容量最有效的最佳化之一" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -326,18 +327,18 @@ len=1793  cap=2560
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;without:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r1</span><span class="p">,</span><span class="w"> </span><span class="nx">r1</span><span class="p">.</span><span class="nx">MemString</span><span class="p">())</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;with:   &quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r2</span><span class="p">,</span><span class="w"> </span><span class="nx">r2</span><span class="p">.</span><span class="nx">MemString</span><span class="p">())</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>典型輸出：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>without:        3448        342847 ns/op       4101187 B/op         29 allocs/op
+<div class="hl" data-lang="text"><pre><span></span>without:        3448        342847 ns/op       4101187 B/op         29 allocs/op
 with:          14562         81234 ns/op        802816 B/op          1 allocs/op
-</code></pre></div>
+</pre></div>
 
 <p>29 次配置變成 1 次，總配置量從 4 MB 降到 0.8 MB。<strong>只要你大致知道最終長度，就用 <code>make([]T, 0, n)</code>。</strong></p>
 <hr />
 <h2 id="記憶體洩漏小-slice-綁住大陣列">記憶體洩漏：小 slice 綁住大陣列<a class="headerlink" href="#記憶體洩漏小-slice-綁住大陣列" title="Permanent link">#</a></h2>
 <p>因為 slice 持有指向底層陣列的指標，<strong>只要 slice 還活著，整個底層陣列就不能被 GC 回收</strong>——即使你只用到其中三個元素。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -360,12 +361,12 @@ with:          14562         81234 ns/op        802816 B/op          1 allocs/op
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">firstThreeGood</span><span class="p">()))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>同樣的問題也出現在「從大 slice 中篩選少數元素」的場景。判斷準則：<strong>如果保留的比例很小、而且結果會活很久，就複製一份。</strong></p>
 <h3 id="指標元素的洩漏">指標元素的洩漏<a class="headerlink" href="#指標元素的洩漏" title="Permanent link">#</a></h3>
 <p>還有一種更隱蔽的：縮短 slice 不會清掉被移除元素的指標。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -382,19 +383,19 @@ with:          14562         81234 ns/op        802816 B/op          1 allocs/op
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">items</span><span class="p">),</span><span class="w"> </span><span class="nb">cap</span><span class="p">(</span><span class="nx">items</span><span class="p">))</span><span class="w"> </span><span class="c1">// 1 3</span>
 <span class="w">    </span><span class="c1">// 那兩個 Item 仍然被參照著，GC 收不掉</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>正確的移除方式要把不用的位置設成零值：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// 移除最後一個元素</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// 移除最後一個元素</span>
 <span class="nx">items</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="nx">items</span><span class="p">)</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">nil</span>
 <span class="nx">items</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">items</span><span class="p">[:</span><span class="nb">len</span><span class="p">(</span><span class="nx">items</span><span class="p">)</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
-</code></pre></div>
+</pre></div>
 
 <p>Go 1.21 起，標準庫的 <code>slices</code> 套件已經幫你處理好了：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="s">&quot;slices&quot;</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="s">&quot;slices&quot;</span>
 
 <span class="nx">items</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">slices</span><span class="p">.</span><span class="nx">Delete</span><span class="p">(</span><span class="nx">items</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">)</span><span class="w"> </span><span class="c1">// 會把尾端清成零值</span>
-</code></pre></div>
+</pre></div>
 
 <hr />
 <h2 id="slices-套件別再自己寫了"><code>slices</code> 套件：別再自己寫了<a class="headerlink" href="#slices-套件別再自己寫了" title="Permanent link">#</a></h2>
@@ -402,7 +403,7 @@ with:          14562         81234 ns/op        802816 B/op          1 allocs/op
 <p class="admonition-title">Go 1.21 起：<code>slices</code> 進入標準庫</p>
 <p>以前處理 slice 的常見操作都要自己寫或抄程式碼片段。Go 1.21 把 <code>golang.org/x/exp/slices</code> 提升為標準庫的 <code>slices</code> 套件。</p>
 </div>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -431,7 +432,7 @@ with:          14562         81234 ns/op        802816 B/op          1 allocs/op
 
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">slices</span><span class="p">.</span><span class="nx">Equal</span><span class="p">(</span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">))</span><span class="w"> </span><span class="c1">// false</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>常用函式：</p>
 <table>
@@ -490,7 +491,7 @@ with:          14562         81234 ns/op        802816 B/op          1 allocs/op
 </table>
 <hr />
 <h2 id="nil-slice-與空-slice">nil slice 與空 slice<a class="headerlink" href="#nil-slice-與空-slice" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -508,7 +509,7 @@ with:          14562         81234 ns/op        802816 B/op          1 allocs/op
 
 <span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">a</span><span class="w"> </span><span class="p">{}</span><span class="w"> </span><span class="c1">// ✓ range nil slice 也沒問題</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>實務建議：</p>
 <ul>
@@ -516,7 +517,7 @@ with:          14562         81234 ns/op        802816 B/op          1 allocs/op
 <li><strong>回傳空結果時回傳 nil</strong>，呼叫端用 <code>len(s) == 0</code> 判斷，不要用 <code>s == nil</code>。</li>
 <li><strong>例外：JSON 序列化。</strong> <code>nil</code> 會編碼成 <code>null</code>，空 slice 會編碼成 <code>[]</code>。如果 API 契約要求 <code>[]</code>，就要用 <code>[]T{}</code>。</li>
 </ul>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
@@ -536,7 +537,7 @@ with:          14562         81234 ns/op        802816 B/op          1 allocs/op
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">string</span><span class="p">(</span><span class="nx">x</span><span class="p">))</span><span class="w"> </span><span class="c1">// {&quot;items&quot;:null}</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">string</span><span class="p">(</span><span class="nx">y</span><span class="p">))</span><span class="w"> </span><span class="c1">// {&quot;items&quot;:[]}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <hr />
 <p>下一節是 map。Go 1.24 把它整個換掉了，從 bucket 鏈結改成 Swiss Table，是近年最大的一次資料結構重寫。</p></article><nav class='pager'><a class='prev' href='array.html'><span>上一節</span><strong>2.1 陣列 array</strong></a><a class='next' href='map.html'><span>下一節</span><strong>2.3 雜湊表 map</strong></a></nav></main>

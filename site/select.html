@@ -109,7 +109,7 @@
 </nav></aside>
   <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>關鍵字</p><h1><span class='h1num'>4.2</span>select</h1><p class='lede'>selectgo 的四步驟、隨機選擇為什麼是必要的、空 select 與 default 的特殊處理，以及常見的 select 慣用寫法。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="select-做什麼">select 做什麼<a class="headerlink" href="#select-做什麼" title="Permanent link">#</a></h2>
 <p><code>select</code> 讓一個 goroutine 同時等待多個 channel 操作，哪個先就緒就執行哪個。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -130,40 +130,40 @@
 <span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>快的
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>快的
+</pre></div>
 
 <p>它跟 <code>switch</code> 長得像，但語意完全不同：<code>switch</code> 是<strong>依值分支</strong>，<code>select</code> 是<strong>等待事件</strong>。</p>
 <hr />
 <h2 id="四種特殊情況">四種特殊情況<a class="headerlink" href="#四種特殊情況" title="Permanent link">#</a></h2>
 <p>在談一般情況之前，先看編譯器特別處理的四種：</p>
 <h3 id="1-空-select永久阻塞">① 空 select：永久阻塞<a class="headerlink" href="#1-空-select永久阻塞" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="k">select</span><span class="w"> </span><span class="p">{}</span><span class="w"> </span><span class="c1">// 直接呼叫 runtime.block()，永久休眠</span>
-</code></pre></div>
+<div class="hl" data-lang="go"><pre><span></span><span class="k">select</span><span class="w"> </span><span class="p">{}</span><span class="w"> </span><span class="c1">// 直接呼叫 runtime.block()，永久休眠</span>
+</pre></div>
 
 <p>這個 goroutine 永遠不會被喚醒。如果是 <code>main</code> goroutine 執行到這裡，而其他 goroutine 也都在等待，runtime 會偵測到死結：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>fatal error: all goroutines are asleep - deadlock!
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>fatal error: all goroutines are asleep - deadlock!
+</pre></div>
 
 <p>有時候會看到 <code>select {}</code> 被用在 <code>main</code> 結尾當「不要結束」的手段。<strong>不建議</strong>——用 <code>sync.WaitGroup</code> 或等待訊號更清楚。</p>
 <h3 id="2-只有一個-case等同直接操作">② 只有一個 case：等同直接操作<a class="headerlink" href="#2-只有一個-case等同直接操作" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
 <span class="k">case</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ch</span><span class="p">:</span>
 <span class="w">    </span><span class="nx">use</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>編譯器直接改寫成 <code>v := &lt;-ch; use(v)</code>，不走 <code>selectgo</code>。</p>
 <h3 id="3-一個-case-加-default非阻塞操作">③ 一個 case 加 default：非阻塞操作<a class="headerlink" href="#3-一個-case-加-default非阻塞操作" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
 <span class="k">case</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ch</span><span class="p">:</span>
 <span class="w">    </span><span class="nx">use</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
 <span class="k">default</span><span class="p">:</span>
 <span class="w">    </span><span class="c1">// channel 沒東西時走這裡</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>改寫成非阻塞版本的 channel 操作（<code>runtime.selectnbrecv</code>／<code>selectnbsend</code>），只是「試一下」，不會讓 goroutine 睡著。</p>
 <h3 id="4-有-default-的多-case先掃一遍都不行就走-default">④ 有 default 的多 case：先掃一遍，都不行就走 default<a class="headerlink" href="#4-有-default-的多-case先掃一遍都不行就走-default" title="Permanent link">#</a></h3>
@@ -177,7 +177,7 @@
 <p><strong><code>pollorder</code>（隨機）</strong> 決定檢查哪個 case 的順序。如果固定按程式碼順序檢查，寫在前面的 case 永遠優先，後面的可能永遠輪不到。</p>
 <p><strong><code>lockorder</code>（依位址排序）</strong> 決定上鎖的順序。<code>selectgo</code> 需要同時鎖住所有涉及的 channel。如果兩個 goroutine 用不同順序鎖，就會死結。<strong>依記憶體位址排序</strong>是解決這類問題的經典手法——所有人都用同一個全域一致的順序。</p>
 <h3 id="隨機選擇親眼驗證">隨機選擇：親眼驗證<a class="headerlink" href="#隨機選擇親眼驗證" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -209,42 +209,44 @@
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">counts</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>map[a:5027 b:4973]
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>map[a:5027 b:4973]
+</pre></div>
 
 <p>兩者都就緒時，機率大約各半。</p>
 <div class="admonition warning">
 <p class="admonition-title">不要依賴 case 的順序</p>
-<p><code>go
-// ✗ 錯誤的假設：以為 ctx.Done() 會優先
-select {
-case &lt;-ctx.Done():
-    return ctx.Err()
-case v := &lt;-work:
-    process(v)
-}</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 錯誤的假設：以為 ctx.Done() 會優先</span>
+<span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nx">Done</span><span class="p">():</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">ctx</span><span class="p">.</span><span class="nx">Err</span><span class="p">()</span>
+<span class="k">case</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">work</span><span class="p">:</span>
+<span class="w">    </span><span class="nx">process</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
 <p>如果 context 已取消<strong>且</strong> <code>work</code> 有資料，這段程式碼有一半的機率會處理那筆資料。要保證優先檢查取消，得寫成兩層：</p>
-<p>```go
-// ✓ 明確的優先順序
-select {
-case &lt;-ctx.Done():
-    return ctx.Err()
-default:
-}</p>
-<p>select {
-case &lt;-ctx.Done():
-    return ctx.Err()
-case v := &lt;-work:
-    process(v)
-}
-```</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✓ 明確的優先順序</span>
+<span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nx">Done</span><span class="p">():</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">ctx</span><span class="p">.</span><span class="nx">Err</span><span class="p">()</span>
+<span class="k">default</span><span class="p">:</span>
+<span class="p">}</span>
+
+<span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nx">Done</span><span class="p">():</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">ctx</span><span class="p">.</span><span class="nx">Err</span><span class="p">()</span>
+<span class="k">case</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">work</span><span class="p">:</span>
+<span class="w">    </span><span class="nx">process</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
 </div>
 <hr />
 <h2 id="nil-channel動態關閉某個-case">nil channel：動態關閉某個 case<a class="headerlink" href="#nil-channel動態關閉某個-case" title="Permanent link">#</a></h2>
 <p>對 <code>nil</code> channel 的傳送與接收都會<strong>永久阻塞</strong>。這看起來像個坑，其實是 <code>select</code> 最實用的技巧之一：<strong>把某個 case 設成 nil，等於暫時停用它。</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -290,50 +292,52 @@ case v := &lt;-work:
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;總和:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">sum</span><span class="p">)</span><span class="w"> </span><span class="c1">// 6</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>如果沒有 <code>a = nil</code> 這一招，已關閉的 channel 會<strong>一直立刻就緒</strong>（回傳零值與 <code>false</code>），讓 <code>select</code> 陷入忙碌迴圈。</p>
 <hr />
 <h2 id="常見慣用寫法">常見慣用寫法<a class="headerlink" href="#常見慣用寫法" title="Permanent link">#</a></h2>
 <h3 id="逾時">逾時<a class="headerlink" href="#逾時" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
 <span class="k">case</span><span class="w"> </span><span class="nx">res</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">work</span><span class="p">:</span>
 <span class="w">    </span><span class="nx">handle</span><span class="p">(</span><span class="nx">res</span><span class="p">)</span>
 <span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">time</span><span class="p">.</span><span class="nx">After</span><span class="p">(</span><span class="mi">3</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">):</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;逾時&quot;</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition warning">
 <p class="admonition-title"><code>time.After</code> 在迴圈裡會累積計時器</p>
-<p><code>go
-// ✗ 每一輪都建立一個新計時器，到期前不會被回收
-for {
-    select {
-    case v := &lt;-ch:
-        process(v)
-    case &lt;-time.After(time.Second):
-        return
-    }
-}</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 每一輪都建立一個新計時器，到期前不會被回收</span>
+<span class="k">for</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ch</span><span class="p">:</span>
+<span class="w">        </span><span class="nx">process</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">time</span><span class="p">.</span><span class="nx">After</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">):</span>
+<span class="w">        </span><span class="k">return</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
 <p>在 Go 1.23 之前，這是真實的記憶體洩漏來源。<strong>Go 1.23 起，未被參照的 Timer 可以立刻被 GC 回收</strong>（不再需要呼叫 <code>Stop</code>），問題大幅緩解。</p>
 <p>但即使如此，在高頻迴圈裡重複建立計時器仍有成本。正確做法是重用：</p>
-<p>```go
-t := time.NewTimer(time.Second)
-defer t.Stop()</p>
-<p>for {
-    t.Reset(time.Second)
-    select {
-    case v := &lt;-ch:
-        process(v)
-    case &lt;-t.C:
-        return
-    }
-}
-```</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">t</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">NewTimer</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<span class="k">defer</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">Stop</span><span class="p">()</span>
+
+<span class="k">for</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">t</span><span class="p">.</span><span class="nx">Reset</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<span class="w">    </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ch</span><span class="p">:</span>
+<span class="w">        </span><span class="nx">process</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">t</span><span class="p">.</span><span class="nx">C</span><span class="p">:</span>
+<span class="w">        </span><span class="k">return</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
 </div>
 <h3 id="取消">取消<a class="headerlink" href="#取消" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">worker</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">jobs</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="nx">Job</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">worker</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">jobs</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="nx">Job</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ctx</span><span class="p">.</span><span class="nx">Done</span><span class="p">():</span>
@@ -348,11 +352,11 @@ defer t.Stop()</p>
 <span class="w">        </span><span class="p">}</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>這是 Go 服務裡最常見的迴圈骨架。</p>
 <h3 id="非阻塞傳送滿了就丟棄">非阻塞傳送：滿了就丟棄<a class="headerlink" href="#非阻塞傳送滿了就丟棄" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">tryPublish</span><span class="p">(</span><span class="nx">ch</span><span class="w"> </span><span class="kd">chan</span><span class="o">&lt;-</span><span class="w"> </span><span class="nx">Event</span><span class="p">,</span><span class="w"> </span><span class="nx">e</span><span class="w"> </span><span class="nx">Event</span><span class="p">)</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">tryPublish</span><span class="p">(</span><span class="nx">ch</span><span class="w"> </span><span class="kd">chan</span><span class="o">&lt;-</span><span class="w"> </span><span class="nx">Event</span><span class="p">,</span><span class="w"> </span><span class="nx">e</span><span class="w"> </span><span class="nx">Event</span><span class="p">)</span><span class="w"> </span><span class="kt">bool</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="nx">ch</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="nx">e</span><span class="p">:</span>
 <span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">true</span>
@@ -360,11 +364,11 @@ defer t.Stop()</p>
 <span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">false</span><span class="w"> </span><span class="c1">// 緩衝區滿了，丟棄</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>日誌、指標上報這類「掉了也沒關係」的場景很適用，可以避免生產者被慢消費者拖住。</p>
 <h3 id="心跳">心跳<a class="headerlink" href="#心跳" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">run</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">work</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="nx">Job</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">run</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">work</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="nx">Job</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">tick</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">NewTicker</span><span class="p">(</span><span class="mi">30</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
 <span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">tick</span><span class="p">.</span><span class="nx">Stop</span><span class="p">()</span>
 
@@ -379,10 +383,10 @@ defer t.Stop()</p>
 <span class="w">        </span><span class="p">}</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="fan-in多個來源合併">fan-in：多個來源合併<a class="headerlink" href="#fan-in多個來源合併" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -427,7 +431,7 @@ defer t.Stop()</p>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">total</span><span class="p">)</span><span class="w"> </span><span class="c1">// 15</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>當來源數量在執行期才知道時，用這種「每個來源一個 goroutine」的做法，比動態建構 <code>select</code>（只能用 <code>reflect.Select</code>，很慢）好得多。</p>
 <hr />

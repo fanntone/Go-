@@ -143,11 +143,11 @@
 <p>現行架構的核心思想：<strong>把計時器交給排程器管理</strong>。每個 P 有自己的計時器堆積，排程器在找工作時順便檢查有沒有到期的計時器。</p>
 <hr />
 <h2 id="每個-p-一個四叉堆積">每個 P 一個四叉堆積<a class="headerlink" href="#每個-p-一個四叉堆積" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="text"><pre><span></span><code>type p struct {
+<div class="hl" data-lang="text"><pre><span></span>type p struct {
     // ...
     timers timers   // 這個 P 的計時器集合
 }
-</code></pre></div>
+</pre></div>
 
 <p><code>timers</code> 內部是一個<strong>四叉最小堆積（4-ary min-heap）</strong>，依到期時間排序，堆頂就是最快到期的那個。</p>
 <figure class="diagram"><svg viewBox="0 0 700 290" role="img" aria-label="每個 P 的計時器四叉堆積"><rect class="d-box" x="15" y="14" width="200" height="76" rx="6"/><text class="d-t-b d-mid" x="115" y="36">P0</text><text class="d-t-s d-mid" x="115" y="56">本地執行佇列</text><text class="d-t-a d-mid" x="115" y="78">timers 堆積</text><rect class="d-box" x="250" y="14" width="200" height="76" rx="6"/><text class="d-t-b d-mid" x="350" y="36">P1</text><text class="d-t-s d-mid" x="350" y="56">本地執行佇列</text><text class="d-t-a d-mid" x="350" y="78">timers 堆積</text><rect class="d-box" x="485" y="14" width="200" height="76" rx="6"/><text class="d-t-b d-mid" x="585" y="36">P2 …</text><text class="d-t-s d-mid" x="585" y="56">本地執行佇列</text><text class="d-t-a d-mid" x="585" y="78">timers 堆積</text><text class="d-t-b" x="15" y="122">四叉最小堆積（每個節點最多 4 個子節點）</text><rect class="d-box-a" x="290" y="132" width="120" height="30" rx="4"/><text class="d-t-m d-mid" x="350" y="152">到期 10:00:01</text><path class="d-line" d="M330 162 L120 190"/><path class="d-line" d="M343 162 L270 190"/><path class="d-line" d="M357 162 L420 190"/><path class="d-line" d="M370 162 L570 190"/><rect class="d-box" x="55" y="192" width="120" height="28" rx="4"/><text class="d-t-m d-mid" x="115" y="211">10:00:05</text><rect class="d-box" x="205" y="192" width="120" height="28" rx="4"/><text class="d-t-m d-mid" x="265" y="211">10:00:03</text><rect class="d-box" x="365" y="192" width="120" height="28" rx="4"/><text class="d-t-m d-mid" x="425" y="211">10:00:08</text><rect class="d-box" x="515" y="192" width="120" height="28" rx="4"/><text class="d-t-m d-mid" x="575" y="211">10:00:02</text><text class="d-t-s" x="15" y="248">為什麼是四叉不是二叉？樹更矮（層數少約一半），上浮／下沉時的比較次數雖然多一點，</text><text class="d-t-s" x="15" y="268">但記憶體存取更集中，同一層的 4 個子節點常在同一條快取線上 —— 對現代 CPU 更友善。</text></svg><figcaption><b>P 本地的計時器堆積。</b>加入計時器時放進「目前 P」的堆積，操作幾乎無鎖。工作竊取時，閒置的 P 也會順便竊取其他 P 的到期計時器，避免某個 P 忙碌時它的計時器被延誤。</figcaption></figure>
@@ -180,7 +180,7 @@
 <p>這個改變需要 <code>go.mod</code> 宣告 <code>go 1.23</code> 以上才生效。可用 <code>GODEBUG=asynctimerchan=1</code> 強制舊行為。</p>
 </div>
 <h3 id="舊行為的問題">舊行為的問題<a class="headerlink" href="#舊行為的問題" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -207,11 +207,11 @@
 <span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;正常：沒有陳舊值&quot;</span><span class="p">)</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>在 Go 1.22 及之前，這段程式會印出「收到（不該發生）」——因為緩衝區裡還躺著一個舊的時間值。</p>
 <p>為了避免這個問題，舊版的正確 <code>Reset</code> 寫法非常繁瑣：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// Go ≤ 1.22 的正確寫法（現在不需要了）</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// Go ≤ 1.22 的正確寫法（現在不需要了）</span>
 <span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">t</span><span class="p">.</span><span class="nx">Stop</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">t</span><span class="p">.</span><span class="nx">C</span><span class="p">:</span><span class="w"> </span><span class="c1">// 排空緩衝區</span>
@@ -219,20 +219,20 @@
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
 <span class="nx">t</span><span class="p">.</span><span class="nx">Reset</span><span class="p">(</span><span class="nx">d</span><span class="p">)</span>
-</code></pre></div>
+</pre></div>
 
 <p>而且這個寫法在有其他 goroutine 也在讀 <code>t.C</code> 時仍然有競爭。</p>
 <h3 id="新行為">新行為<a class="headerlink" href="#新行為" title="Permanent link">#</a></h3>
 <p>Go 1.23 起，規格保證：<strong><code>Stop</code> 或 <code>Reset</code> 呼叫之後，不會再收到該呼叫之前準備的任何值。</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// Go ≥ 1.23：直接 Reset 就對了</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// Go ≥ 1.23：直接 Reset 就對了</span>
 <span class="nx">t</span><span class="p">.</span><span class="nx">Stop</span><span class="p">()</span>
 <span class="nx">t</span><span class="p">.</span><span class="nx">Reset</span><span class="p">(</span><span class="nx">d</span><span class="p">)</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="另一個改善立即可回收">另一個改善：立即可回收<a class="headerlink" href="#另一個改善立即可回收" title="Permanent link">#</a></h3>
 <p><strong>Go 1.23 起，不再被參照的 Timer 與 Ticker 可以立刻被 GC 回收，即使沒有呼叫 <code>Stop()</code>。</strong></p>
 <p>這修掉了一個經典的洩漏：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// 在 Go 1.22 及之前，這是真實的記憶體洩漏</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// 在 Go 1.22 及之前，這是真實的記憶體洩漏</span>
 <span class="k">for</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ch</span><span class="p">:</span>
@@ -241,67 +241,67 @@
 <span class="w">        </span><span class="k">return</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>舊版裡，這些計時器要等到一分鐘後到期才會被釋放。如果迴圈每秒跑 1000 次，就會累積 60000 個計時器。Go 1.23 起，離開 <code>select</code> 後這些計時器立刻變成垃圾。</p>
 <div class="admonition warning">
 <p class="admonition-title">仍然建議明確 Stop</p>
 <p>雖然不再洩漏，但在高頻迴圈裡重複建立計時器<strong>仍有配置成本</strong>。重用是更好的做法：</p>
-<p>```go
-t := time.NewTimer(time.Minute)
-defer t.Stop()</p>
-<p>for {
-    if !t.Stop() {
-        select { case &lt;-t.C: default: }  // Go 1.23+ 其實可以省略這段
-    }
-    t.Reset(time.Minute)</p>
-<div class="hl" data-lang="go"><pre><span></span><code>select {
-case v := &lt;-ch:
-    process(v)
-case &lt;-t.C:
-    return
-}
-</code></pre></div>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">t</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">NewTimer</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Minute</span><span class="p">)</span>
+<span class="k">defer</span><span class="w"> </span><span class="nx">t</span><span class="p">.</span><span class="nx">Stop</span><span class="p">()</span>
 
-<p>}
-```</p>
+<span class="k">for</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">t</span><span class="p">.</span><span class="nx">Stop</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">select</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">t</span><span class="p">.</span><span class="nx">C</span><span class="p">:</span><span class="w"> </span><span class="k">default</span><span class="p">:</span><span class="w"> </span><span class="p">}</span><span class="w">  </span><span class="c1">// Go 1.23+ 其實可以省略這段</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="nx">t</span><span class="p">.</span><span class="nx">Reset</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Minute</span><span class="p">)</span>
+
+<span class="w">    </span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ch</span><span class="p">:</span>
+<span class="w">        </span><span class="nx">process</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
+<span class="w">    </span><span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">t</span><span class="p">.</span><span class="nx">C</span><span class="p">:</span>
+<span class="w">        </span><span class="k">return</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
 </div>
 <h3 id="lentc-的相容性影響"><code>len(t.C)</code> 的相容性影響<a class="headerlink" href="#lentc-的相容性影響" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 這段程式在 Go 1.23 之後會壞掉</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 這段程式在 Go 1.23 之後會壞掉</span>
 <span class="k">if</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">t</span><span class="p">.</span><span class="nx">C</span><span class="p">)</span><span class="w"> </span><span class="p">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="o">&lt;-</span><span class="nx">t</span><span class="p">.</span><span class="nx">C</span><span class="w"> </span><span class="c1">// 以為有值可以拿</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>新版 <code>len(t.C)</code> 永遠回傳 0。要檢查有沒有值，用非阻塞接收：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✓</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✓</span>
 <span class="k">select</span><span class="w"> </span><span class="p">{</span>
 <span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">t</span><span class="p">.</span><span class="nx">C</span><span class="p">:</span>
 <span class="k">default</span><span class="p">:</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <hr />
 <h2 id="timer-與-ticker-的正確用法">Timer 與 Ticker 的正確用法<a class="headerlink" href="#timer-與-ticker-的正確用法" title="Permanent link">#</a></h2>
 <h3 id="timesleep"><code>time.Sleep</code><a class="headerlink" href="#timesleep" title="Permanent link">#</a></h3>
 <p>最簡單的形式，讓目前 goroutine 休眠。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="mi">100</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>
-</code></pre></div>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="mi">100</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>
+</pre></div>
 
 <p>實作是 <code>runtime.timeSleep</code>：把目前 g 加入計時器堆積，然後 <code>gopark</code> 讓出 CPU。到期時排程器把它設回可執行狀態。</p>
 <p><strong>它不會阻塞 OS 執行緒</strong>——M 會去跑其他 goroutine。這是為什麼 Go 可以同時有百萬個 sleeping goroutine，而傳統執行緒模型不行。</p>
 <h3 id="timeafter"><code>time.After</code><a class="headerlink" href="#timeafter" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="k">select</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="k">select</span><span class="w"> </span><span class="p">{</span>
 <span class="k">case</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">ch</span><span class="p">:</span>
 <span class="w">    </span><span class="nx">process</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
 <span class="k">case</span><span class="w"> </span><span class="o">&lt;-</span><span class="nx">time</span><span class="p">.</span><span class="nx">After</span><span class="p">(</span><span class="mi">3</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">):</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;逾時&quot;</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>方便，但如上所述，高頻迴圈裡要注意配置成本。</p>
 <h3 id="timenewtimer可控制的單次計時器"><code>time.NewTimer</code>：可控制的單次計時器<a class="headerlink" href="#timenewtimer可控制的單次計時器" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -322,10 +322,10 @@ case &lt;-t.C:
 <span class="w">    </span><span class="o">&lt;-</span><span class="nx">t</span><span class="p">.</span><span class="nx">C</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;第二次到期&quot;</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="timenewticker週期性"><code>time.NewTicker</code>：週期性<a class="headerlink" href="#timenewticker週期性" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="text"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;context&quot;</span>
@@ -352,27 +352,28 @@ case &lt;-t.C:
 <span class="w">        </span><span class="p">}</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="go"><pre><span></span><code>tick 1
+<div class="hl" data-lang="text"><pre><span></span>tick 1
 tick 2
 tick 3
 結束，共觸發 3 次
-</code></pre></div>
+</pre></div>
 
 <div class="admonition warning">
 <p class="admonition-title">Ticker 會丟棄來不及處理的 tick</p>
 <p>Ticker 的 channel 容量是 1。如果你的處理邏輯比週期慢，多餘的 tick 會被<strong>直接丟掉</strong>，不會累積。</p>
-<p><code>go
-tk := time.NewTicker(100 * time.Millisecond)
-for range tk.C {
-    time.Sleep(500 * time.Millisecond) // 處理太慢
-    // 每 500ms 只會收到一次 tick，中間的 4 次被丟棄
-}</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">tk</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">NewTicker</span><span class="p">(</span><span class="mi">100</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>
+<span class="k">for</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">tk</span><span class="p">.</span><span class="nx">C</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="mi">500</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span><span class="w"> </span><span class="c1">// 處理太慢</span>
+<span class="w">    </span><span class="c1">// 每 500ms 只會收到一次 tick，中間的 4 次被丟棄</span>
+<span class="p">}</span>
+</pre></div>
+
 <p><strong>這通常是你要的行為</strong>（避免積壓爆炸），但如果你需要「執行 N 次」的語意，就要自己計數，不能假設 tick 次數等於經過的週期數。</p>
 </div>
 <h3 id="timeafterfunc到期時執行函式"><code>time.AfterFunc</code>：到期時執行函式<a class="headerlink" href="#timeafterfunc到期時執行函式" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -393,13 +394,13 @@ for range tk.C {
 <span class="w">    </span><span class="o">&lt;-</span><span class="nx">done</span>
 <span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">t</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>注意 <code>AfterFunc</code> 的函式<strong>在一個新的 goroutine 中執行</strong>，不是在計時器的內部執行緒上。所以裡面可以做任何事，包括阻塞操作。</p>
 <hr />
 <h2 id="常見模式">常見模式<a class="headerlink" href="#常見模式" title="Permanent link">#</a></h2>
 <h3 id="指數退避重試">指數退避重試<a class="headerlink" href="#指數退避重試" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="text"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;context&quot;</span>
@@ -458,14 +459,14 @@ for range tk.C {
 <span class="w">    </span><span class="p">})</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;嘗試次數:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">n</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;錯誤:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="go"><pre><span></span><code>嘗試次數: 3 錯誤: &lt;nil&gt;
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>嘗試次數: 3 錯誤: &lt;nil&gt;
+</pre></div>
 
 <p><strong>抖動很重要。</strong> 沒有它，一次服務中斷後所有客戶端會在同一瞬間重試，形成「驚群效應（thundering herd）」把服務再打掛一次。</p>
 <h3 id="節流throttle與去抖debounce">節流（throttle）與去抖（debounce）<a class="headerlink" href="#節流throttle與去抖debounce" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="text"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -495,14 +496,14 @@ for range tk.C {
 
 <span class="w">    </span><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="mi">100</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span><span class="w"> </span><span class="c1">// 等安靜下來</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="go"><pre><span></span><code>實際執行（只有一次）
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>實際執行（只有一次）
+</pre></div>
 
 <p>（上面的版本沒有加鎖，只適用於單一 goroutine 呼叫。多 goroutine 場景要加 mutex 保護 <code>t</code>。）</p>
 <h3 id="超時控制的正確層次">超時控制的正確層次<a class="headerlink" href="#超時控制的正確層次" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 只在最外層設 timeout，內部的慢操作仍會拖住</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 只在最外層設 timeout，內部的慢操作仍會拖住</span>
 <span class="kd">func</span><span class="w"> </span><span class="nx">handler</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithTimeout</span><span class="p">(</span><span class="nx">r</span><span class="p">.</span><span class="nx">Context</span><span class="p">(),</span><span class="w"> </span><span class="mi">5</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
 <span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">cancel</span><span class="p">()</span>
@@ -519,13 +520,13 @@ for range tk.C {
 <span class="w">        </span><span class="k">return</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>timeout 只有在整條呼叫鏈都尊重 context 時才有意義。</strong></p>
 <hr />
 <h2 id="timetime-的兩個時鐘"><code>time.Time</code> 的兩個時鐘<a class="headerlink" href="#timetime-的兩個時鐘" title="Permanent link">#</a></h2>
 <p>Go 的 <code>time.Time</code> 內部同時存了<strong>牆上時鐘（wall clock）</strong>與<strong>單調時鐘（monotonic clock）</strong>：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -537,28 +538,29 @@ for range tk.C {
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">t</span><span class="p">)</span><span class="w"> </span><span class="c1">// 2026-07-25 14:30:00.123456 +0800 CST m=+0.000123456</span>
 <span class="w">    </span><span class="c1">//                                                     ^^^^^^^^^^^^^^ 單調時鐘讀數</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <ul>
 <li><strong>牆上時鐘</strong>用於顯示與格式化。它可能因為 NTP 校時而<strong>跳躍</strong>（甚至倒退）。</li>
 <li><strong>單調時鐘</strong>只會前進，用於量測時間差。</li>
 </ul>
 <p><code>time.Since(t)</code>、<code>t2.Sub(t1)</code> 會<strong>優先使用單調時鐘</strong>，所以測量出來的時間不會被 NTP 校時影響。</p>
-<div class="hl" data-lang=""><pre><span></span><code><span class="nx">start</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Now</span><span class="p">()</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">start</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Now</span><span class="p">()</span>
 <span class="nx">doWork</span><span class="p">()</span>
 <span class="nx">elapsed</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Since</span><span class="p">(</span><span class="nx">start</span><span class="p">)</span><span class="w"> </span><span class="c1">// ✓ 用單調時鐘，可靠</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition warning">
 <p class="admonition-title">序列化會丟掉單調時鐘</p>
-<p>```go
-t1 := time.Now()
-data, _ := json.Marshal(t1)
-var t2 time.Time
-json.Unmarshal(data, &amp;t2)</p>
-<p>// t2 只有牆上時鐘，沒有單調讀數
-fmt.Println(t1 == t2) // false！即使看起來一樣
-```</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">t1</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Now</span><span class="p">()</span>
+<span class="nx">data</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Marshal</span><span class="p">(</span><span class="nx">t1</span><span class="p">)</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">t2</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span>
+<span class="nx">json</span><span class="p">.</span><span class="nx">Unmarshal</span><span class="p">(</span><span class="nx">data</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">t2</span><span class="p">)</span>
+
+<span class="c1">// t2 只有牆上時鐘，沒有單調讀數</span>
+<span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">t1</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nx">t2</span><span class="p">)</span><span class="w"> </span><span class="c1">// false！即使看起來一樣</span>
+</pre></div>
+
 <p>這也是 <code>reflect.DeepEqual</code> 比較 <code>time.Time</code> 會出意外的原因。要比較時間點用 <code>t1.Equal(t2)</code>，它只比較實際時刻。</p>
 <p>需要剝掉單調時鐘時用 <code>t.Round(0)</code>。</p>
 </div>

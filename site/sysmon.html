@@ -114,17 +114,17 @@
 <li><strong>不會被搶佔。</strong> 它是「監工」，如果自己也被排程管理就沒意義了。</li>
 </ol>
 <p>這個設計讓它成為整個 runtime 的<strong>安全網</strong>：即使所有 P 都被佔滿、所有 M 都阻塞，<code>sysmon</code> 仍然在跑。</p>
-<div class="hl" data-lang="text"><pre><span></span><code>runtime.main()
+<div class="hl" data-lang="text"><pre><span></span>runtime.main()
     ↓
 newm(sysmon, nil, -1)   ← 建立不綁 P 的 M
     ↓
 sysmon() 進入無限迴圈
-</code></pre></div>
+</pre></div>
 
 <hr />
 <h2 id="巡邏節奏">巡邏節奏<a class="headerlink" href="#巡邏節奏" title="Permanent link">#</a></h2>
 <p><code>sysmon</code> 的迴圈間隔是<strong>自適應</strong>的：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>delay = 20 微秒（起始）
+<div class="hl" data-lang="text"><pre><span></span>delay = 20 微秒（起始）
 
 for {
     if 閒置已久 {
@@ -141,7 +141,7 @@ for {
         delay = 20 微秒       // 重置成高頻
     }
 }
-</code></pre></div>
+</pre></div>
 
 <p><strong>忙碌時每 20 微秒巡一次，閒置時降到每 10 毫秒一次。</strong> 這讓 <code>sysmon</code> 在系統閒置時幾乎不消耗 CPU（對筆電電池與雲端帳單都有幫助），忙碌時又能及時反應。</p>
 <hr />
@@ -152,14 +152,14 @@ for {
 <h2 id="逐項細看">逐項細看<a class="headerlink" href="#逐項細看" title="Permanent link">#</a></h2>
 <h3 id="1-搶佔執行過久的-goroutine">① 搶佔執行過久的 goroutine<a class="headerlink" href="#1-搶佔執行過久的-goroutine" title="Permanent link">#</a></h3>
 <p><code>retake()</code> 走過所有 P，檢查它們正在執行的 G：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>如果 P 狀態是 _Prunning 且該 G 已執行超過 forcePreemptNS（10 毫秒）:
+<div class="hl" data-lang="text"><pre><span></span>如果 P 狀態是 _Prunning 且該 G 已執行超過 forcePreemptNS（10 毫秒）:
     preemptone(p)
         → 設定 g.stackguard0 = stackPreempt（協作式：下次函式呼叫時讓出）
         → 發送 SIGURG 給該 M（非同步式：立刻中斷）
-</code></pre></div>
+</pre></div>
 
 <p>沒有這一項，下面的程式在 <code>GOMAXPROCS=1</code> 時會永遠卡住：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -178,11 +178,11 @@ for {
 <span class="w">    </span><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="mi">50</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;sysmon 讓我印得出來&quot;</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>run<span class="w"> </span>main.go<span class="w">                              </span><span class="c1"># 正常印出</span>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>run<span class="w"> </span>main.go<span class="w">                              </span><span class="c1"># 正常印出</span>
 <span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">asyncpreemptoff</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go<span class="w">    </span><span class="c1"># 卡死</span>
-</code></pre></div>
+</pre></div>
 
 <p>第二個指令會卡住——關掉非同步搶佔後，<code>sysmon</code> 只能設定 <code>stackguard0</code>，但那個空迴圈永遠不會呼叫函式，檢查點永遠不會被觸發。</p>
 <div class="admonition version">
@@ -197,12 +197,12 @@ for {
 <h3 id="2-回收系統呼叫中的-p">② 回收系統呼叫中的 P<a class="headerlink" href="#2-回收系統呼叫中的-p" title="Permanent link">#</a></h3>
 <p>當 M 進入系統呼叫時，它持有的 P 會被標記為 <code>_Psyscall</code>。如果系統呼叫很快回來（大部分情況），M 直接拿回 P，零成本。</p>
 <p>如果超過 <strong>20 微秒</strong>（<code>sysmonSyscallThreshold</code>）還沒回來，<code>sysmon</code> 就介入：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>handoffp(p):
+<div class="hl" data-lang="text"><pre><span></span>handoffp(p):
     如果 P 的本地佇列有工作，或全域佇列非空，或有到期的計時器:
         startm(p)   // 找一個閒置的 M（或建立新的）來接手這個 P
     否則:
         把 P 放進閒置列表
-</code></pre></div>
+</pre></div>
 
 <p><strong>這是「一個 goroutine 阻塞在檔案讀取，不會拖累其他 goroutine」的機制。</strong></p>
 <p>代價是可能建立新的執行緒。大量並行的阻塞式系統呼叫會讓執行緒數量膨脹——這就是 <a href="netpoller.html#為什麼檔案-io-不走-netpoller">netpoller</a> 那節提到的檔案 I/O 問題。</p>
@@ -210,9 +210,9 @@ for {
 <p>如果距離上次 <code>netpoll</code> 超過 10 毫秒，<code>sysmon</code> 主動呼叫一次。</p>
 <p>正常情況下排程器的 <code>findRunnable()</code> 就會做這件事。但如果所有 P 都很忙（一直有工作可做，從不進入 <code>findRunnable</code> 的閒置分支），網路事件就可能被延誤。<code>sysmon</code> 保證至少每 10 毫秒檢查一次。</p>
 <h3 id="4-強制-gc">④ 強制 GC<a class="headerlink" href="#4-強制-gc" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="text"><pre><span></span><code>如果 距離上次 GC 超過 forcegcperiod（2 分鐘）:
+<div class="hl" data-lang="text"><pre><span></span>如果 距離上次 GC 超過 forcegcperiod（2 分鐘）:
     喚醒 forcegchelper goroutine 觸發 GC
-</code></pre></div>
+</pre></div>
 
 <p>GC 平常由<strong>堆積成長</strong>觸發（達到 <code>GOGC</code> 設定的目標）。但如果程式幾乎不配置記憶體，這個條件永遠不成立。</p>
 <p>那為什麼還要 GC？因為：</p>
@@ -226,7 +226,7 @@ for {
 <p>這一項最常被誤解，值得多說一點。</p>
 <p><strong>GC 回收的是「Go 堆積裡的物件」，不是「還給作業系統的記憶體」。</strong> 物件被回收後，那塊空間回到 Go 的記憶體池（<code>mheap</code>）等待重用，作業系統看到的 RSS 完全沒變。</p>
 <p>scavenger 負責第二步：找出長時間沒被使用的記憶體頁，告訴作業系統可以拿走。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -270,7 +270,7 @@ for {
 <span class="w">    </span><span class="c1">// 等同 debug.FreeOSMemory()</span>
 <span class="w">    </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GC</span><span class="p">()</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>三個關鍵指標：</p>
 <table>
@@ -307,30 +307,31 @@ for {
 </div>
 <div class="admonition tip">
 <p class="admonition-title"><code>debug.FreeOSMemory()</code> 的正確用途</p>
-<p>```go
-import "runtime/debug"</p>
-<p>debug.FreeOSMemory() // 立刻 GC + 盡可能歸還記憶體
-```</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="s">&quot;runtime/debug&quot;</span>
+
+<span class="nx">debug</span><span class="p">.</span><span class="nx">FreeOSMemory</span><span class="p">()</span><span class="w"> </span><span class="c1">// 立刻 GC + 盡可能歸還記憶體</span>
+</pre></div>
+
 <p>它會<strong>強制一次完整的 STW GC</strong>，代價不小。適合的場景只有一個：<strong>程式剛完成一個明確的大型階段</strong>（例如批次任務跑完、大量資料匯入結束），你知道接下來會安靜一段時間。</p>
 <p>絕對不要放在請求處理路徑或定時任務裡。</p>
 </div>
 <hr />
 <h2 id="觀察-sysmon-的效果">觀察 sysmon 的效果<a class="headerlink" href="#觀察-sysmon-的效果" title="Permanent link">#</a></h2>
 <h3 id="看搶佔">看搶佔<a class="headerlink" href="#看搶佔" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">schedtrace</span><span class="o">=</span><span class="m">1000</span>,scheddetail<span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">schedtrace</span><span class="o">=</span><span class="m">1000</span>,scheddetail<span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
+</pre></div>
 
 <p><code>scheddetail=1</code> 會列出每個 G 的狀態。反覆執行可以看到長時間執行的 G 被切換出去。</p>
 <h3 id="看記憶體歸還">看記憶體歸還<a class="headerlink" href="#看記憶體歸還" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">gctrace</span><span class="o">=</span><span class="m">1</span>,scavtrace<span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">gctrace</span><span class="o">=</span><span class="m">1</span>,scavtrace<span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>scav 1 KiB work (0 KiB bg, 1 KiB eager), 4 KiB total, 0.00% util
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>scav 1 KiB work (0 KiB bg, 1 KiB eager), 4 KiB total, 0.00% util
+</pre></div>
 
 <p><code>scavtrace=1</code> 會在每次 scavenge 事件時印一行。</p>
 <h3 id="看執行緒膨脹">看執行緒膨脹<a class="headerlink" href="#看執行緒膨脹" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -348,7 +349,7 @@ import "runtime/debug"</p>
 <span class="w">    </span><span class="c1">// ... 你的工作 ...</span>
 <span class="w">    </span><span class="k">select</span><span class="w"> </span><span class="p">{}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>如果這個數字持續成長，代表有大量阻塞的系統呼叫。</p>
 <hr />

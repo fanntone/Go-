@@ -109,7 +109,7 @@
 </nav></aside>
   <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>標準函式庫與進階主題</p><h1><span class='h1num'>7.4</span>cgo</h1><p class='lede'>cgo 呼叫的堆疊切換與成本、指標傳遞規則、對交叉編譯與 GC 的影響，以及什麼時候該避開它。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="cgo-是什麼">cgo 是什麼<a class="headerlink" href="#cgo-是什麼" title="Permanent link">#</a></h2>
 <p>cgo 讓 Go 呼叫 C 函式（也讓 C 呼叫 Go）。它不是函式庫，而是<strong>編譯工具鏈的一部分</strong>：<code>go build</code> 看到 <code>import "C"</code> 就會啟動 cgo，產生膠水程式碼、呼叫系統的 C 編譯器、再把結果連結進來。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="cm">/*</span>
 <span class="cm">#include &lt;stdio.h&gt;</span>
@@ -126,7 +126,7 @@
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">C</span><span class="p">.</span><span class="nx">add</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">))</span><span class="w"> </span><span class="c1">// 7</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>注意兩個語法細節：</p>
 <ol>
@@ -144,7 +144,7 @@
 <p>但<strong>數量級沒有改變</strong>：cgo 呼叫仍然比 Go 函式呼叫貴 30 倍以上。</p>
 </div>
 <h3 id="實測">實測<a class="headerlink" href="#實測" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="cm">/*</span>
 <span class="cm">static int c_add(int a, int b) { return a + b; }</span>
@@ -173,15 +173,15 @@
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;Go :&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r1</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;cgo:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r2</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>典型結果：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>Go : 1000000000          1.8 ns/op
+<div class="hl" data-lang="text"><pre><span></span>Go : 1000000000          1.8 ns/op
 cgo:  35000000          33.4 ns/op
-</code></pre></div>
+</pre></div>
 
 <p><strong>實務結論：把工作批次化。</strong> 與其呼叫 C 函式一百萬次處理一個元素，不如呼叫一次處理一百萬個元素。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 一百萬次 cgo 呼叫，光是開銷就 33 毫秒</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 一百萬次 cgo 呼叫，光是開銷就 33 毫秒</span>
 <span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">data</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">out</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">process_one</span><span class="p">(</span><span class="nx">C</span><span class="p">.</span><span class="nb">int</span><span class="p">(</span><span class="nx">data</span><span class="p">[</span><span class="nx">i</span><span class="p">]))</span>
 <span class="p">}</span>
@@ -192,22 +192,22 @@ cgo:  35000000          33.4 ns/op
 <span class="w">    </span><span class="p">(</span><span class="o">*</span><span class="nx">C</span><span class="p">.</span><span class="kt">int</span><span class="p">)(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">out</span><span class="p">[</span><span class="mi">0</span><span class="p">])),</span>
 <span class="w">    </span><span class="nx">C</span><span class="p">.</span><span class="nb">int</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">data</span><span class="p">)),</span>
 <span class="p">)</span>
-</code></pre></div>
+</pre></div>
 
 <hr />
 <h2 id="指標傳遞規則">指標傳遞規則<a class="headerlink" href="#指標傳遞規則" title="Permanent link">#</a></h2>
 <p>這是 cgo 最容易出錯的地方。Go 的 GC 會移動堆疊、會回收沒有參照的物件，而 C 對此一無所知。</p>
 <h3 id="官方規則">官方規則<a class="headerlink" href="#官方規則" title="Permanent link">#</a></h3>
 <p><strong>規則一：Go 可以傳指標給 C，但 C 不能在呼叫返回後繼續持有它。</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✓ C 函式在執行期間使用這個指標，返回後不再持有</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✓ C 函式在執行期間使用這個指標，返回後不再持有</span>
 <span class="nx">C</span><span class="p">.</span><span class="nx">process</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">goSlice</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nb">int</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">goSlice</span><span class="p">)))</span>
 
 <span class="c1">// ✗ C 把指標存起來留著以後用 —— 未定義行為</span>
 <span class="nx">C</span><span class="p">.</span><span class="nx">register_callback_data</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">goStruct</span><span class="p">))</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>規則二：傳給 C 的 Go 記憶體，本身不能包含指向 Go 記憶體的指標。</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 這個 struct 內含指向 Go 記憶體的指標</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 這個 struct 內含指向 Go 記憶體的指標</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">Bad</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">Name</span><span class="w"> </span><span class="o">*</span><span class="kt">string</span><span class="w">  </span><span class="c1">// ← 指向 Go 堆積</span>
 <span class="w">    </span><span class="nx">Data</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="w">   </span><span class="c1">// ← slice 標頭裡有指標</span>
@@ -221,39 +221,43 @@ cgo:  35000000          33.4 ns/op
 <span class="w">    </span><span class="nx">Buf</span><span class="w">   </span><span class="p">[</span><span class="mi">64</span><span class="p">]</span><span class="nx">C</span><span class="p">.</span><span class="nx">char</span>
 <span class="p">}</span>
 <span class="nx">C</span><span class="p">.</span><span class="nx">use</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">Good</span><span class="p">{}))</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="檢查器">檢查器<a class="headerlink" href="#檢查器" title="Permanent link">#</a></h3>
 <p>Go 在執行期有一個 cgo 指標檢查器，預設開啟：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">cgocheck</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go<span class="w">   </span><span class="c1"># 預設，基本檢查</span>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">cgocheck</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go<span class="w">   </span><span class="c1"># 預設，基本檢查</span>
 <span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">cgocheck</span><span class="o">=</span><span class="m">2</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go<span class="w">   </span><span class="c1"># 更嚴格但更慢</span>
-</code></pre></div>
+</pre></div>
 
 <p>違規時會直接 panic：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>panic: runtime error: cgo argument has Go pointer to unpinned Go pointer
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>panic: runtime error: cgo argument has Go pointer to unpinned Go pointer
+</pre></div>
 
 <div class="admonition version">
 <p class="admonition-title">Go 1.21：<code>runtime.Pinner</code></p>
 <p>有時候你<strong>確實需要</strong>讓 C 持有 Go 指標一段時間（例如非同步回呼）。Go 1.21 提供了官方支援：</p>
-<p>```go
-package main</p>
-<p>import "runtime"</p>
-<p>func withPinned(data []byte, fn func(unsafe.Pointer)) {
-    var pinner runtime.Pinner
-    defer pinner.Unpin()</p>
-<div class="hl" data-lang="go"><pre><span></span><code>pinner.Pin(&amp;data[0]) // 固定住，GC 不會移動它
-fn(unsafe.Pointer(&amp;data[0]))
-</code></pre></div>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
-<p>}
-```</p>
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;runtime&quot;</span>
+<span class="w">    </span><span class="s">&quot;unsafe&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">withPinned</span><span class="p">(</span><span class="nx">data</span><span class="w"> </span><span class="p">[]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="nx">fn</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">pinner</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">Pinner</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">pinner</span><span class="p">.</span><span class="nx">Unpin</span><span class="p">()</span>
+
+<span class="w">    </span><span class="nx">pinner</span><span class="p">.</span><span class="nx">Pin</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">data</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="w"> </span><span class="c1">// 固定住，GC 不會移動它</span>
+<span class="w">    </span><span class="nx">fn</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span>
+<span class="p">}</span>
+</pre></div>
+
 <p>被 pin 住的物件在 <code>Unpin</code> 之前不會被移動或回收。這比以前那些 <code>cgo.Handle</code> 加全域 map 的變通做法安全得多。</p>
 <p>注意 pin 住的物件仍然會被 GC <strong>掃描</strong>，只是不會被移動；而且 pin 太多物件會影響 GC 效率。</p>
 </div>
 <h3 id="cgohandle傳遞-go-物件給-c-的正確方式"><code>cgo.Handle</code>：傳遞 Go 物件給 C 的正確方式<a class="headerlink" href="#cgohandle傳遞-go-物件給-c-的正確方式" title="Permanent link">#</a></h3>
 <p>如果 C 需要一個「代表某個 Go 物件」的東西（典型場景是 callback 的使用者資料），用 <code>cgo.Handle</code>：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="cm">/*</span>
 <span class="cm">typedef void (*callback_t)(unsigned long long handle);</span>
@@ -282,12 +286,12 @@ fn(unsafe.Pointer(&amp;data[0]))
 
 <span class="w">    </span><span class="nx">C</span><span class="p">.</span><span class="nx">invoke</span><span class="p">(</span><span class="nx">C</span><span class="p">.</span><span class="nx">callback_t</span><span class="p">(</span><span class="nx">C</span><span class="p">.</span><span class="nx">goCallback</span><span class="p">),</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">ulonglong</span><span class="p">(</span><span class="nx">h</span><span class="p">))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>cgo.Handle</code> 是一個<strong>不透明的整數</strong>，內部對應到一張全域表。C 只看到一個數字，Go 這邊可以安全地把它換回原本的物件。<strong>Go 指標從來沒有離開 Go 的世界。</strong></p>
 <hr />
 <h2 id="字串與記憶體管理">字串與記憶體管理<a class="headerlink" href="#字串與記憶體管理" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="cm">/*</span>
 <span class="cm">#include &lt;stdlib.h&gt;</span>
@@ -322,7 +326,7 @@ fn(unsafe.Pointer(&amp;data[0]))
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">greet</span><span class="p">(</span><span class="s">&quot;Go&quot;</span><span class="p">))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="轉換函式對照">轉換函式對照<a class="headerlink" href="#轉換函式對照" title="Permanent link">#</a></h3>
 <table>
@@ -364,29 +368,30 @@ fn(unsafe.Pointer(&amp;data[0]))
 <div class="admonition danger">
 <p class="admonition-title"><code>C.CString</code> 忘記 free 就是記憶體洩漏</p>
 <p>這塊記憶體是 C 的 <code>malloc</code> 配置的，<strong>Go 的 GC 完全不知道它的存在</strong>，永遠不會回收。</p>
-<p>```go
-// ✗ 每次呼叫洩漏一次
-func bad(s string) {
-    C.use(C.CString(s))
-}</p>
-<p>// ✓
-func good(s string) {
-    cs := C.CString(s)
-    defer C.free(unsafe.Pointer(cs))
-    C.use(cs)
-}
-```</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 每次呼叫洩漏一次</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">bad</span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">C</span><span class="p">.</span><span class="nx">use</span><span class="p">(</span><span class="nx">C</span><span class="p">.</span><span class="nx">CString</span><span class="p">(</span><span class="nx">s</span><span class="p">))</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">good</span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">cs</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">CString</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">C</span><span class="p">.</span><span class="nx">free</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="p">(</span><span class="nx">cs</span><span class="p">))</span>
+<span class="w">    </span><span class="nx">C</span><span class="p">.</span><span class="nx">use</span><span class="p">(</span><span class="nx">cs</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
 <p>這種洩漏用 Go 的 pprof <strong>看不到</strong>（它只看 Go 堆積）。要用 valgrind、ASAN 或作業系統層級的工具才能發現。</p>
 </div>
 <hr />
 <h2 id="cgo-的代價清單">cgo 的代價清單<a class="headerlink" href="#cgo-的代價清單" title="Permanent link">#</a></h2>
 <h3 id="1-交叉編譯幾乎無法使用">① 交叉編譯幾乎無法使用<a class="headerlink" href="#1-交叉編譯幾乎無法使用" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="c1"># 純 Go：一行搞定</span>
+<div class="hl" data-lang="bash"><pre><span></span><span class="c1"># 純 Go：一行搞定</span>
 <span class="nv">GOOS</span><span class="o">=</span>linux<span class="w"> </span><span class="nv">GOARCH</span><span class="o">=</span>arm64<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>.
 
 <span class="c1"># 有 cgo：需要目標平台的完整 C 交叉編譯工具鏈</span>
 <span class="nv">CGO_ENABLED</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="nv">GOOS</span><span class="o">=</span>linux<span class="w"> </span><span class="nv">GOARCH</span><span class="o">=</span>arm64<span class="w"> </span><span class="nv">CC</span><span class="o">=</span>aarch64-linux-gnu-gcc<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>.
-</code></pre></div>
+</pre></div>
 
 <p>這是 cgo 最痛的代價。Go「一個指令編出所有平台」的優勢直接消失。</p>
 <h3 id="2-建置變慢">② 建置變慢<a class="headerlink" href="#2-建置變慢" title="Permanent link">#</a></h3>
@@ -402,8 +407,8 @@ func good(s string) {
 <p>C 函式無法被 Go 排程器搶佔。長時間執行的 C 呼叫會一直佔著 M。大量並行的 cgo 呼叫會讓執行緒數量膨脹，可能撞到 10000 條的上限而直接 crash。</p>
 <h3 id="5-靜態連結變複雜">⑤ 靜態連結變複雜<a class="headerlink" href="#5-靜態連結變複雜" title="Permanent link">#</a></h3>
 <p>用了 cgo 之後，執行檔預設會動態連結 libc。想放進 <code>FROM scratch</code> 的容器映像就需要額外處理：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">CGO_ENABLED</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>-ldflags<span class="o">=</span><span class="s2">&quot;-extldflags=-static&quot;</span><span class="w"> </span>-tags<span class="w"> </span>netgo<span class="w"> </span>.
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">CGO_ENABLED</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>-ldflags<span class="o">=</span><span class="s2">&quot;-extldflags=-static&quot;</span><span class="w"> </span>-tags<span class="w"> </span>netgo<span class="w"> </span>.
+</pre></div>
 
 <p>而且 glibc 的靜態連結有已知問題（NSS、DNS 解析），通常要改用 musl。</p>
 <hr />
@@ -496,33 +501,35 @@ func good(s string) {
 <p><strong>如果有可用的純 Go 版本，優先選它。</strong> 效能通常只差一點，但你換回了交叉編譯、快速建置、完整的除錯工具。</p>
 <hr />
 <h2 id="相關的環境變數">相關的環境變數<a class="headerlink" href="#相關的環境變數" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nv">CGO_ENABLED</span><span class="o">=</span><span class="m">0</span><span class="w">    </span><span class="c1"># 完全停用 cgo（強制純 Go）</span>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">CGO_ENABLED</span><span class="o">=</span><span class="m">0</span><span class="w">    </span><span class="c1"># 完全停用 cgo（強制純 Go）</span>
 <span class="nv">CGO_ENABLED</span><span class="o">=</span><span class="m">1</span><span class="w">    </span><span class="c1"># 啟用（有 C 編譯器時的預設值）</span>
 <span class="nv">CC</span><span class="o">=</span>clang<span class="w">         </span><span class="c1"># 指定 C 編譯器</span>
 <span class="nv">CGO_CFLAGS</span><span class="o">=</span><span class="s2">&quot;-O2 -I/usr/local/include&quot;</span>
 <span class="nv">CGO_LDFLAGS</span><span class="o">=</span><span class="s2">&quot;-L/usr/local/lib -lmylib&quot;</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition tip">
 <p class="admonition-title">在 CI 裡強制 <code>CGO_ENABLED=0</code></p>
-<p><code>bash
-CGO_ENABLED=0 go build ./...</code></p>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">CGO_ENABLED</span><span class="o">=</span><span class="m">0</span><span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>./...
+</pre></div>
+
 <p>這能在<strong>編譯期</strong>就抓到「不小心引入了需要 cgo 的相依」。有些套件（例如某些 DNS 解析路徑、<code>os/user</code>）在有 cgo 時會走 C 實作，關掉後改走純 Go 實作。</p>
 <p>這也順帶讓執行檔完全靜態連結，可以直接放進 <code>FROM scratch</code> 映像：</p>
-<p>```dockerfile
-FROM golang:1.26 AS build
-WORKDIR /src
-COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /app .</p>
-<p>FROM scratch
-COPY --from=build /app /app
-ENTRYPOINT ["/app"]
-```</p>
+<div class="hl" data-lang="dockerfile"><pre><span></span><span class="k">FROM</span><span class="w"> </span><span class="s">golang:1.26</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="s">build</span>
+<span class="k">WORKDIR</span><span class="w"> </span><span class="s">/src</span>
+<span class="k">COPY</span><span class="w"> </span>.<span class="w"> </span>.
+<span class="k">RUN</span><span class="w"> </span><span class="nv">CGO_ENABLED</span><span class="o">=</span><span class="m">0</span><span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>-ldflags<span class="o">=</span><span class="s2">&quot;-s -w&quot;</span><span class="w"> </span>-o<span class="w"> </span>/app<span class="w"> </span>.
+
+<span class="k">FROM</span><span class="w"> </span><span class="s">scratch</span>
+<span class="k">COPY</span><span class="w"> </span>--from<span class="o">=</span>build<span class="w"> </span>/app<span class="w"> </span>/app
+<span class="k">ENTRYPOINT</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;/app&quot;</span><span class="p">]</span>
+</pre></div>
+
 </div>
 <hr />
 <h2 id="一個完整的範例">一個完整的範例<a class="headerlink" href="#一個完整的範例" title="Permanent link">#</a></h2>
 <p>包裝一個簡單的 C 函式庫，示範所有正確的做法：</p>
-<div class="hl" data-lang=""><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="cm">/*</span>
 <span class="cm">#include &lt;stdlib.h&gt;</span>
@@ -610,7 +617,7 @@ ENTRYPOINT ["/app"]
 <span class="w">    </span><span class="nx">img</span><span class="p">.</span><span class="nx">Fill</span><span class="p">(</span><span class="mh">0xAB</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%X\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">img</span><span class="p">.</span><span class="nx">Bytes</span><span class="p">()[:</span><span class="mi">8</span><span class="p">])</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition version">
 <p class="admonition-title">Go 1.24：<code>runtime.AddCleanup</code> 取代 <code>SetFinalizer</code></p>

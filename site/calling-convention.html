@@ -154,7 +154,7 @@
 <li>回傳值用同一組暫存器，從頭開始重新分配。</li>
 </ol>
 <h3 id="親眼驗證">親眼驗證<a class="headerlink" href="#親眼驗證" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kd">type</span><span class="w"> </span><span class="nx">Point</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">X</span><span class="p">,</span><span class="w"> </span><span class="nx">Y</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}</span>
 
@@ -173,32 +173,32 @@
 <span class="w">    </span><span class="nb">println</span><span class="p">(</span><span class="nx">q</span><span class="p">.</span><span class="nx">X</span><span class="p">,</span><span class="w"> </span><span class="nx">q</span><span class="p">.</span><span class="nx">Y</span><span class="p">)</span>
 <span class="w">    </span><span class="nb">println</span><span class="p">(</span><span class="nx">Div</span><span class="p">(</span><span class="mi">7</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-S<span class="w"> </span>main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-S<span class="w"> </span>main.go
+</pre></div>
 
 <p><code>Add</code> 的核心（節錄）：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>main.Add STEXT nosplit size=4 args=0x10 locals=0x0
+<div class="hl" data-lang="text"><pre><span></span>main.Add STEXT nosplit size=4 args=0x10 locals=0x0
     TEXT    main.Add(SB), NOSPLIT|ABIInternal, $0-16
     ADDQ    BX, AX          // a 在 AX，b 在 BX，結果留在 AX
     RET
-</code></pre></div>
+</pre></div>
 
 <p><code>Swap</code> 的核心：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>main.Swap STEXT nosplit size=5 args=0x20 locals=0x0
+<div class="hl" data-lang="text"><pre><span></span>main.Swap STEXT nosplit size=5 args=0x20 locals=0x0
     TEXT    main.Swap(SB), NOSPLIT|ABIInternal, $0-32
     XCHGQ   AX, BX          // p.X 在 AX、p.Y 在 BX，交換後直接當回傳值
     RET
-</code></pre></div>
+</pre></div>
 
 <p><code>Swap</code> 傳入一個 struct、回傳一個 struct，整個函式只有一道 <code>XCHGQ</code>。<strong>沒有碰記憶體。</strong></p>
 <p><code>Div</code> 的多回傳值：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>    MOVQ    AX, CX
+<div class="hl" data-lang="text"><pre><span></span>    MOVQ    AX, CX
     ...
     IDIVQ   BX
     // 商在 AX，餘數在 DX → 搬到回傳暫存器 AX 與 BX
-</code></pre></div>
+</pre></div>
 
 <p><strong>多回傳值沒有魔法</strong>，就是用多個暫存器（或堆疊位置）。這也是為什麼 Go 的 <code>(value, error)</code> 慣例成本很低——<code>error</code> 是一個介面（兩個字組），總共佔用少數幾個暫存器。</p>
 <hr />
@@ -208,21 +208,21 @@
 
 <h3 id="函式序言堆疊成長檢查">函式序言：堆疊成長檢查<a class="headerlink" href="#函式序言堆疊成長檢查" title="Permanent link">#</a></h3>
 <p>每個<strong>可能需要更多堆疊空間</strong>的函式，開頭都有一段序言（prologue）：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>    MOVQ    (R14), CX        // R14 是目前的 g，取出 g.stackguard0
+<div class="hl" data-lang="text"><pre><span></span>    MOVQ    (R14), CX        // R14 是目前的 g，取出 g.stackguard0
     CMPQ    SP, 16(CX)       // 比較目前 SP 與 stackguard
     JLS morestack            // 不夠 → 跳去擴充堆疊
     // ... 函式本體 ...
 morestack:
     CALL    runtime.morestack_noctxt(SB)
     JMP 開頭                  // 擴充完重跑一次
-</code></pre></div>
+</pre></div>
 
 <p>這就是 Go 能讓 goroutine 從 2 KB 堆疊起步、需要時自動長大的機制。詳見 <a href="stack.html">堆疊記憶體管理</a>。</p>
 <p>標記 <code>NOSPLIT</code> 的函式沒有這段序言——因為編譯器算出它不會超過既有的安全邊界（red zone）。</p>
 <hr />
 <h2 id="方法呼叫">方法呼叫<a class="headerlink" href="#方法呼叫" title="Permanent link">#</a></h2>
 <p>方法只是<strong>第一個參數是接收者的函式</strong>。編譯器會把方法名稱改寫成 <code>型別.方法名</code> 的符號：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kd">type</span><span class="w"> </span><span class="nx">Counter</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}</span>
 
@@ -233,24 +233,24 @@ morestack:
 <span class="w">    </span><span class="nx">c</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Counter</span><span class="p">{}</span>
 <span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">Inc</span><span class="p">()</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-S<span class="w"> </span>main.go<span class="w"> </span><span class="p">|</span><span class="w"> </span>findstr<span class="w"> </span><span class="s2">&quot;Inc&quot;</span>
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-S<span class="w"> </span>main.go<span class="w"> </span><span class="p">|</span><span class="w"> </span>findstr<span class="w"> </span><span class="s2">&quot;Inc&quot;</span>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>main.(*Counter).Inc STEXT nosplit size=... args=0x8 locals=0x0
+<div class="hl" data-lang="text"><pre><span></span>main.(*Counter).Inc STEXT nosplit size=... args=0x8 locals=0x0
     TEXT    main.(*Counter).Inc(SB), NOSPLIT|ABIInternal, $0-8
     INCQ    (AX)             // 接收者在 AX，就是第一個參數
     RET
-</code></pre></div>
+</pre></div>
 
 <p><code>args=0x8</code> —— 一個指標大小的參數，就是接收者。</p>
 <h3 id="值接收者與指標接收者的成本">值接收者與指標接收者的成本<a class="headerlink" href="#值接收者與指標接收者的成本" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">Big</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">data</span><span class="w"> </span><span class="p">[</span><span class="mi">256</span><span class="p">]</span><span class="kt">byte</span><span class="w"> </span><span class="p">}</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">Big</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">data</span><span class="w"> </span><span class="p">[</span><span class="mi">256</span><span class="p">]</span><span class="kt">byte</span><span class="w"> </span><span class="p">}</span>
 
 <span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="nx">Big</span><span class="p">)</span><span class="w"> </span><span class="nx">ByValue</span><span class="p">()</span><span class="w">   </span><span class="p">{}</span><span class="w"> </span><span class="c1">// 每次呼叫複製 256 位元組</span>
 <span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">b</span><span class="w"> </span><span class="o">*</span><span class="nx">Big</span><span class="p">)</span><span class="w"> </span><span class="nx">ByPointer</span><span class="p">()</span><span class="w"> </span><span class="p">{}</span><span class="w"> </span><span class="c1">// 每次呼叫傳 8 位元組</span>
-</code></pre></div>
+</pre></div>
 
 <p>判斷準則：</p>
 <ul>
@@ -261,15 +261,16 @@ morestack:
 </ul>
 <div class="admonition warning">
 <p class="admonition-title">同一型別不要混用兩種接收者</p>
-<p><code>go
-func (c Counter) Value() int { return c.n }  // 值
-func (c *Counter) Inc()      { c.n++ }       // 指標</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="nx">Counter</span><span class="p">)</span><span class="w"> </span><span class="nx">Value</span><span class="p">()</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">n</span><span class="w"> </span><span class="p">}</span><span class="w">  </span><span class="c1">// 值</span>
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Counter</span><span class="p">)</span><span class="w"> </span><span class="nx">Inc</span><span class="p">()</span><span class="w">      </span><span class="p">{</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">n</span><span class="o">++</span><span class="w"> </span><span class="p">}</span><span class="w">       </span><span class="c1">// 指標</span>
+</pre></div>
+
 <p>這在語法上合法，但會造成方法集混亂（見 <a href="typecheck.html#介面滿足結構化型別">型別檢查</a>），介面滿足的規則變得難以預測。<strong>選一種，整個型別統一。</strong> 只要有任何一個方法需要修改狀態，就全部用指標接收者。</p>
 </div>
 <hr />
 <h2 id="方法值與方法運算式">方法值與方法運算式<a class="headerlink" href="#方法值與方法運算式" title="Permanent link">#</a></h2>
 <p>這兩個容易搞混，而且成本不同。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -291,30 +292,30 @@ func (c *Counter) Inc()      { c.n++ }       // 指標</code></p>
 <span class="w">    </span><span class="nx">g</span><span class="p">(</span><span class="nx">c</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">n</span><span class="p">)</span><span class="w"> </span><span class="c1">// 3</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>方法值會配置記憶體。</strong> 因為它要把接收者捕捉起來，實際上會產生一個閉包物件：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m&quot;</span><span class="w"> </span>./main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m&quot;</span><span class="w"> </span>./main.go
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>./main.go:14:7: c.Inc escapes to heap
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>./main.go:14:7: c.Inc escapes to heap
+</pre></div>
 
 <p>在熱路徑上這是隱藏的配置來源。如果你發現 <code>allocs/op</code> 莫名其妙變高，檢查有沒有把方法當值傳來傳去。</p>
 <p><strong>方法運算式不會配置</strong>，因為它就是一個普通的靜態函式符號。</p>
 <hr />
 <h2 id="閉包怎麼實作">閉包怎麼實作<a class="headerlink" href="#閉包怎麼實作" title="Permanent link">#</a></h2>
 <p>閉包就是「函式 + 捕捉的變數」。Go 的實作是一個 struct：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>type closure struct {
+<div class="hl" data-lang="text"><pre><span></span>type closure struct {
     fn  uintptr   // 函式碼的位址
     // 捕捉的變數依序排在後面
     v1  T1
     v2  T2
 }
-</code></pre></div>
+</pre></div>
 
 <p>呼叫時，這個 struct 的位址放在 <code>DX</code> 暫存器（context 暫存器），函式本體透過 <code>DX</code> 存取捕捉的變數。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -332,15 +333,15 @@ func (c *Counter) Inc()      { c.n++ }       // 指標</code></p>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">c1</span><span class="p">(),</span><span class="w"> </span><span class="nx">c1</span><span class="p">(),</span><span class="w"> </span><span class="nx">c1</span><span class="p">())</span><span class="w"> </span><span class="c1">// 1 2 3</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">c2</span><span class="p">())</span><span class="w">             </span><span class="c1">// 1 —— 每個閉包有自己的 n</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>./main.go:6:2: moved to heap: n
+<div class="hl" data-lang="text"><pre><span></span>./main.go:6:2: moved to heap: n
 ./main.go:7:9: func literal escapes to heap
-</code></pre></div>
+</pre></div>
 
 <p>兩次配置：一次給 <code>n</code>，一次給閉包物件本身。</p>
 <h3 id="捕捉方式按參照不是按值">捕捉方式：按參照，不是按值<a class="headerlink" href="#捕捉方式按參照不是按值" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -351,22 +352,23 @@ func (c *Counter) Inc()      { c.n++ }       // 指標</code></p>
 <span class="w">    </span><span class="nx">x</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">2</span>
 <span class="w">    </span><span class="nx">f</span><span class="p">()</span><span class="w"> </span><span class="c1">// 印出 2，不是 1</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>閉包捕捉的是<strong>變數本身</strong>，不是它當時的值。如果需要當時的值，明確傳參數：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">x</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">1</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">x</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">1</span>
 <span class="nx">f</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">v</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}(</span><span class="nx">x</span><span class="p">)</span>
 <span class="nx">x</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">2</span>
 <span class="nx">f</span><span class="p">()</span><span class="w"> </span><span class="c1">// 1</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition version">
 <p class="admonition-title">Go 1.22：迴圈變數終於是每輪一個</p>
 <p>這是 Go 史上最著名的坑，Go 1.22 修好了：</p>
-<p><code>go
-for i := 0; i &lt; 3; i++ {
-    go func() { fmt.Println(i) }()
-}</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">i</span><span class="p">)</span><span class="w"> </span><span class="p">}()</span>
+<span class="p">}</span>
+</pre></div>
+
 <p><strong>Go 1.21 及之前</strong>：整個迴圈只有一個 <code>i</code>，三個 goroutine 捕捉同一個變數，通常都印 3。
 <strong>Go 1.22 起</strong>：每一輪迭代建立新的 <code>i</code>，印出 0、1、2（順序不定）。</p>
 <p>這個改變由 <code>go.mod</code> 的 <code>go</code> 指令行閘門控制——宣告 <code>go 1.22</code> 以上才生效。詳見 <a href="for-range.html">for 與 range</a>。</p>
@@ -374,7 +376,7 @@ for i := 0; i &lt; 3; i++ {
 </div>
 <h3 id="減少閉包配置">減少閉包配置<a class="headerlink" href="#減少閉包配置" title="Permanent link">#</a></h3>
 <p>如果閉包沒有逃逸，編譯器可以把它配置在堆疊上：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kd">func</span><span class="w"> </span><span class="nx">apply</span><span class="p">(</span><span class="nx">nums</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="nx">f</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">nums</span><span class="w"> </span><span class="p">{</span>
@@ -389,10 +391,10 @@ for i := 0; i &lt; 3; i++ {
 <span class="w">    </span><span class="nx">apply</span><span class="p">(</span><span class="nx">nums</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">n</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">factor</span><span class="w"> </span><span class="p">})</span>
 <span class="w">    </span><span class="nb">println</span><span class="p">(</span><span class="nx">nums</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span><span class="w"> </span><span class="nx">nums</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span><span class="w"> </span><span class="nx">nums</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>./main.go:14:14: func literal does not escape
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>./main.go:14:14: func literal does not escape
+</pre></div>
 
 <p>反之，如果 <code>apply</code> 把 <code>f</code> 存進某個結構或送進 channel，閉包就會逃逸。</p>
 <hr />

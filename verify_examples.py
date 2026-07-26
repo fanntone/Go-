@@ -21,8 +21,41 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 CONTENT = ROOT / "content"
 
-FENCE = re.compile(r"^```go[ \t]*\n(.*?)^```", re.DOTALL | re.MULTILINE)
+FENCE_OPEN = re.compile(r"^(?P<indent>[ \t]*)(?P<ticks>`{3,})[ \t]*(?P<lang>[\w+#-]*)[ \t]*$")
 IMPORT_LINE = re.compile(r'^\s*(?:[\w.]+\s+)?"([^"]+)"', re.MULTILINE)
+
+
+def go_blocks(text: str) -> list[str]:
+    """取出所有 ```go 區塊，包含縮排在 admonition 裡的（會依縮排量 dedent）。"""
+    lines = text.split("\n")
+    out: list[str] = []
+    i = 0
+
+    while i < len(lines):
+        m = FENCE_OPEN.match(lines[i])
+        if not m:
+            i += 1
+            continue
+
+        indent, ticks, lang = m.group("indent"), m.group("ticks"), m.group("lang")
+
+        j = i + 1
+        while j < len(lines):
+            s = lines[j].strip()
+            if s and set(s) == {"`"} and len(s) >= len(ticks):
+                break
+            j += 1
+
+        if j < len(lines) and lang == "go":
+            out.append(
+                "\n".join(
+                    ln[len(indent):] if ln.startswith(indent) else ln.lstrip()
+                    for ln in lines[i + 1:j]
+                )
+            )
+        i = j + 1
+
+    return out
 
 # 這些範例需要外部環境（C 工具鏈、被嵌入的實體檔案），不列入檢查
 SKIP_MARKERS = ('import "C"', "//go:build ignore", "//go:embed")
@@ -73,8 +106,7 @@ def main() -> int:
     try:
         for md in sorted(CONTENT.glob("*.md")):
             text = md.read_text(encoding="utf-8")
-            for i, m in enumerate(FENCE.finditer(text), 1):
-                src = m.group(1)
+            for i, src in enumerate(go_blocks(text), 1):
                 label = f"{md.name}#go{i}"
 
                 if not src.lstrip().startswith("package main"):

@@ -109,14 +109,14 @@
 </nav></aside>
   <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>資料結構</p><h1><span class='h1num'>2.4</span>字串 string</h1><p class='lede'>字串的兩欄位結構與不可變性、byte 與 rune 的差別、字串拼接的成本，以及零複製轉換的正確做法。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="兩個欄位不可變">兩個欄位，不可變<a class="headerlink" href="#兩個欄位不可變" title="Permanent link">#</a></h2>
 <p>字串的內部結構比 slice 少一個欄位（<code>runtime/string.go</code>）：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">stringStruct</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">stringStruct</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">str</span><span class="w"> </span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Pointer</span><span class="w"> </span><span class="c1">// 指向底層位元組陣列</span>
 <span class="w">    </span><span class="nx">len</span><span class="w"> </span><span class="kt">int</span><span class="w">            </span><span class="c1">// 位元組長度</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>沒有 <code>cap</code>，因為<strong>字串不可變</strong>——不會擴容，所以不需要容量。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -130,13 +130,13 @@
 <span class="w">    </span><span class="c1">// ✗ 編譯錯誤：cannot assign to s[0] (neither addressable nor a map index expression)</span>
 <span class="w">    </span><span class="c1">// s[0] = &#39;H&#39;</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="不可變帶來什麼">不可變帶來什麼<a class="headerlink" href="#不可變帶來什麼" title="Permanent link">#</a></h3>
 <p><strong>① 子字串是零複製的。</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">&quot;hello, world&quot;</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">&quot;hello, world&quot;</span>
 <span class="nx">sub</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">s</span><span class="p">[</span><span class="mi">7</span><span class="p">:]</span><span class="w"> </span><span class="c1">// 只是產生一個新標頭：指標往後移 7、長度改成 5。沒有複製任何位元組</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>② 字串可以安全共享。</strong> 多個 goroutine 同時讀同一個字串完全沒問題，不需要鎖。</p>
 <p><strong>③ 字串可以當 map 鍵。</strong> 因為內容不會變，雜湊值就穩定。</p>
@@ -144,13 +144,15 @@
 <div class="admonition warning">
 <p class="admonition-title">子字串零複製也會造成記憶體洩漏</p>
 <p>跟 slice 一樣的問題：</p>
-<p><code>go
-func extractID(hugeJSON string) string {
-    return hugeJSON[12:24] // 只要這 12 個位元組還活著，整個 hugeJSON 都不能被回收
-}</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">extractID</span><span class="p">(</span><span class="nx">hugeJSON</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">hugeJSON</span><span class="p">[</span><span class="mi">12</span><span class="p">:</span><span class="mi">24</span><span class="p">]</span><span class="w"> </span><span class="c1">// 只要這 12 個位元組還活著，整個 hugeJSON 都不能被回收</span>
+<span class="p">}</span>
+</pre></div>
+
 <p>如果 <code>hugeJSON</code> 是 10 MB 而回傳值要長期保存，就複製一份：</p>
-<p><code>go
-return strings.Clone(hugeJSON[12:24]) // Go 1.18+</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="k">return</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">Clone</span><span class="p">(</span><span class="nx">hugeJSON</span><span class="p">[</span><span class="mi">12</span><span class="p">:</span><span class="mi">24</span><span class="p">])</span><span class="w"> </span><span class="c1">// Go 1.18+</span>
+</pre></div>
+
 </div>
 <hr />
 <h2 id="byte-與-rune索引與走訪的差別">byte 與 rune：索引與走訪的差別<a class="headerlink" href="#byte-與-rune索引與走訪的差別" title="Permanent link">#</a></h2>
@@ -159,7 +161,7 @@ return strings.Clone(hugeJSON[12:24]) // Go 1.18+</code></p>
 <li><code>len(s)</code> 回傳<strong>位元組數</strong>，不是字元數。</li>
 <li><code>s[i]</code> 回傳<strong>第 i 個位元組</strong>（型別是 <code>byte</code>，即 <code>uint8</code>），不是第 i 個字元。</li>
 </ul>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -172,12 +174,12 @@ return strings.Clone(hugeJSON[12:24]) // Go 1.18+</code></p>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">s</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span><span class="w">      </span><span class="c1">// 232 —— &#39;語&#39; 的第一個位元組，不是完整字元</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%q\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">[</span><span class="mi">2</span><span class="p">:</span><span class="mi">5</span><span class="p">])</span><span class="w"> </span><span class="c1">// &quot;語&quot; —— 要切三個位元組才是完整的</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <figure class="diagram"><svg viewBox="0 0 700 230" role="img" aria-label="UTF-8 字串的位元組與 rune 對應"><text class="d-t-b" x="15" y="20">"Go語言" 在記憶體裡的 8 個位元組</text><rect class="d-box-a" x="15" y="32" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="53" y="58">0x47</text><rect class="d-box-a" x="91" y="32" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="129" y="58">0x6F</text><rect class="d-box-w" x="167" y="32" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="205" y="58">0xE8</text><rect class="d-box-w" x="243" y="32" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="281" y="58">0xAA</text><rect class="d-box-w" x="319" y="32" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="357" y="58">0x9E</text><rect class="d-box-o" x="395" y="32" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="433" y="58">0xE8</text><rect class="d-box-o" x="471" y="32" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="509" y="58">0xA8</text><rect class="d-box-o" x="547" y="32" width="76" height="42" rx="4"/><text class="d-t-m d-mid" x="585" y="58">0x80</text><text class="d-t-s d-mid" x="53" y="90">s[0]</text><text class="d-t-s d-mid" x="129" y="90">s[1]</text><text class="d-t-s d-mid" x="205" y="90">s[2]</text><text class="d-t-s d-mid" x="281" y="90">s[3]</text><text class="d-t-s d-mid" x="357" y="90">s[4]</text><text class="d-t-s d-mid" x="433" y="90">s[5]</text><text class="d-t-s d-mid" x="509" y="90">s[6]</text><text class="d-t-s d-mid" x="585" y="90">s[7]</text><line class="d-line-a" x1="15" y1="106" x2="91" y2="106"/><text class="d-t-a d-mid" x="53" y="124">'G'</text><line class="d-line-a" x1="91" y1="106" x2="167" y2="106"/><text class="d-t-a d-mid" x="129" y="124">'o'</text><line class="d-line-a" x1="167" y1="106" x2="395" y2="106"/><text class="d-t-a d-mid" x="281" y="124">'語' U+8A9E</text><line class="d-line-a" x1="395" y1="106" x2="623" y2="106"/><text class="d-t-a d-mid" x="509" y="124">'言' U+8A00</text><line class="d-dash" x1="15" y1="146" x2="685" y2="146"/><text class="d-t-s" x="15" y="170">len(s) = 8（位元組數）　·　utf8.RuneCountInString(s) = 4（字元數）</text><text class="d-t-s" x="15" y="192">for i, r := range s → i 依序是 0, 1, 2, 5（位元組索引），r 是完整的 rune</text><text class="d-t-s" x="15" y="214">[]rune(s) 會配置一個 4 元素的 int32 陣列並解碼 —— 有成本，別在熱路徑上做</text></svg><figcaption><b>UTF-8 是變長編碼。</b>ASCII 佔 1 位元組，中日韓文字通常佔 3 位元組，emoji 常是 4 位元組。索引 <code>s[i]</code> 取的是位元組；要取字元必須解碼。</figcaption></figure>
 
 <h3 id="兩種走訪兩種結果">兩種走訪，兩種結果<a class="headerlink" href="#兩種走訪兩種結果" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -196,13 +198,13 @@ return strings.Clone(hugeJSON[12:24]) // Go 1.18+</code></p>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">()</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>--- 依位元組（傳統 for）---
+<div class="hl" data-lang="text"><pre><span></span>--- 依位元組（傳統 for）---
 0:0x47 1:0x6f 2:0xe8 3:0xaa 4:0x9e 5:0xe8 6:0xa8 7:0x80 
 --- 依 rune（range）---
 0:G(71) 1:o(111) 2:語(35486) 5:言(35328) 
-</code></pre></div>
+</pre></div>
 
 <p><strong><code>range</code> 字串會自動解碼 UTF-8</strong>，這是編譯器在 walk 階段插入的（會呼叫 <code>runtime.decoderune</code>）。注意索引是<strong>位元組位置</strong>（0, 1, 2, 5），不是字元序號。</p>
 <div class="admonition danger">
@@ -211,7 +213,7 @@ return strings.Clone(hugeJSON[12:24]) // Go 1.18+</code></p>
 <p>要正確處理「使用者看到的一個字」（grapheme cluster），需要 <code>golang.org/x/text</code> 或專門的函式庫。標準庫沒有提供。</p>
 </div>
 <h3 id="常見錯誤反轉字串">常見錯誤：反轉字串<a class="headerlink" href="#常見錯誤反轉字串" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -238,14 +240,14 @@ return strings.Clone(hugeJSON[12:24]) // Go 1.18+</code></p>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%q\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">reverseBad</span><span class="p">(</span><span class="nx">s</span><span class="p">))</span><span class="w">   </span><span class="c1">// &quot;\x80\xa8\xe8\x9e\xaa\xe8oG&quot; —— 亂碼</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%q\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">reverseRunes</span><span class="p">(</span><span class="nx">s</span><span class="p">))</span><span class="w"> </span><span class="c1">// &quot;言語oG&quot;</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>（就算是 rune 版本，遇到組合字元或 emoji 序列仍會壞掉。「反轉字串」是個比表面上難得多的問題。）</p>
 <hr />
 <h2 id="字串拼接的成本">字串拼接的成本<a class="headerlink" href="#字串拼接的成本" title="Permanent link">#</a></h2>
 <p><code>s1 + s2</code> 會被改寫成 <code>runtime.concatstring2</code>，它<strong>配置一塊新記憶體並複製兩邊的內容</strong>。因為字串不可變，沒有別的做法。</p>
 <p>在迴圈裡拼接是經典的效能陷阱：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -307,14 +309,14 @@ return strings.Clone(hugeJSON[12:24]) // Go 1.18+</code></p>
 <span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%-12s %s  %s\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">name</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">MemString</span><span class="p">())</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>典型結果：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>+=              1204   1002341 ns/op   16094208 B/op    1999 allocs/op
+<div class="hl" data-lang="text"><pre><span></span>+=              1204   1002341 ns/op   16094208 B/op    1999 allocs/op
 Builder        68142     17203 ns/op      49152 B/op      12 allocs/op
 BuilderGrow   152331      7841 ns/op      16384 B/op       1 allocs/op
 Join          148902      8012 ns/op      16384 B/op       1 allocs/op
-</code></pre></div>
+</pre></div>
 
 <p><code>+=</code> 慢了兩個數量級，配置量差 1000 倍。</p>
 <h3 id="選哪一種">選哪一種<a class="headerlink" href="#選哪一種" title="Permanent link">#</a></h3>
@@ -359,14 +361,14 @@ Join          148902      8012 ns/op      16384 B/op       1 allocs/op
 </div>
 <hr />
 <h2 id="string-與-byte-的轉換">string 與 []byte 的轉換<a class="headerlink" href="#string-與-byte-的轉換" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="nb">byte</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span><span class="w">  </span><span class="c1">// 配置 + 複製</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="nb">byte</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span><span class="w">  </span><span class="c1">// 配置 + 複製</span>
 <span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span><span class="w">  </span><span class="c1">// 配置 + 複製</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>兩個方向都會複製</strong>，因為 <code>string</code> 必須不可變，而 <code>[]byte</code> 可變。如果不複製，改 <code>b</code> 就會改到 <code>s</code>。</p>
 <h3 id="編譯器的最佳化">編譯器的最佳化<a class="headerlink" href="#編譯器的最佳化" title="Permanent link">#</a></h3>
 <p>有幾種情況編譯器可以省掉複製：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ① map 查找：不會複製</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ① map 查找：不會複製</span>
 <span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">{</span><span class="s">&quot;key&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">}</span>
 <span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="nb">byte</span><span class="p">(</span><span class="s">&quot;key&quot;</span><span class="p">)</span>
 <span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">m</span><span class="p">[</span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">)]</span><span class="w"> </span><span class="c1">// 編譯器知道這個字串只用來查找，不會逃逸</span>
@@ -379,19 +381,19 @@ Join          148902      8012 ns/op      16384 B/op       1 allocs/op
 
 <span class="c1">// ④ 拼接的運算元：不會複製</span>
 <span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">&quot;prefix&quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span>
-</code></pre></div>
+</pre></div>
 
 <p>這些是編譯器特別辨識的模式。稍微改一下寫法就會失效：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">tmp</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span><span class="w"> </span><span class="c1">// 存進變數 → 會複製</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">tmp</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span><span class="w"> </span><span class="c1">// 存進變數 → 會複製</span>
 <span class="nx">v</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">m</span><span class="p">[</span><span class="nx">tmp</span><span class="p">]</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="真正的零複製轉換">真正的零複製轉換<a class="headerlink" href="#真正的零複製轉換" title="Permanent link">#</a></h3>
 <div class="admonition version">
 <p class="admonition-title">Go 1.20 起：<code>unsafe.String</code> 與 <code>unsafe.Slice</code></p>
 <p>在 Go 1.20 之前，零複製轉換要用 <code>reflect.SliceHeader</code> 之類的髒招，寫法脆弱且容易出錯。Go 1.20 加入了官方支援的 <code>unsafe.String</code> 與 <code>unsafe.StringData</code>。</p>
 </div>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -421,7 +423,7 @@ Join          148902      8012 ns/op      16384 B/op       1 allocs/op
 <span class="w">    </span><span class="nx">b</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="sc">&#39;H&#39;</span><span class="w">     </span><span class="c1">// 違反前提！</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span><span class="w"> </span><span class="c1">// Hello ← 「不可變」的字串被改了</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition danger">
 <p class="admonition-title">只在你能證明安全時使用</p>
@@ -432,7 +434,7 @@ Join          148902      8012 ns/op      16384 B/op       1 allocs/op
 <hr />
 <h2 id="實用的字串處理">實用的字串處理<a class="headerlink" href="#實用的字串處理" title="Permanent link">#</a></h2>
 <h3 id="strings-套件的高頻函式"><code>strings</code> 套件的高頻函式<a class="headerlink" href="#strings-套件的高頻函式" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -457,7 +459,7 @@ Join          148902      8012 ns/op      16384 B/op       1 allocs/op
 <span class="w">    </span><span class="nx">before</span><span class="p">,</span><span class="w"> </span><span class="nx">after</span><span class="p">,</span><span class="w"> </span><span class="nx">found</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">Cut</span><span class="p">(</span><span class="s">&quot;key=value&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;=&quot;</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">before</span><span class="p">,</span><span class="w"> </span><span class="nx">after</span><span class="p">,</span><span class="w"> </span><span class="nx">found</span><span class="p">)</span><span class="w"> </span><span class="c1">// key value true</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition version">
 <p class="admonition-title">Go 1.18 的 <code>strings.Cut</code></p>
@@ -466,19 +468,20 @@ Join          148902      8012 ns/op      16384 B/op       1 allocs/op
 <div class="admonition version">
 <p class="admonition-title">Go 1.24：<code>strings.Lines</code>、<code>SplitSeq</code> 等迭代器版本</p>
 <p>Go 1.24 為 <code>strings</code> 與 <code>bytes</code> 加入了回傳迭代器的版本，避免配置中間的 slice：</p>
-<p><code>go
-for line := range strings.Lines(text) { ... }
-for part := range strings.SplitSeq(csv, ",") { ... }
-for f := range strings.FieldsSeq(s) { ... }</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="k">for</span><span class="w"> </span><span class="nx">line</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">Lines</span><span class="p">(</span><span class="nx">text</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">...</span><span class="w"> </span><span class="p">}</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">part</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">SplitSeq</span><span class="p">(</span><span class="nx">csv</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;,&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">...</span><span class="w"> </span><span class="p">}</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">f</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">FieldsSeq</span><span class="p">(</span><span class="nx">s</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">...</span><span class="w"> </span><span class="p">}</span>
+</pre></div>
+
 <p>處理大文字時這能省下可觀的配置。</p>
 </div>
 <h3 id="大小寫與比較">大小寫與比較<a class="headerlink" href="#大小寫與比較" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 效率差：兩次配置</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 效率差：兩次配置</span>
 <span class="k">if</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">ToLower</span><span class="p">(</span><span class="nx">a</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">ToLower</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">}</span>
 
 <span class="c1">// ✓ 無配置</span>
 <span class="k">if</span><span class="w"> </span><span class="nx">strings</span><span class="p">.</span><span class="nx">EqualFold</span><span class="p">(</span><span class="nx">a</span><span class="p">,</span><span class="w"> </span><span class="nx">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>EqualFold</code> 做的是 Unicode 的 case folding，比單純的小寫轉換更正確（例如土耳其文的 İ）。</p>
 <hr />

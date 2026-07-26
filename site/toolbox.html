@@ -109,11 +109,11 @@
 </nav></aside>
   <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>開始之前</p><h1><span class='h1num'>0.2</span>打開黑盒子的工具箱</h1><p class='lede'>逃逸分析、組合語言輸出、GODEBUG、delve、pprof 與 trace —— 讓你自己驗證本書所有說法的六件工具。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="先確認環境">先確認環境<a class="headerlink" href="#先確認環境" title="Permanent link">#</a></h2>
 <p>本書所有輸出都以 Go 1.26 為準。先確認你手上的版本：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>version
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>version
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>go version go1.26.0 windows/amd64
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>go version go1.26.0 windows/amd64
+</pre></div>
 
 <p>如果你的版本不同，大部分內容仍然適用，但涉及 map 內部結構（Go 1.24 換成 Swiss Table）、計時器（Go 1.23 重寫）、迴圈變數（Go 1.22 改語意）、函式呼叫慣例（Go 1.17 改成暫存器傳參）的章節會有差異，這些地方本書都會標注版本框。</p>
 <div class="admonition warning">
@@ -123,7 +123,7 @@
 <hr />
 <h2 id="工具一-gcflags-m-看逃逸分析">工具一：<code>-gcflags=-m</code> 看逃逸分析<a class="headerlink" href="#工具一-gcflags-m-看逃逸分析" title="Permanent link">#</a></h2>
 <p>這是最常用、CP 值最高的一個。它告訴你編譯器把哪些變數放在<strong>堆積（heap）</strong>、哪些留在<strong>堆疊（stack）</strong>，以及哪些函式被內聯。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -144,18 +144,18 @@
 <span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">heapAlloc</span><span class="p">()</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">a</span><span class="p">,</span><span class="w"> </span><span class="nx">b</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m&quot;</span><span class="w"> </span>./main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m&quot;</span><span class="w"> </span>./main.go
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>./main.go:7:6: can inline stackAlloc
+<div class="hl" data-lang="text"><pre><span></span>./main.go:7:6: can inline stackAlloc
 ./main.go:12:6: can inline heapAlloc
 ./main.go:18:16: inlining call to stackAlloc
 ./main.go:19:16: inlining call to heapAlloc
 ./main.go:13:2: moved to heap: p
 ./main.go:20:13: ... argument does not escape
-</code></pre></div>
+</pre></div>
 
 <p>重點讀兩種訊息：</p>
 <ul>
@@ -163,12 +163,12 @@
 <li><code>can inline</code> / <code>inlining call to</code> —— 函式被內聯，呼叫開銷消失。</li>
 </ul>
 <p>加第二個 <code>-m</code> 會給出<strong>理由</strong>，這在調校時特別有用：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m -m&quot;</span><span class="w"> </span>./main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m -m&quot;</span><span class="w"> </span>./main.go
+</pre></div>
 
 <p>要看完整訊息、不被內聯干擾，可以把內聯關掉：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m -l&quot;</span><span class="w"> </span>./main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m -l&quot;</span><span class="w"> </span>./main.go
+</pre></div>
 
 <div class="admonition tip">
 <p class="admonition-title">常見的逃逸原因</p>
@@ -183,24 +183,24 @@
 <hr />
 <h2 id="工具二-gcflags-s-看產生的組合語言">工具二：<code>-gcflags=-S</code> 看產生的組合語言<a class="headerlink" href="#工具二-gcflags-s-看產生的組合語言" title="Permanent link">#</a></h2>
 <p>當你想確認「這段語法糖到底被改寫成什麼」，直接看組合語言最沒有爭議。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kd">func</span><span class="w"> </span><span class="nx">add</span><span class="p">(</span><span class="nx">a</span><span class="p">,</span><span class="w"> </span><span class="nx">b</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nx">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nx">b</span><span class="w"> </span><span class="p">}</span>
 
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">add</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-S -l&quot;</span><span class="w"> </span>./main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-S -l&quot;</span><span class="w"> </span>./main.go
+</pre></div>
 
 <p>輸出會像這樣（節錄，<code>amd64</code>）：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>main.add STEXT nosplit size=4 args=0x10 locals=0x0 funcid=0x0
+<div class="hl" data-lang="text"><pre><span></span>main.add STEXT nosplit size=4 args=0x10 locals=0x0 funcid=0x0
     0x0000 00000 (main.go:3)    TEXT    main.add(SB), NOSPLIT|ABIInternal, $0-16
     0x0000 00000 (main.go:3)    ADDQ    BX, AX
     0x0003 00003 (main.go:3)    RET
-</code></pre></div>
+</pre></div>
 
 <p>有三個細節值得注意：</p>
 <ul>
@@ -210,18 +210,18 @@
 </ul>
 <p>Go 的組合語言是一種<strong>虛擬組合語言</strong>（Plan 9 風格），跟你在 Intel 手冊上看到的語法不同：運算元順序是「來源在前、目的在後」，暫存器名稱前沒有 <code>%</code>。看不懂沒關係，本書只在必要時引用幾行。</p>
 <p>如果只想看某一個函式，可以搭配 <code>-S</code> 與文字搜尋，或改用更精準的方式：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-S<span class="w"> </span>main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-S<span class="w"> </span>main.go
+</pre></div>
 
 <hr />
 <h2 id="工具三godebug-觀察-runtime">工具三：<code>GODEBUG</code> 觀察 runtime<a class="headerlink" href="#工具三godebug-觀察-runtime" title="Permanent link">#</a></h2>
 <p><code>GODEBUG</code> 是一組用逗號分隔的環境變數開關，可以讓 runtime 把內部狀態印出來。這是觀察 GC 與排程器最直接的方法。</p>
 <h3 id="看-gc">看 GC<a class="headerlink" href="#看-gc" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">gctrace</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">gctrace</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>gc 1 @0.021s 0%: 0.015+0.42+0.003 ms clock, 0.12+0.11/0.31/0.28+0.026 ms cpu, 4-&gt;4-&gt;1 MB, 5 MB goal, 0 MB stacks, 0 MB globals, 8 P
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>gc 1 @0.021s 0%: 0.015+0.42+0.003 ms clock, 0.12+0.11/0.31/0.28+0.026 ms cpu, 4-&gt;4-&gt;1 MB, 5 MB goal, 0 MB stacks, 0 MB globals, 8 P
+</pre></div>
 
 <p>拆解這一行：</p>
 <table>
@@ -264,12 +264,12 @@
 </table>
 <p><strong>最該盯的是第三段的 STW 時間</strong>。健康的 Go 服務，這兩段 STW 應該都在數十微秒到一兩毫秒之間。</p>
 <h3 id="看排程器">看排程器<a class="headerlink" href="#看排程器" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">schedtrace</span><span class="o">=</span><span class="m">1000</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">schedtrace</span><span class="o">=</span><span class="m">1000</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
+</pre></div>
 
 <p>每秒印一行排程器摘要：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>SCHED 1004ms: gomaxprocs=8 idleprocs=7 threads=6 spinningthreads=0 idlethreads=3 runqueue=0 [0 0 0 0 0 0 0 0]
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>SCHED 1004ms: gomaxprocs=8 idleprocs=7 threads=6 spinningthreads=0 idlethreads=3 runqueue=0 [0 0 0 0 0 0 0 0]
+</pre></div>
 
 <p><code>runqueue</code> 是全域執行佇列長度，後面中括號裡是<strong>每個 P 的本地佇列</strong>長度。如果你看到某幾個 P 排了一堆、其他是 0，代表工作竊取沒有發揮作用，通常是 goroutine 在互相阻塞。</p>
 <p>加上 <code>scheddetail=1</code> 會逐一列出每個 G、M、P 的狀態，資訊量很大，適合小程式的深度除錯。</p>
@@ -323,32 +323,32 @@
 <hr />
 <h2 id="工具四delve-逐步除錯">工具四：delve 逐步除錯<a class="headerlink" href="#工具四delve-逐步除錯" title="Permanent link">#</a></h2>
 <p><code>delve</code>（指令是 <code>dlv</code>）是 Go 專用的除錯器，比 gdb 更懂 goroutine。</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>install<span class="w"> </span>github.com/go-delve/delve/cmd/dlv@latest
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>install<span class="w"> </span>github.com/go-delve/delve/cmd/dlv@latest
+</pre></div>
 
 <p>最有價值的不是設中斷點，而是這幾個<strong>看 runtime 狀態</strong>的指令：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>(dlv) goroutines          列出所有 goroutine 及其狀態
+<div class="hl" data-lang="text"><pre><span></span>(dlv) goroutines          列出所有 goroutine 及其狀態
 (dlv) goroutine 7         切換到第 7 個 goroutine
 (dlv) bt                  印出目前 goroutine 的呼叫堆疊
 (dlv) print myVar         印出變數（會展開 struct）
 (dlv) print -x mySlice    以十六進位顯示
 (dlv) regs                看暫存器（配合暫存器 ABI 很有用）
-</code></pre></div>
+</pre></div>
 
 <p>想看 runtime 的內部結構（例如 <code>g</code> 或 <code>hmap</code>），要先關掉最佳化，否則變數會被暫存器化而看不到：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>dlv<span class="w"> </span>debug<span class="w"> </span>--build-flags<span class="o">=</span><span class="s2">&quot;-gcflags=&#39;all=-N -l&#39;&quot;</span><span class="w"> </span>./main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>dlv<span class="w"> </span>debug<span class="w"> </span>--build-flags<span class="o">=</span><span class="s2">&quot;-gcflags=&#39;all=-N -l&#39;&quot;</span><span class="w"> </span>./main.go
+</pre></div>
 
 <hr />
 <h2 id="工具五pprof-找熱點">工具五：pprof 找熱點<a class="headerlink" href="#工具五pprof-找熱點" title="Permanent link">#</a></h2>
 <p><code>pprof</code> 收集的是<strong>取樣式的統計剖析</strong>，用來回答「時間花在哪裡」「記憶體被誰吃掉」。</p>
 <p>最簡單的用法是在測試裡開：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-bench<span class="o">=</span>.<span class="w"> </span>-cpuprofile<span class="o">=</span>cpu.out<span class="w"> </span>-memprofile<span class="o">=</span>mem.out
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-bench<span class="o">=</span>.<span class="w"> </span>-cpuprofile<span class="o">=</span>cpu.out<span class="w"> </span>-memprofile<span class="o">=</span>mem.out
 go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </span>-http<span class="o">=</span>:8081<span class="w"> </span>cpu.out
-</code></pre></div>
+</pre></div>
 
 <p>長時間執行的服務則掛上 HTTP 端點：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;log&quot;</span>
@@ -363,7 +363,7 @@ go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </sp
 
 <span class="w">    </span><span class="k">select</span><span class="w"> </span><span class="p">{}</span><span class="w"> </span><span class="c1">// 你的服務主體</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition danger">
 <p class="admonition-title">不要把 pprof 端點暴露到公網</p>
@@ -411,7 +411,7 @@ go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </sp
 <hr />
 <h2 id="工具六trace-看時間軸">工具六：trace 看時間軸<a class="headerlink" href="#工具六trace-看時間軸" title="Permanent link">#</a></h2>
 <p><code>pprof</code> 告訴你「總共花了多少」，<code>trace</code> 告訴你「什麼時候發生的」。要診斷延遲毛刺（latency spike）、GC 停頓、goroutine 被卡住，只有 trace 能給答案。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;os&quot;</span>
@@ -437,10 +437,10 @@ go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </sp
 <span class="w">        </span><span class="o">&lt;-</span><span class="nx">ch</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>trace<span class="w"> </span>trace.out
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>trace<span class="w"> </span>trace.out
+</pre></div>
 
 <p>瀏覽器會開起來，最有用的兩個檢視是：</p>
 <ul>
@@ -450,8 +450,8 @@ go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </sp
 <hr />
 <h2 id="讀-runtime-原始碼">讀 runtime 原始碼<a class="headerlink" href="#讀-runtime-原始碼" title="Permanent link">#</a></h2>
 <p>本書引用 runtime 原始碼時會標注相對路徑，例如 <code>runtime/proc.go</code>。完整路徑在：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>env<span class="w"> </span>GOROOT
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>env<span class="w"> </span>GOROOT
+</pre></div>
 
 <p>幾個閱讀時的提醒：</p>
 <ol>

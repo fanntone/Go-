@@ -161,7 +161,7 @@
 <hr />
 <h2 id="走訪順序是隨機的">走訪順序是隨機的<a class="headerlink" href="#走訪順序是隨機的" title="Permanent link">#</a></h2>
 <p>這是刻意設計的，不是實作缺陷。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -175,12 +175,12 @@
 <span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">()</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>c d e a b 
+<div class="hl" data-lang="text"><pre><span></span>c d e a b 
 b c d e a 
 e a b c d 
-</code></pre></div>
+</pre></div>
 
 <p>每次 <code>range</code> 開始時，runtime 會隨機選一個起始群組與起始槽。</p>
 <div class="admonition note">
@@ -189,7 +189,7 @@ e a b c d
 <p>這跟 map 的擴容機制本來就會改變順序有關——隨機化只是把「偶爾不同」變成「總是不同」。</p>
 </div>
 <p><strong>需要固定順序時，明確排序：</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -205,12 +205,12 @@ e a b c d
 <span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">k</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">[</span><span class="nx">k</span><span class="p">])</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>apple 1
+<div class="hl" data-lang="text"><pre><span></span>apple 1
 banana 2
 cherry 3
-</code></pre></div>
+</pre></div>
 
 <div class="admonition version">
 <p class="admonition-title">Go 1.21 / 1.23：<code>maps</code> 套件</p>
@@ -218,7 +218,7 @@ cherry 3
 </div>
 <hr />
 <h2 id="不能取-map-元素的位址">不能取 map 元素的位址<a class="headerlink" href="#不能取-map-元素的位址" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kd">type</span><span class="w"> </span><span class="nx">Point</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">X</span><span class="p">,</span><span class="w"> </span><span class="nx">Y</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}</span>
 
@@ -234,11 +234,11 @@ cherry 3
 <span class="w">    </span><span class="c1">// 只能整個取出來讀</span>
 <span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">m</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">]</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>原因：map 的元素會被搬動。</strong> 擴容或分裂時，元素會被移到新的記憶體位置。如果允許你持有一個指向元素的指標，搬動之後那個指標就指向舊位置了。</p>
 <p>三種解法：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -263,13 +263,13 @@ cherry 3
 <span class="w">    </span><span class="nx">data</span><span class="p">[</span><span class="nx">idx</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">]].</span><span class="nx">X</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">10</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">data</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="w"> </span><span class="c1">// {10 2}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>解法一最直觀但每個元素多一次配置；解法三對大量資料最有效率（連續記憶體、快取友善）。</p>
 <hr />
 <h2 id="map-不是並行安全的">map 不是並行安全的<a class="headerlink" href="#map-不是並行安全的" title="Permanent link">#</a></h2>
 <p>同時讀寫會直接讓程式當掉：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">int</span><span class="p">{}</span>
@@ -283,18 +283,18 @@ cherry 3
 <span class="w">        </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">m</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>fatal error: concurrent map read and map write
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>fatal error: concurrent map read and map write
+</pre></div>
 
 <p>注意這是 <strong><code>fatal error</code> 不是 <code>panic</code></strong>，<code>recover()</code> 攔不住，程式直接死。這是刻意的：並行存取 map 會破壞內部結構，繼續執行會導致記憶體毀損。</p>
 <p>Go 在 map 的內部狀態裡放了一個旗標，寫入時設定、結束時清除。如果另一個 goroutine 在旗標設定期間進來，就觸發這個 fatal error。這<strong>不是完整的偵測</strong>（是盡力而為的檢查），所以有些競爭條件不會被抓到——用 <code>-race</code> 才可靠：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>run<span class="w"> </span>-race<span class="w"> </span>main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>run<span class="w"> </span>-race<span class="w"> </span>main.go
+</pre></div>
 
 <h3 id="三種解法">三種解法<a class="headerlink" href="#三種解法" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -335,14 +335,14 @@ cherry 3
 <span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">sm</span><span class="p">.</span><span class="nx">Get</span><span class="p">(</span><span class="s">&quot;42&quot;</span><span class="p">))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>② <code>sync.Map</code></strong> —— 只在兩種特定情境下比 mutex 快：
 - 鍵一旦寫入就幾乎只讀（快取場景）
 - 多個 goroutine 各自操作<strong>不相交</strong>的鍵集合</p>
 <p>其他情況（尤其是頻繁寫入同一批鍵）<code>sync.Map</code> 通常<strong>比 <code>RWMutex</code> 慢</strong>，因為它內部有 read/dirty 兩份結構要同步。不要因為名字有 sync 就無腦選它。</p>
 <p><strong>③ 分片（sharding）</strong> —— 高並行寫入時最有效：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;hash/maphash&quot;</span>
@@ -385,28 +385,28 @@ cherry 3
 <span class="w">    </span><span class="nx">p</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RUnlock</span><span class="p">()</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>把鎖競爭分散到 32 把鎖上，吞吐量通常能提升好幾倍。</p>
 <hr />
 <h2 id="實用技巧">實用技巧<a class="headerlink" href="#實用技巧" title="Permanent link">#</a></h2>
 <h3 id="用-maptstruct-當集合">用 <code>map[T]struct{}</code> 當集合<a class="headerlink" href="#用-maptstruct-當集合" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">set</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kd">struct</span><span class="p">{}{}</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">set</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kd">struct</span><span class="p">{}{}</span>
 <span class="nx">set</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kd">struct</span><span class="p">{}{}</span>
 
 <span class="k">if</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">set</span><span class="p">[</span><span class="s">&quot;a&quot;</span><span class="p">];</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// 存在</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>struct{}</code> 大小是 0，不佔任何空間。用 <code>map[string]bool</code> 每個元素會多 1 位元組（加上對齊可能更多）。</p>
 <h3 id="預先配置容量">預先配置容量<a class="headerlink" href="#預先配置容量" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">10000</span><span class="p">)</span><span class="w"> </span><span class="c1">// 避免多次分裂與搬移</span>
-</code></pre></div>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">int</span><span class="p">,</span><span class="w"> </span><span class="mi">10000</span><span class="p">)</span><span class="w"> </span><span class="c1">// 避免多次分裂與搬移</span>
+</pre></div>
 
 <p>跟 slice 一樣，知道大概的元素數量就先給。</p>
 <h3 id="刪除不會縮小-map">刪除不會縮小 map<a class="headerlink" href="#刪除不會縮小-map" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">int</span><span class="p">)</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">int</span><span class="p">)</span>
 <span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="mi">1</span><span class="nx">_000_000</span><span class="p">;</span><span class="w"> </span><span class="nx">i</span><span class="o">++</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">m</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">i</span>
 <span class="p">}</span>
@@ -414,11 +414,11 @@ cherry 3
 <span class="w">    </span><span class="nb">delete</span><span class="p">(</span><span class="nx">m</span><span class="p">,</span><span class="w"> </span><span class="nx">i</span><span class="p">)</span>
 <span class="p">}</span>
 <span class="c1">// map 現在是空的，但底層記憶體仍然是一百萬個元素的規模</span>
-</code></pre></div>
+</pre></div>
 
 <p>Go 的 map <strong>永遠不會縮小</strong>。要真的釋放記憶體，只能建一個新的：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">m</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="c1">// 舊的整個交給 GC</span>
-</code></pre></div>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">m</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">map</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="c1">// 舊的整個交給 GC</span>
+</pre></div>
 
 <p>或用 <code>clear(m)</code>（Go 1.21+）—— 但注意 <code>clear</code> 只是清空內容，<strong>不釋放底層記憶體</strong>。</p>
 <h3 id="鍵型別的效能差異">鍵型別的效能差異<a class="headerlink" href="#鍵型別的效能差異" title="Permanent link">#</a></h3>

@@ -182,14 +182,14 @@
 </tbody>
 </table>
 <p>流程：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>1. 全部物件初始為白色
+<div class="hl" data-lang="text"><pre><span></span>1. 全部物件初始為白色
 2. 把「根物件」（全域變數、各 goroutine 的堆疊、暫存器）塗成灰色
 3. while 灰色集合不為空:
        取出一個灰色物件 x
        把 x 指向的所有白色物件塗成灰色
        把 x 塗成黑色
 4. 剩下的白色物件全部回收
-</code></pre></div>
+</pre></div>
 
 <figure class="diagram"><svg viewBox="0 0 700 300" role="img" aria-label="三色標記的過程"><text class="d-t-b" x="15" y="20">初始：根物件變灰</text><circle cx="60" cy="55" r="18" style="fill:var(--bg-sunken);stroke:var(--fg-soft);stroke-width:2"/><text class="d-t-m d-mid" x="60" y="60">root</text><circle cx="150" cy="45" r="16" style="fill:var(--bg);stroke:var(--line-strong);stroke-width:2"/><text class="d-t-m d-mid" x="150" y="50">A</text><circle cx="150" cy="95" r="16" style="fill:var(--bg);stroke:var(--line-strong);stroke-width:2"/><text class="d-t-m d-mid" x="150" y="100">B</text><circle cx="230" cy="45" r="16" style="fill:var(--bg);stroke:var(--line-strong);stroke-width:2"/><text class="d-t-m d-mid" x="230" y="50">C</text><circle cx="230" cy="95" r="16" style="fill:var(--bg);stroke:var(--line-strong);stroke-width:2"/><text class="d-t-m d-mid" x="230" y="100">D</text><path class="d-line" d="M78 50 L132 46"/><path class="d-line" d="M78 62 L132 91"/><path class="d-line" d="M166 45 L212 45"/><path class="d-line" d="M166 95 L212 95"/><text class="d-t-b" x="290" y="20">掃描中</text><circle cx="335" cy="55" r="18" style="fill:var(--fg);stroke:var(--fg);stroke-width:2"/><text class="d-t-m d-mid" x="335" y="60" style="fill:var(--bg)">root</text><circle cx="425" cy="45" r="16" style="fill:var(--fg-faint);stroke:var(--fg-soft);stroke-width:2"/><text class="d-t-m d-mid" x="425" y="50" style="fill:var(--bg)">A</text><circle cx="425" cy="95" r="16" style="fill:var(--fg-faint);stroke:var(--fg-soft);stroke-width:2"/><text class="d-t-m d-mid" x="425" y="100" style="fill:var(--bg)">B</text><circle cx="505" cy="45" r="16" style="fill:var(--bg);stroke:var(--line-strong);stroke-width:2"/><text class="d-t-m d-mid" x="505" y="50">C</text><circle cx="505" cy="95" r="16" style="fill:var(--bg);stroke:var(--line-strong);stroke-width:2"/><text class="d-t-m d-mid" x="505" y="100">D</text><path class="d-line" d="M353 50 L407 46"/><path class="d-line" d="M353 62 L407 91"/><path class="d-line" d="M441 45 L487 45"/><path class="d-line" d="M441 95 L487 95"/><text class="d-t-b" x="565" y="20">完成</text><circle cx="600" cy="55" r="18" style="fill:var(--fg);stroke:var(--fg);stroke-width:2"/><text class="d-t-m d-mid" x="600" y="60" style="fill:var(--bg)">root</text><circle cx="660" cy="45" r="16" style="fill:var(--fg);stroke:var(--fg);stroke-width:2"/><text class="d-t-m d-mid" x="660" y="50" style="fill:var(--bg)">A</text><circle cx="660" cy="95" r="16" style="fill:var(--fg);stroke:var(--fg);stroke-width:2"/><text class="d-t-m d-mid" x="660" y="100" style="fill:var(--bg)">B</text><path class="d-line" d="M618 50 L644 46"/><path class="d-line" d="M618 62 L644 91"/><rect x="15" y="130" width="180" height="24" rx="4" style="fill:var(--bg);stroke:var(--line-strong);stroke-width:2"/><text class="d-t-s" x="205" y="147">白色 = 尚未掃描，最後回收</text><rect x="15" y="160" width="180" height="24" rx="4" style="fill:var(--fg-faint);stroke:var(--fg-soft);stroke-width:2"/><text class="d-t-s" x="205" y="177">灰色 = 存活，但子節點還沒處理</text><rect x="15" y="190" width="180" height="24" rx="4" style="fill:var(--fg);stroke:var(--fg);stroke-width:2"/><text class="d-t-s" x="205" y="207">黑色 = 存活，且子節點都已入列</text><line class="d-dash" x1="15" y1="232" x2="685" y2="232"/><text class="d-t-s" x="15" y="256">問題：標記期間使用者程式碼還在跑，它可能把指標搬來搬去，讓已經掃過的黑色物件指向一個白色物件，</text><text class="d-t-s" x="15" y="278">而該白色物件的其他參照又被刪除 —— 這個物件就會被誤判為垃圾。解法是「寫入屏障」。</text></svg><figcaption><b>三色不變式。</b>演算法要維持的性質是：<b>不存在「黑色物件直接指向白色物件」而該白色物件沒有其他灰色路徑可達</b>。破壞這個性質就會誤刪存活物件。</figcaption></figure>
 
@@ -197,21 +197,21 @@
 <h2 id="寫入屏障">寫入屏障<a class="headerlink" href="#寫入屏障" title="Permanent link">#</a></h2>
 <p>並行標記的根本挑戰：<strong>使用者程式碼在標記期間會修改指標</strong>。</p>
 <p>考慮這個序列：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>1. GC 掃描完物件 A（塗黑），A.next = nil
+<div class="hl" data-lang="text"><pre><span></span>1. GC 掃描完物件 A（塗黑），A.next = nil
 2. 使用者程式碼執行：A.next = B（B 是白色）
 3. 使用者程式碼執行：C.ref = nil（C 原本是唯一指向 B 的灰色物件）
 4. GC 掃描結束 → B 仍是白色 → 被回收
 5. 但 A.next 還指著 B → 存取已釋放的記憶體 → 災難
-</code></pre></div>
+</pre></div>
 
 <p><strong>寫入屏障（write barrier）</strong> 是編譯器插在每個指標寫入前的一小段程式碼，用來攔截這種情況。</p>
 <p>Go 從 1.8 起使用<strong>混合寫入屏障（hybrid write barrier）</strong>，結合了兩種經典策略：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>writePointer(slot, ptr):
+<div class="hl" data-lang="text"><pre><span></span>writePointer(slot, ptr):
     shade(*slot)      // Yuasa 式：把「被覆蓋掉的舊值」塗灰
     if 目前在標記階段 &amp;&amp; 目前 goroutine 的堆疊是黑色:
         shade(ptr)    // Dijkstra 式：把「新寫入的值」也塗灰
     *slot = ptr
-</code></pre></div>
+</pre></div>
 
 <ul>
 <li><code>shade(*slot)</code> 保護「即將失去參照的物件」——如果 B 原本被 A 指著，現在要被覆蓋，先把 B 塗灰保住它。</li>
@@ -234,19 +234,19 @@
 
 <h3 id="協助標記mutator-assist">協助標記（mutator assist）<a class="headerlink" href="#協助標記mutator-assist" title="Permanent link">#</a></h3>
 <p>如果使用者程式碼配置得比 GC 標記得還快，堆積會在 GC 完成前就超過目標。解法是：<strong>讓配置者自己幫忙標記</strong>。</p>
-<div class="hl" data-lang="text"><pre><span></span><code>每次配置時：
+<div class="hl" data-lang="text"><pre><span></span>每次配置時：
     assistBytes -= 配置的大小
     if assistBytes &lt; 0:
         這個 goroutine 必須先幫忙標記一些物件，才能繼續配置
-</code></pre></div>
+</pre></div>
 
 <p><strong>這是為什麼在 GC 期間，配置密集的程式碼會明顯變慢。</strong> 你的 goroutine 被徵召去做 GC 的工作了。</p>
 <p>如果你在 trace 裡看到大量的 <code>GC (assist)</code> 事件，代表配置速率超過了 GC 的處理能力——降低配置量或提高 <code>GOGC</code>。</p>
 <hr />
 <h2 id="gogc-與-gomemlimit"><code>GOGC</code> 與 <code>GOMEMLIMIT</code><a class="headerlink" href="#gogc-與-gomemlimit" title="Permanent link">#</a></h2>
 <h3 id="gogc以百分比控制"><code>GOGC</code>：以百分比控制<a class="headerlink" href="#gogc以百分比控制" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="text"><pre><span></span><code>下次 GC 的目標堆積 = 上次 GC 後的存活量 × (1 + GOGC/100)
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>下次 GC 的目標堆積 = 上次 GC 後的存活量 × (1 + GOGC/100)
+</pre></div>
 
 <p>預設 <code>GOGC=100</code>，意思是「堆積成長到存活量的兩倍時觸發 GC」。</p>
 <table>
@@ -280,14 +280,14 @@
 </tr>
 </tbody>
 </table>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GOGC</span><span class="o">=</span><span class="m">200</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GOGC</span><span class="o">=</span><span class="m">200</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
+</pre></div>
 
 <p>或在程式裡：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="s">&quot;runtime/debug&quot;</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="s">&quot;runtime/debug&quot;</span>
 
 <span class="nx">debug</span><span class="p">.</span><span class="nx">SetGCPercent</span><span class="p">(</span><span class="mi">200</span><span class="p">)</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="gomemlimit軟性記憶體上限"><code>GOMEMLIMIT</code>：軟性記憶體上限<a class="headerlink" href="#gomemlimit軟性記憶體上限" title="Permanent link">#</a></h3>
 <div class="admonition version">
@@ -295,20 +295,20 @@
 <p><code>GOGC</code> 是<strong>相對</strong>的，它不知道你的容器只有 512 MB。如果存活量因為某次流量尖峰漲到 300 MB，GC 目標就變成 600 MB —— 超過容器限制，直接被 OOM Killer 殺掉。</p>
 <p><code>GOMEMLIMIT</code> 設定一個<strong>軟性上限</strong>：接近它時，GC 會更積極地運作（即使還沒到 <code>GOGC</code> 的門檻）。</p>
 </div>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GOMEMLIMIT</span><span class="o">=</span>400MiB<span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GOMEMLIMIT</span><span class="o">=</span>400MiB<span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
+</pre></div>
 
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="s">&quot;runtime/debug&quot;</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="s">&quot;runtime/debug&quot;</span>
 
 <span class="nx">debug</span><span class="p">.</span><span class="nx">SetMemoryLimit</span><span class="p">(</span><span class="mi">400</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">20</span><span class="p">)</span><span class="w"> </span><span class="c1">// 400 MiB</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>它是「軟性」的：</strong> Go 會盡力不超過，但如果存活物件本身就超過限制，它不會殺掉你的程式——只會持續地跑 GC（可能陷入 GC 死亡螺旋，CPU 被 GC 吃光）。</p>
 <h3 id="推薦的容器設定">推薦的容器設定<a class="headerlink" href="#推薦的容器設定" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="text"><pre><span></span><code>容器記憶體 limit:  512 MiB
+<div class="hl" data-lang="text"><pre><span></span>容器記憶體 limit:  512 MiB
 GOMEMLIMIT:        450MiB      ← 留約 10-15% 給非堆積用量
 GOGC:              100 或 off
-</code></pre></div>
+</pre></div>
 
 <p>為什麼要留 10–15%？因為 <code>GOMEMLIMIT</code> 涵蓋的是 <strong>Go runtime 管理的記憶體總量</strong>（堆積 + 堆疊 + runtime 內部結構），但不包含：</p>
 <ul>
@@ -319,8 +319,9 @@ GOGC:              100 或 off
 <div class="admonition tip">
 <p class="admonition-title"><code>GOGC=off</code> + <code>GOMEMLIMIT</code> 的組合</p>
 <p>這個組合在某些服務上效果很好：</p>
-<p><code>bash
-GOGC=off GOMEMLIMIT=450MiB ./app</code></p>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GOGC</span><span class="o">=</span>off<span class="w"> </span><span class="nv">GOMEMLIMIT</span><span class="o">=</span>450MiB<span class="w"> </span>./app
+</pre></div>
+
 <p>意思是「不要因為堆積成長而 GC，只在接近記憶體上限時才 GC」。這讓 GC 次數降到最低（省 CPU），同時保證不會 OOM。</p>
 <p><strong>適合</strong>：記憶體用量穩定可預測的服務。
 <strong>不適合</strong>：存活集大小變化劇烈的服務——可能長時間維持在高記憶體水位。</p>
@@ -334,8 +335,9 @@ GOGC=off GOMEMLIMIT=450MiB ./app</code></p>
 <p><strong>Green Tea 的做法</strong>：改變掃描的組織方式，讓 CPU <strong>一次處理記憶體上相鄰的一批物件</strong>，而不是照指標圖的順序跳來跳去。相關資料被一起載入快取，快取命中率大幅提高，也更容易利用 CPU 的平行能力。</p>
 <p><strong>效果</strong>：官方回報在<strong>大量使用 GC 的真實程式</strong>上，GC 開銷降低 <strong>10%–40%</strong>。</p>
 <p><strong>對你的影響</strong>：升級到 Go 1.26 就自動生效，不需要改任何程式碼。想關掉（不建議）：</p>
-<p><code>bash
-GOEXPERIMENT=nogreenteagc go build .</code></p>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GOEXPERIMENT</span><span class="o">=</span>nogreenteagc<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>.
+</pre></div>
+
 <p>這個 opt-out 預計在 Go 1.27 移除。</p>
 </div>
 <p>其他 Go 1.26 的記憶體相關改進：</p>
@@ -346,11 +348,11 @@ GOEXPERIMENT=nogreenteagc go build .</code></p>
 </ul>
 <hr />
 <h2 id="讀-gctrace">讀 <code>gctrace</code><a class="headerlink" href="#讀-gctrace" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">gctrace</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">gctrace</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>gc 12 @2.345s 3%: 0.021+15+0.008 ms clock, 0.17+2.1/29/0.42+0.068 ms cpu, 82-&gt;84-&gt;41 MB, 84 MB goal, 0 MB stacks, 0 MB globals, 8 P
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>gc 12 @2.345s 3%: 0.021+15+0.008 ms clock, 0.17+2.1/29/0.42+0.068 ms cpu, 82-&gt;84-&gt;41 MB, 84 MB goal, 0 MB stacks, 0 MB globals, 8 P
+</pre></div>
 
 <p>完整拆解：</p>
 <table>
@@ -419,8 +421,8 @@ GOEXPERIMENT=nogreenteagc go build .</code></p>
 <h2 id="調校流程">調校流程<a class="headerlink" href="#調校流程" title="Permanent link">#</a></h2>
 <p>遇到 GC 相關的效能問題，按這個順序處理：</p>
 <h3 id="第一步先量測">第一步：先量測<a class="headerlink" href="#第一步先量測" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">gctrace</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>./app<span class="w"> </span><span class="m">2</span>&gt;gc.log
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">gctrace</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>./app<span class="w"> </span><span class="m">2</span>&gt;gc.log
+</pre></div>
 
 <p>確認問題類型：</p>
 <table>
@@ -450,14 +452,14 @@ GOEXPERIMENT=nogreenteagc go build .</code></p>
 </tbody>
 </table>
 <h3 id="第二步減少配置最有效">第二步：減少配置（最有效）<a class="headerlink" href="#第二步減少配置最有效" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-bench<span class="o">=</span>.<span class="w"> </span>-memprofile<span class="o">=</span>mem.out
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-bench<span class="o">=</span>.<span class="w"> </span>-memprofile<span class="o">=</span>mem.out
 go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </span>-sample_index<span class="o">=</span>alloc_space<span class="w"> </span>-http<span class="o">=</span>:8081<span class="w"> </span>mem.out
-</code></pre></div>
+</pre></div>
 
 <p>找出配置量最大的幾個地方，用 <a href="allocator.html#減少配置的實用清單">記憶體配置器</a> 那節的清單處理。</p>
 <p><strong>這幾乎總是收益最大的一步。</strong> 調參數只是把問題往後推，減少配置才是根治。</p>
 <h3 id="第三步才調參數">第三步：才調參數<a class="headerlink" href="#第三步才調參數" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="c1"># 記憶體充裕、想降低 GC CPU</span>
+<div class="hl" data-lang="bash"><pre><span></span><span class="c1"># 記憶體充裕、想降低 GC CPU</span>
 <span class="nv">GOGC</span><span class="o">=</span><span class="m">200</span>
 
 <span class="c1"># 容器環境、要避免 OOM</span>
@@ -465,7 +467,7 @@ go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </sp
 
 <span class="c1"># 短命的 CLI 工具</span>
 <span class="nv">GOGC</span><span class="o">=</span>off
-</code></pre></div>
+</pre></div>
 
 <h3 id="第四步考慮架構層面">第四步：考慮架構層面<a class="headerlink" href="#第四步考慮架構層面" title="Permanent link">#</a></h3>
 <ul>

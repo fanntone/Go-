@@ -151,11 +151,11 @@
 <hr />
 <h2 id="syncmutex"><code>sync.Mutex</code><a class="headerlink" href="#syncmutex" title="Permanent link">#</a></h2>
 <h3 id="結構">結構<a class="headerlink" href="#結構" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">Mutex</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">Mutex</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="nx">noCopy</span>
 <span class="w">    </span><span class="nx">mu</span><span class="w"> </span><span class="nx">isync</span><span class="p">.</span><span class="nx">Mutex</span><span class="w">  </span><span class="c1">// Go 1.24 起實作搬到 internal/sync</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>實際的狀態是一個 <code>int32</code>，位元拆成四個部分：</p>
 <table>
@@ -204,7 +204,7 @@
 </ol>
 <p>理由：如果持鎖者很快就會釋放（常見情況），自旋比「休眠 + 喚醒」便宜得多。但如果沒有其他核心在跑，自旋就是純粹浪費——持鎖者根本沒機會執行。</p>
 <h3 id="使用注意事項">使用注意事項<a class="headerlink" href="#使用注意事項" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -238,51 +238,56 @@
 <span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">Value</span><span class="p">())</span><span class="w"> </span><span class="c1">// 1000</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition danger">
 <p class="admonition-title">Mutex 絕對不能複製</p>
-<p><code>go
-// ✗ 複製了鎖的狀態
-func (c Counter) Bad() { // 值接收者！
-    c.mu.Lock()          // 鎖的是複本
-    defer c.mu.Unlock()
-}</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 複製了鎖的狀態</span>
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="nx">Counter</span><span class="p">)</span><span class="w"> </span><span class="nx">Bad</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="c1">// 值接收者！</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span><span class="w">          </span><span class="c1">// 鎖的是複本</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+<span class="p">}</span>
+</pre></div>
+
 <p><code>sync.Mutex</code> 內含 <code>noCopy</code> 標記，<code>go vet</code> 會抓到：</p>
-<p><code>text
-./main.go:12:6: Bad passes lock by value: main.Counter contains sync.Mutex</code></p>
+<div class="hl" data-lang="text"><pre><span></span>./main.go:12:6: Bad passes lock by value: main.Counter contains sync.Mutex
+</pre></div>
+
 <p><strong>含有 mutex 的 struct，所有方法都必須用指標接收者。</strong> 這也連帶表示這種 struct 不該被當成 map 的值型別（<code>m[k].Inc()</code> 會取到複本）。</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">Mutex 不可重入（non-reentrant）</p>
-<p><code>go
-func (c *Counter) IncTwice() {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    c.Inc() // ✗ 死結！Inc 也會嘗試 Lock
-}</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Counter</span><span class="p">)</span><span class="w"> </span><span class="nx">IncTwice</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">Inc</span><span class="p">()</span><span class="w"> </span><span class="c1">// ✗ 死結！Inc 也會嘗試 Lock</span>
+<span class="p">}</span>
+</pre></div>
+
 <p>Go 刻意不支援可重入鎖。理由是：可重入鎖會讓「這段程式碼持有哪些鎖」變得難以推理，反而更容易寫出死結。</p>
 <p>正確做法是把不加鎖的版本抽出來：</p>
-<p>```go
-func (c *Counter) Inc() {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    c.incLocked()
-}</p>
-<p>func (c *Counter) IncTwice() {
-    c.mu.Lock()
-    defer c.mu.Unlock()
-    c.incLocked()
-    c.incLocked()
-}</p>
-<p>// 慣例：Locked 後綴表示「呼叫者必須已持有鎖」
-func (c *Counter) incLocked() { c.n++ }
-```</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Counter</span><span class="p">)</span><span class="w"> </span><span class="nx">Inc</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">incLocked</span><span class="p">()</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Counter</span><span class="p">)</span><span class="w"> </span><span class="nx">IncTwice</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">incLocked</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">incLocked</span><span class="p">()</span>
+<span class="p">}</span>
+
+<span class="c1">// 慣例：Locked 後綴表示「呼叫者必須已持有鎖」</span>
+<span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Counter</span><span class="p">)</span><span class="w"> </span><span class="nx">incLocked</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">n</span><span class="o">++</span><span class="w"> </span><span class="p">}</span>
+</pre></div>
+
 </div>
 <hr />
 <h2 id="syncrwmutex"><code>sync.RWMutex</code><a class="headerlink" href="#syncrwmutex" title="Permanent link">#</a></h2>
 <p>允許多個讀取者同時持有，但寫入者獨佔。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -315,7 +320,7 @@ func (c *Counter) incLocked() { c.n++ }
 <span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">Set</span><span class="p">(</span><span class="s">&quot;a&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;1&quot;</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">Get</span><span class="p">(</span><span class="s">&quot;a&quot;</span><span class="p">))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="寫入者優先">寫入者優先<a class="headerlink" href="#寫入者優先" title="Permanent link">#</a></h3>
 <p><code>RWMutex</code> 的關鍵設計：<strong>一旦有寫入者在等待，新的讀取者就會被阻塞</strong>。</p>
@@ -324,16 +329,17 @@ func (c *Counter) incLocked() { c.n++ }
 
 <div class="admonition warning">
 <p class="admonition-title">RWMutex 的讀鎖不可重入</p>
-<p><code>go
-c.mu.RLock()
-defer c.mu.RUnlock()
-c.someMethodThatAlsoRLocks() // ✗ 可能死結</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RLock</span><span class="p">()</span>
+<span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">RUnlock</span><span class="p">()</span>
+<span class="nx">c</span><span class="p">.</span><span class="nx">someMethodThatAlsoRLocks</span><span class="p">()</span><span class="w"> </span><span class="c1">// ✗ 可能死結</span>
+</pre></div>
+
 <p>如果在兩次 <code>RLock</code> 之間有寫入者提出請求，第二次 <code>RLock</code> 會被擋住，而第一次的 <code>RUnlock</code> 又還沒執行——死結。</p>
 </div>
 <hr />
 <h2 id="syncwaitgroup"><code>sync.WaitGroup</code><a class="headerlink" href="#syncwaitgroup" title="Permanent link">#</a></h2>
 <p>等待一組 goroutine 完成。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -355,7 +361,7 @@ c.someMethodThatAlsoRLocks() // ✗ 可能死結</code></p>
 <span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">results</span><span class="p">)</span><span class="w"> </span><span class="c1">// [0 1 4 9 16]</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>三條規則：</p>
 <ol>
@@ -366,18 +372,19 @@ c.someMethodThatAlsoRLocks() // ✗ 可能死結</code></p>
 <div class="admonition version">
 <p class="admonition-title">Go 1.25：<code>WaitGroup.Go</code></p>
 <p>Go 1.25 加入了 <code>wg.Go(f)</code>，把「Add + go + defer Done」三步合成一步：</p>
-<p><code>go
-var wg sync.WaitGroup
-for i := range 5 {
-    wg.Go(func() {
-        results[i] = i * i
-    })
-}
-wg.Wait()</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">var</span><span class="w"> </span><span class="nx">wg</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">WaitGroup</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Go</span><span class="p">(</span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">results</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">i</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">i</span>
+<span class="w">    </span><span class="p">})</span>
+<span class="p">}</span>
+<span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
+</pre></div>
+
 <p>這消除了忘記 <code>Add</code> 或忘記 <code>Done</code> 的可能性，建議新程式碼優先使用。</p>
 </div>
 <h3 id="需要收集錯誤時用-errgroup">需要收集錯誤時用 <code>errgroup</code><a class="headerlink" href="#需要收集錯誤時用-errgroup" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;context&quot;</span>
@@ -409,13 +416,13 @@ wg.Wait()</code></p>
 <span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;錯誤:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span><span class="w"> </span><span class="c1">// 任務 4 失敗</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>errgroup</code> 的三個優勢：回傳第一個錯誤、任一失敗自動取消 context、<code>SetLimit</code> 控制並行度。</p>
 <hr />
 <h2 id="synconce"><code>sync.Once</code><a class="headerlink" href="#synconce" title="Permanent link">#</a></h2>
 <p>保證某段程式碼只執行一次，而且<strong>所有呼叫者都會等到它執行完</strong>。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -446,10 +453,10 @@ wg.Wait()</code></p>
 <span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">GetConfig</span><span class="p">().</span><span class="nx">Value</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="實作要點">實作要點<a class="headerlink" href="#實作要點" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">Once</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">Once</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">done</span><span class="w"> </span><span class="nx">atomic</span><span class="p">.</span><span class="nx">Uint32</span>
 <span class="w">    </span><span class="nx">m</span><span class="w">    </span><span class="nx">Mutex</span>
 <span class="p">}</span>
@@ -468,7 +475,7 @@ wg.Wait()</code></p>
 <span class="w">        </span><span class="nx">f</span><span class="p">()</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>兩個細節值得注意：</p>
 <ul>
@@ -477,15 +484,16 @@ wg.Wait()</code></p>
 </ul>
 <div class="admonition version">
 <p class="admonition-title">Go 1.21：<code>OnceFunc</code>、<code>OnceValue</code>、<code>OnceValues</code></p>
-<p>```go
-// 更簡潔的寫法
-var getConfig = sync.OnceValue(func() *Config {
-    return &amp;Config{Value: "loaded"}
-})</p>
-<p>func main() {
-    cfg := getConfig() // 第一次執行，之後回傳快取值
-}
-```</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// 更簡潔的寫法</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">getConfig</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">sync</span><span class="p">.</span><span class="nx">OnceValue</span><span class="p">(</span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="nx">Config</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">Config</span><span class="p">{</span><span class="nx">Value</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;loaded&quot;</span><span class="p">}</span>
+<span class="p">})</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">cfg</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">getConfig</span><span class="p">()</span><span class="w"> </span><span class="c1">// 第一次執行，之後回傳快取值</span>
+<span class="p">}</span>
+</pre></div>
+
 <p><code>OnceValues</code> 支援 <code>(T, error)</code> 的回傳形式，很適合「只初始化一次但可能失敗」的場景。</p>
 </div>
 <hr />
@@ -495,7 +503,7 @@ var getConfig = sync.OnceValue(func() *Config {
 <p class="admonition-title">Go 1.19：型別化的原子型別</p>
 <p>舊的函式式 API（<code>atomic.AddInt64(&amp;x, 1)</code>）容易誤用——很容易忘記某處直接讀寫了 <code>x</code>。Go 1.19 加入型別化版本，把不安全的存取從型別系統上排除：</p>
 </div>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -536,11 +544,11 @@ var getConfig = sync.OnceValue(func() *Config {
 <span class="w">    </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">requests</span><span class="p">.</span><span class="nx">CompareAndSwap</span><span class="p">(</span><span class="nx">old</span><span class="p">,</span><span class="w"> </span><span class="nx">old</span><span class="o">+</span><span class="mi">100</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">ok</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">requests</span><span class="p">.</span><span class="nx">Load</span><span class="p">())</span><span class="w">  </span><span class="c1">// true 1100</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>可用型別：<code>atomic.Int32</code>、<code>Int64</code>、<code>Uint32</code>、<code>Uint64</code>、<code>Uintptr</code>、<code>Bool</code>、<code>Pointer[T]</code>、<code>Value</code>。</p>
 <h3 id="atomicvalue-的用途無鎖設定熱更新"><code>atomic.Value</code> 的用途：無鎖設定熱更新<a class="headerlink" href="#atomicvalue-的用途無鎖設定熱更新" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -565,7 +573,7 @@ var getConfig = sync.OnceValue(func() *Config {
 <span class="w">    </span><span class="nx">Reload</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">Config</span><span class="p">{</span><span class="nx">Timeout</span><span class="p">:</span><span class="w"> </span><span class="mi">60</span><span class="p">,</span><span class="w"> </span><span class="nx">Retries</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">})</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="o">*</span><span class="nx">Get</span><span class="p">())</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>讀取路徑完全沒有鎖</strong>，只有一次原子指標載入。這是高頻讀取設定的最佳模式。關鍵是 <code>Config</code> 本身<strong>不可變</strong>——要更新就整份替換，絕不修改既有的那份。</p>
 <hr />
@@ -603,7 +611,7 @@ var getConfig = sync.OnceValue(func() *Config {
 </tbody>
 </table>
 <p><strong>沒有 happens-before 關係的並行讀寫就是資料競爭（data race），行為未定義。</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="c1">// ✗ 典型的資料競爭</span>
 <span class="kd">var</span><span class="w"> </span><span class="nx">done</span><span class="w"> </span><span class="kt">bool</span>
@@ -620,11 +628,11 @@ var getConfig = sync.OnceValue(func() *Config {
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="nb">println</span><span class="p">(</span><span class="nx">msg</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>編譯器可能把 <code>for !done {}</code> 最佳化成 <code>if !done { for {} }</code>（因為它看不到任何會改變 <code>done</code> 的同步操作），程式就永遠卡住。</p>
 <p>正確寫法用 channel 或 atomic：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">var</span><span class="w"> </span><span class="nx">done</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kd">struct</span><span class="p">{})</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">var</span><span class="w"> </span><span class="nx">done</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">make</span><span class="p">(</span><span class="kd">chan</span><span class="w"> </span><span class="kd">struct</span><span class="p">{})</span>
 <span class="kd">var</span><span class="w"> </span><span class="nx">msg</span><span class="w"> </span><span class="kt">string</span>
 
 <span class="kd">func</span><span class="w"> </span><span class="nx">setup</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
@@ -637,16 +645,16 @@ var getConfig = sync.OnceValue(func() *Config {
 <span class="w">    </span><span class="o">&lt;-</span><span class="nx">done</span>
 <span class="w">    </span><span class="nb">println</span><span class="p">(</span><span class="nx">msg</span><span class="p">)</span><span class="w"> </span><span class="c1">// 保證看到 &quot;hello&quot;</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="一定要跑-race">一定要跑 <code>-race</code><a class="headerlink" href="#一定要跑-race" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-race<span class="w"> </span>./...
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-race<span class="w"> </span>./...
 go<span class="w"> </span>run<span class="w"> </span>-race<span class="w"> </span>main.go
 go<span class="w"> </span>build<span class="w"> </span>-race<span class="w"> </span>-o<span class="w"> </span>app-race<span class="w"> </span>.
-</code></pre></div>
+</pre></div>
 
 <p>競爭偵測器會報告：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>WARNING: DATA RACE
+<div class="hl" data-lang="text"><pre><span></span>WARNING: DATA RACE
 Write at 0x00c000112010 by goroutine 7:
   main.setup()
       /tmp/main.go:9 +0x2e
@@ -654,7 +662,7 @@ Write at 0x00c000112010 by goroutine 7:
 Previous read at 0x00c000112010 by main goroutine:
   main.main()
       /tmp/main.go:14 +0x3c
-</code></pre></div>
+</pre></div>
 
 <div class="admonition tip">
 <p class="admonition-title"><code>-race</code> 的成本與限制</p>

@@ -113,13 +113,13 @@
 <p><code>context</code> 就是這個「該不該繼續」訊號的標準化載體，外加兩個附加功能：截止時間與請求範圍的值傳遞。</p>
 <hr />
 <h2 id="介面本身很小">介面本身很小<a class="headerlink" href="#介面本身很小" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">Context</span><span class="w"> </span><span class="kd">interface</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">Context</span><span class="w"> </span><span class="kd">interface</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">Deadline</span><span class="p">()</span><span class="w"> </span><span class="p">(</span><span class="nx">deadline</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="kt">bool</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">Done</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;-</span><span class="kd">chan</span><span class="w"> </span><span class="kd">struct</span><span class="p">{}</span>
 <span class="w">    </span><span class="nx">Err</span><span class="p">()</span><span class="w"> </span><span class="kt">error</span>
 <span class="w">    </span><span class="nx">Value</span><span class="p">(</span><span class="nx">key</span><span class="w"> </span><span class="kt">any</span><span class="p">)</span><span class="w"> </span><span class="kt">any</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>四個方法，各司其職：</p>
 <table>
@@ -149,7 +149,7 @@
 </tbody>
 </table>
 <p><strong>關鍵設計：用「關閉 channel」當廣播機制。</strong> 關閉一個 channel 會讓所有等待它的接收者同時被喚醒，而且之後任何接收都立刻回傳零值。這正好是「一對多、只發一次、之後永久有效」的取消訊號所需要的語意。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;context&quot;</span>
@@ -180,9 +180,9 @@
 <span class="w">    </span><span class="nx">cancel</span><span class="p">()</span><span class="w"> </span><span class="c1">// 一次通知所有人</span>
 <span class="w">    </span><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="mi">50</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>worker 1 工作中
+<div class="hl" data-lang="text"><pre><span></span>worker 1 工作中
 worker 2 工作中
 worker 1 工作中
 worker 2 工作中
@@ -190,7 +190,7 @@ worker 1 工作中
 worker 2 工作中
 worker 2 停止：context canceled
 worker 1 停止：context canceled
-</code></pre></div>
+</pre></div>
 
 <hr />
 <h2 id="樹狀結構">樹狀結構<a class="headerlink" href="#樹狀結構" title="Permanent link">#</a></h2>
@@ -198,7 +198,7 @@ worker 1 停止：context canceled
 <figure class="diagram"><svg viewBox="0 0 700 300" role="img" aria-label="context 的樹狀傳播"><rect class="d-box" x="270" y="14" width="170" height="40" rx="5"/><text class="d-t-m d-mid" x="355" y="34">context.Background()</text><text class="d-t-s d-mid" x="355" y="49">emptyCtx，永不取消</text><path class="d-line" d="M355 54 L355 74" marker-end="url(#ar16)"/><rect class="d-box-a" x="255" y="76" width="200" height="42" rx="5"/><text class="d-t-m d-mid" x="355" y="96">WithTimeout(5s)</text><text class="d-t-s d-mid" x="355" y="112">timerCtx　·　HTTP 請求層級</text><path class="d-line" d="M300 118 L180 148" marker-end="url(#ar16)"/><path class="d-line" d="M355 118 L355 148" marker-end="url(#ar16)"/><path class="d-line" d="M410 118 L530 148" marker-end="url(#ar16)"/><rect class="d-box-o" x="60" y="150" width="240" height="42" rx="5"/><text class="d-t-m d-mid" x="180" y="170">WithValue(traceID)</text><text class="d-t-s d-mid" x="180" y="186">valueCtx　·　不影響取消</text><rect class="d-box-w" x="310" y="150" width="90" height="42" rx="5"/><text class="d-t-s d-mid" x="355" y="176">DB 查詢</text><rect class="d-box-w" x="440" y="150" width="200" height="42" rx="5"/><text class="d-t-m d-mid" x="540" y="170">WithTimeout(1s)</text><text class="d-t-s d-mid" x="540" y="186">外部 API 呼叫</text><path class="d-line" d="M180 192 L180 214" marker-end="url(#ar16)"/><rect class="d-box-w" x="90" y="216" width="180" height="36" rx="5"/><text class="d-t-s d-mid" x="180" y="239">快取寫入 goroutine</text><defs><marker id="ar16" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--line-strong)"/></marker></defs><line class="d-dash" x1="15" y1="266" x2="685" y2="266"/><text class="d-t-s" x="15" y="288">取消由上往下傳播：父節點取消 → 所有後代立刻取消。子節點取消不影響父節點與兄弟節點。</text></svg><figcaption><b>取消單向往下傳播。</b>父 context 取消時，所有子孫的 <code>Done()</code> channel 都會被關閉。這讓「請求結束就清理整棵工作樹」變成自動的事。注意 <code>WithValue</code> 產生的節點只加值、不影響取消行為。</figcaption></figure>
 
 <h3 id="cancelctx-的實作"><code>cancelCtx</code> 的實作<a class="headerlink" href="#cancelctx-的實作" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">cancelCtx</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">cancelCtx</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">Context</span><span class="w">                        </span><span class="c1">// 父 context（嵌入）</span>
 <span class="w">    </span><span class="nx">mu</span><span class="w">       </span><span class="nx">sync</span><span class="p">.</span><span class="nx">Mutex</span>
 <span class="w">    </span><span class="nx">done</span><span class="w">     </span><span class="nx">atomic</span><span class="p">.</span><span class="nx">Value</span><span class="w">          </span><span class="c1">// chan struct{}，延後建立</span>
@@ -206,7 +206,7 @@ worker 1 停止：context canceled
 <span class="w">    </span><span class="nx">err</span><span class="w">      </span><span class="kt">error</span>
 <span class="w">    </span><span class="nx">cause</span><span class="w">    </span><span class="kt">error</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>cancel()</code> 被呼叫時：</p>
 <ol>
@@ -219,85 +219,91 @@ worker 1 停止：context canceled
 <p>第 5 步是關鍵：<strong>它避免了記憶體洩漏</strong>。如果子 context 完成了卻不從父節點移除，長壽命的父 context（例如整個服務的生命週期）會累積越來越多子節點。</p>
 <div class="admonition danger">
 <p class="admonition-title">這就是為什麼一定要呼叫 cancel</p>
-<p>```go
-// ✗ 洩漏：ctx 永遠掛在父節點的 children 裡
-func bad(parent context.Context) {
-    ctx, _ := context.WithTimeout(parent, time.Second)
-    doWork(ctx)
-}</p>
-<p>// ✓ 正確
-func good(parent context.Context) {
-    ctx, cancel := context.WithTimeout(parent, time.Second)
-    defer cancel()
-    doWork(ctx)
-}
-```</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 洩漏：ctx 永遠掛在父節點的 children 裡</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">bad</span><span class="p">(</span><span class="nx">parent</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithTimeout</span><span class="p">(</span><span class="nx">parent</span><span class="p">,</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">doWork</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="c1">// ✓ 正確</span>
+<span class="kd">func</span><span class="w"> </span><span class="nx">good</span><span class="p">(</span><span class="nx">parent</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithTimeout</span><span class="p">(</span><span class="nx">parent</span><span class="p">,</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">cancel</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">doWork</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
 <p><strong>即使 context 已經因為逾時而取消，你還是應該呼叫 <code>cancel()</code></strong> ——它同時負責停止內部的計時器與從父節點移除自己。</p>
 <p><code>go vet</code> 的 <code>lostcancel</code> 檢查會抓這個問題：</p>
-<p><code>bash
-go vet ./...</code></p>
-<p><code>text
-./main.go:8:7: the cancel function is not used on all paths (possible context leak)</code></p>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>vet<span class="w"> </span>./...
+</pre></div>
+
+<div class="hl" data-lang="text"><pre><span></span>./main.go:8:7: the cancel function is not used on all paths (possible context leak)
+</pre></div>
+
 </div>
 <hr />
 <h2 id="四種建構函式">四種建構函式<a class="headerlink" href="#四種建構函式" title="Permanent link">#</a></h2>
 <h3 id="withcancel手動取消"><code>WithCancel</code>：手動取消<a class="headerlink" href="#withcancel手動取消" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithCancel</span><span class="p">(</span><span class="nx">parent</span><span class="p">)</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithCancel</span><span class="p">(</span><span class="nx">parent</span><span class="p">)</span>
 <span class="k">defer</span><span class="w"> </span><span class="nx">cancel</span><span class="p">()</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="withtimeout-withdeadline時間取消"><code>WithTimeout</code> / <code>WithDeadline</code>：時間取消<a class="headerlink" href="#withtimeout-withdeadline時間取消" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithTimeout</span><span class="p">(</span><span class="nx">parent</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithTimeout</span><span class="p">(</span><span class="nx">parent</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
 <span class="k">defer</span><span class="w"> </span><span class="nx">cancel</span><span class="p">()</span>
 
 <span class="c1">// 等價於</span>
 <span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithDeadline</span><span class="p">(</span><span class="nx">parent</span><span class="p">,</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Now</span><span class="p">().</span><span class="nx">Add</span><span class="p">(</span><span class="mi">3</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">))</span>
-</code></pre></div>
+</pre></div>
 
 <p>內部是 <code>timerCtx</code>，包著一個 <code>cancelCtx</code> 加上一個 <code>time.Timer</code>。</p>
 <div class="admonition note">
 <p class="admonition-title">子 context 的逾時不能超過父 context</p>
-<p><code>go
-parent, _ := context.WithTimeout(context.Background(), 1*time.Second)
-child, _ := context.WithTimeout(parent, 10*time.Second)
-// child 實際上 1 秒後就取消了</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">parent</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithTimeout</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nx">Background</span><span class="p">(),</span><span class="w"> </span><span class="mi">1</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<span class="nx">child</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithTimeout</span><span class="p">(</span><span class="nx">parent</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<span class="c1">// child 實際上 1 秒後就取消了</span>
+</pre></div>
+
 <p><code>WithDeadline</code> 會取「父截止時間」與「指定截止時間」的<strong>較早者</strong>。這符合直覺：子任務不該活得比父任務久。</p>
 </div>
 <h3 id="withvalue傳遞請求範圍的值"><code>WithValue</code>：傳遞請求範圍的值<a class="headerlink" href="#withvalue傳遞請求範圍的值" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">ctx</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithValue</span><span class="p">(</span><span class="nx">parent</span><span class="p">,</span><span class="w"> </span><span class="nx">userIDKey</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;u-1234&quot;</span><span class="p">)</span>
-</code></pre></div>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">ctx</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithValue</span><span class="p">(</span><span class="nx">parent</span><span class="p">,</span><span class="w"> </span><span class="nx">userIDKey</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;u-1234&quot;</span><span class="p">)</span>
+</pre></div>
 
 <p><code>valueCtx</code> 只存<strong>一組</strong>鍵值對。取值時沿著樹往上找，直到找到或到根節點。<strong>這是線性搜尋</strong>，所以不該塞太多值。</p>
 <h3 id="withcancelcause-causego-120"><code>WithCancelCause</code> / <code>Cause</code>（Go 1.20+）<a class="headerlink" href="#withcancelcause-causego-120" title="Permanent link">#</a></h3>
 <div class="admonition version">
 <p class="admonition-title">Go 1.20：取消原因</p>
 <p>標準的 <code>ctx.Err()</code> 只會告訴你 <code>context canceled</code>，不知道是誰、為什麼取消。Go 1.20 加入：</p>
-<p>```go
-package main</p>
-<p>import (
-    "context"
-    "errors"
-    "fmt"
-)</p>
-<p>var ErrQuotaExceeded = errors.New("配額用盡")</p>
-<p>func main() {
-    ctx, cancel := context.WithCancelCause(context.Background())</p>
-<div class="hl" data-lang="go"><pre><span></span><code>cancel(ErrQuotaExceeded)
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
-fmt.Println(ctx.Err())            // context canceled
-fmt.Println(context.Cause(ctx))   // 配額用盡
-fmt.Println(errors.Is(context.Cause(ctx), ErrQuotaExceeded)) // true
-</code></pre></div>
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;context&quot;</span>
+<span class="w">    </span><span class="s">&quot;errors&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="p">)</span>
 
-<p>}
-```</p>
+<span class="kd">var</span><span class="w"> </span><span class="nx">ErrQuotaExceeded</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">errors</span><span class="p">.</span><span class="nx">New</span><span class="p">(</span><span class="s">&quot;配額用盡&quot;</span><span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithCancelCause</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nx">Background</span><span class="p">())</span>
+
+<span class="w">    </span><span class="nx">cancel</span><span class="p">(</span><span class="nx">ErrQuotaExceeded</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">ctx</span><span class="p">.</span><span class="nx">Err</span><span class="p">())</span><span class="w">            </span><span class="c1">// context canceled</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nx">Cause</span><span class="p">(</span><span class="nx">ctx</span><span class="p">))</span><span class="w">   </span><span class="c1">// 配額用盡</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">errors</span><span class="p">.</span><span class="nx">Is</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nx">Cause</span><span class="p">(</span><span class="nx">ctx</span><span class="p">),</span><span class="w"> </span><span class="nx">ErrQuotaExceeded</span><span class="p">))</span><span class="w"> </span><span class="c1">// true</span>
+<span class="p">}</span>
+</pre></div>
+
 <p>在複雜的並行系統裡，這對除錯幫助很大。Go 1.21 另外加入 <code>context.WithoutCancel</code>（衍生一個不繼承取消的 context，用於「請求結束後仍要完成」的背景工作）與 <code>context.AfterFunc</code>（context 取消時執行一個函式）。</p>
 </div>
 <hr />
 <h2 id="withvalue-的正確用法"><code>WithValue</code> 的正確用法<a class="headerlink" href="#withvalue-的正確用法" title="Permanent link">#</a></h2>
 <p>這是 <code>context</code> 最常被誤用的部分。</p>
 <h3 id="鍵一定要用未匯出的自訂型別">鍵一定要用未匯出的自訂型別<a class="headerlink" href="#鍵一定要用未匯出的自訂型別" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;context&quot;</span>
@@ -327,12 +333,12 @@ fmt.Println(errors.Is(context.Cause(ctx), ErrQuotaExceeded)) // true
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">UserID</span><span class="p">(</span><span class="nx">ctx</span><span class="p">))</span><span class="w">         </span><span class="c1">// u-1234 true</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">UserID</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nx">Background</span><span class="p">()))</span><span class="w"> </span><span class="c1">// &quot;&quot; false</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>為什麼不能用 <code>string</code> 當鍵？</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 危險</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 危險</span>
 <span class="nx">ctx</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithValue</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;user_id&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">)</span>
-</code></pre></div>
+</pre></div>
 
 <p>任何套件都可能用同樣的字串 <code>"user_id"</code>，造成靜默的覆蓋。用未匯出型別可以從型別系統上杜絕碰撞——外部套件連提及你的 <code>ctxKey</code> 型別都做不到。</p>
 <h3 id="只放請求範圍的中繼資料">只放「請求範圍的中繼資料」<a class="headerlink" href="#只放請求範圍的中繼資料" title="Permanent link">#</a></h3>
@@ -349,7 +355,7 @@ fmt.Println(errors.Is(context.Cause(ctx), ErrQuotaExceeded)) // true
 <li>函式的必要輸入參數 —— 那應該是明確的參數</li>
 <li>可變狀態 —— context 應該視為不可變</li>
 </ul>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 把相依藏在 context 裡</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 把相依藏在 context 裡</span>
 <span class="kd">func</span><span class="w"> </span><span class="nx">handler</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">db</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">ctx</span><span class="p">.</span><span class="nx">Value</span><span class="p">(</span><span class="s">&quot;db&quot;</span><span class="p">).(</span><span class="o">*</span><span class="nx">sql</span><span class="p">.</span><span class="nx">DB</span><span class="p">)</span><span class="w"> </span><span class="c1">// 編譯期看不出相依、無法測試、可能 panic</span>
 <span class="w">    </span><span class="nx">db</span><span class="p">.</span><span class="nx">Query</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
@@ -365,18 +371,18 @@ fmt.Println(errors.Is(context.Cause(ctx), ErrQuotaExceeded)) // true
 <span class="w">    </span><span class="c1">// ctx 只用來傳取消訊號與 trace ID</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">h</span><span class="p">.</span><span class="nx">db</span><span class="p">.</span><span class="nx">QueryContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="o">...</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <hr />
 <h2 id="使用規範">使用規範<a class="headerlink" href="#使用規範" title="Permanent link">#</a></h2>
 <p>這幾條是 Go 社群公認的慣例：</p>
 <h3 id="1-context-是第一個參數命名為-ctx">① context 是第一個參數，命名為 <code>ctx</code><a class="headerlink" href="#1-context-是第一個參數命名為-ctx" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">DoSomething</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">arg</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span>
-</code></pre></div>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">DoSomething</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">arg</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span>
+</pre></div>
 
 <p><strong>不要</strong>放進 struct 欄位（除非該 struct 本身代表一次請求，例如 <code>http.Request</code>）。</p>
 <h3 id="2-不要傳-nil-context">② 不要傳 nil context<a class="headerlink" href="#2-不要傳-nil-context" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗</span>
 <span class="nx">DoSomething</span><span class="p">(</span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;x&quot;</span><span class="p">)</span>
 
 <span class="c1">// ✓ 不知道用什麼時</span>
@@ -384,11 +390,11 @@ fmt.Println(errors.Is(context.Cause(ctx), ErrQuotaExceeded)) // true
 
 <span class="c1">// ✓ 頂層進入點</span>
 <span class="nx">DoSomething</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nx">Background</span><span class="p">(),</span><span class="w"> </span><span class="s">&quot;x&quot;</span><span class="p">)</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>Background()</code> 與 <code>TODO()</code> 實作完全相同，差別純粹是<strong>意圖表達</strong>：<code>TODO</code> 表示「這裡之後應該接上真正的 context」，靜態分析工具會標示出來。</p>
 <h3 id="3-一路往下傳不要中斷">③ 一路往下傳，不要中斷<a class="headerlink" href="#3-一路往下傳不要中斷" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 中斷了取消鏈</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 中斷了取消鏈</span>
 <span class="kd">func</span><span class="w"> </span><span class="nx">handler</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="nx">doWork</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nx">Background</span><span class="p">())</span><span class="w"> </span><span class="c1">// 這個 goroutine 不會被取消</span>
 <span class="p">}</span>
@@ -403,10 +409,10 @@ fmt.Println(errors.Is(context.Cause(ctx), ErrQuotaExceeded)) // true
 <span class="w">    </span><span class="nx">bg</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithoutCancel</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span><span class="w"> </span><span class="c1">// 保留 value，但不繼承取消</span>
 <span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="nx">auditLog</span><span class="p">(</span><span class="nx">bg</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="4-在阻塞操作處檢查取消">④ 在阻塞操作處檢查取消<a class="headerlink" href="#4-在阻塞操作處檢查取消" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">process</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">items</span><span class="w"> </span><span class="p">[]</span><span class="nx">Item</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">process</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">items</span><span class="w"> </span><span class="p">[]</span><span class="nx">Item</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">item</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">items</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="c1">// 每處理一批就檢查一次</span>
 <span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">i</span><span class="o">%</span><span class="mi">100</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span>
@@ -422,19 +428,19 @@ fmt.Println(errors.Is(context.Cause(ctx), ErrQuotaExceeded)) // true
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>CPU 密集的迴圈要自己插入檢查點。I/O 操作則盡量使用支援 context 的 API：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// 標準庫大多有 *Context 版本</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// 標準庫大多有 *Context 版本</span>
 <span class="nx">db</span><span class="p">.</span><span class="nx">QueryContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">query</span><span class="p">)</span>
 <span class="nx">http</span><span class="p">.</span><span class="nx">NewRequestWithContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;GET&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">url</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span><span class="p">)</span>
 <span class="nx">conn</span><span class="p">.</span><span class="nx">PingContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
-</code></pre></div>
+</pre></div>
 
 <hr />
 <h2 id="一個完整的例子">一個完整的例子<a class="headerlink" href="#一個完整的例子" title="Permanent link">#</a></h2>
 <p>把所有東西串起來：</p>
-<div class="hl" data-lang="text"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;context&quot;</span>
@@ -513,22 +519,23 @@ fmt.Println(errors.Is(context.Cause(ctx), ErrQuotaExceeded)) // true
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;最快的是 %s：%s\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">Source</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">Value</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang=""><pre><span></span><code>最快的是 cache：來自 cache
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>最快的是 cache：來自 cache
+</pre></div>
 
 <div class="admonition tip">
 <p class="admonition-title">更好的選擇：<code>errgroup</code></p>
 <p>上面手寫的協調邏輯，<code>golang.org/x/sync/errgroup</code> 已經封裝好了：</p>
-<p><code>go
-g, ctx := errgroup.WithContext(ctx)
-for _, src := range sources {
-    g.Go(func() error { return fetchInto(ctx, src, &amp;out) })
-}
-if err := g.Wait(); err != nil {
-    return err
-}</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">g</span><span class="p">,</span><span class="w"> </span><span class="nx">ctx</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">errgroup</span><span class="p">.</span><span class="nx">WithContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
+<span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">src</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">sources</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">g</span><span class="p">.</span><span class="nx">Go</span><span class="p">(</span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nx">fetchInto</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">src</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">out</span><span class="p">)</span><span class="w"> </span><span class="p">})</span>
+<span class="p">}</span>
+<span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">g</span><span class="p">.</span><span class="nx">Wait</span><span class="p">();</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="p">}</span>
+</pre></div>
+
 <p><code>errgroup.WithContext</code> 會在任一 goroutine 回傳錯誤時自動取消 context，並讓 <code>Wait()</code> 回傳第一個錯誤。它還有 <code>SetLimit</code> 可以限制並行數。這是實務上處理「一組並行子任務」的標準工具。</p>
 </div>
 <hr />

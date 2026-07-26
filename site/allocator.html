@@ -206,7 +206,7 @@
 </ul>
 <p><strong>代價是內部碎片。</strong> 你要 33 位元組，實際拿到 48 位元組（class 5），浪費 15 位元組。Go 的 size class 表經過調校，最大浪費率控制在約 12.5% 以內。</p>
 <h3 id="觀察-size-class-的影響">觀察 size class 的影響<a class="headerlink" href="#觀察-size-class-的影響" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -234,11 +234,11 @@
 <span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;要求 %3d 位元組 → 實際約 %3d 位元組\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">n</span><span class="p">,</span><span class="w"> </span><span class="nx">allocSize</span><span class="p">(</span><span class="nx">n</span><span class="p">))</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>輸出會顯示明顯的階梯：要求 9、要求 16 都拿到 16；要求 17 到 24 都拿到 24。</p>
 <p><strong>實務意義</strong>：設計熱路徑上的 struct 時，讓它剛好落在 size class 邊界內可以避免浪費。例如一個 40 位元組的 struct 會拿到 48 位元組的空間，加一個 8 位元組欄位「免費」。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -262,11 +262,11 @@
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Sizeof</span><span class="p">(</span><span class="nx">Bad</span><span class="p">{}))</span><span class="w">  </span><span class="c1">// 24</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">unsafe</span><span class="p">.</span><span class="nx">Sizeof</span><span class="p">(</span><span class="nx">Good</span><span class="p">{}))</span><span class="w"> </span><span class="c1">// 16</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>把大欄位放前面、小欄位放後面</strong>，可以減少對齊填充。工具 <code>fieldalignment</code>（<code>golang.org/x/tools/go/analysis/passes/fieldalignment</code>）能自動檢查：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>run<span class="w"> </span>golang.org/x/tools/go/analysis/passes/fieldalignment/cmd/fieldalignment@latest<span class="w"> </span>./...
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>run<span class="w"> </span>golang.org/x/tools/go/analysis/passes/fieldalignment/cmd/fieldalignment@latest<span class="w"> </span>./...
+</pre></div>
 
 <div class="admonition warning">
 <p class="admonition-title">不要為了這個犧牲可讀性</p>
@@ -275,7 +275,7 @@
 <hr />
 <h2 id="tiny-allocator">tiny allocator<a class="headerlink" href="#tiny-allocator" title="Permanent link">#</a></h2>
 <p><strong>小於 16 位元組且不含指標</strong>的物件走一條特別的路：它們會被<strong>合併</strong>到同一個 16 位元組的區塊裡。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -301,7 +301,7 @@
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;100000 個 1 位元組物件，總配置 %d 位元組\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">after</span><span class="p">.</span><span class="nx">TotalAlloc</span><span class="o">-</span><span class="nx">before</span><span class="p">.</span><span class="nx">TotalAlloc</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;平均每個 %.1f 位元組\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nb">float64</span><span class="p">(</span><span class="nx">after</span><span class="p">.</span><span class="nx">TotalAlloc</span><span class="o">-</span><span class="nx">before</span><span class="p">.</span><span class="nx">TotalAlloc</span><span class="p">)</span><span class="o">/</span><span class="nx">n</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>如果沒有 tiny allocator，每個 1 位元組物件都會佔用一個完整的 8 位元組 class-1 slot。有了它，最多 16 個小物件可以擠在同一個 16 位元組區塊裡。</p>
 <p><strong>為什麼要求「不含指標」？</strong> 因為 GC 需要能精確判斷「這個區塊還有沒有人參照」。如果混雜了指標，只要其中一個小物件還活著，整塊都不能釋放——含指標時風險太高。</p>
@@ -309,7 +309,7 @@
 <hr />
 <h2 id="配置的完整流程">配置的完整流程<a class="headerlink" href="#配置的完整流程" title="Permanent link">#</a></h2>
 <p><code>runtime.mallocgc(size, typ, needzero)</code> 的決策樹：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>mallocgc(size, typ, needzero):
+<div class="hl" data-lang="text"><pre><span></span>mallocgc(size, typ, needzero):
 
     if size &lt;= 32 KB:                       // 小物件
         if size &lt; 16 B &amp;&amp; typ 不含指標:
@@ -330,13 +330,13 @@
         → gcStart() 或協助標記（mutator assist）
 
     return 指標
-</code></pre></div>
+</pre></div>
 
 <p>注意最後那個 <strong>GC 協助（mutator assist）</strong>：配置得越快，你的 goroutine 就要幫忙做越多標記工作。這是 GC 的節流機制，見下一節。</p>
 <hr />
 <h2 id="觀察配置行為">觀察配置行為<a class="headerlink" href="#觀察配置行為" title="Permanent link">#</a></h2>
 <h3 id="基準測試的-benchmem">基準測試的 <code>-benchmem</code><a class="headerlink" href="#基準測試的-benchmem" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -376,13 +376,13 @@
 <span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%-8s %s  %s\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">name</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">MemString</span><span class="p">())</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong><code>allocs/op</code> 比 <code>ns/op</code> 更值得盯。</strong> 配置次數直接決定 GC 壓力，而 GC 壓力會以難以預測的方式影響整體延遲。把 <code>allocs/op</code> 降下來，通常 <code>ns/op</code> 也會跟著降。</p>
 <h3 id="堆積剖析">堆積剖析<a class="headerlink" href="#堆積剖析" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-bench<span class="o">=</span>.<span class="w"> </span>-memprofile<span class="o">=</span>mem.out
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-bench<span class="o">=</span>.<span class="w"> </span>-memprofile<span class="o">=</span>mem.out
 go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </span>-http<span class="o">=</span>:8081<span class="w"> </span>mem.out
-</code></pre></div>
+</pre></div>
 
 <p>兩種檢視：</p>
 <table>
@@ -413,7 +413,7 @@ go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </sp
 </table>
 <p><strong>找 GC 壓力用 <code>alloc_space</code> 或 <code>alloc_objects</code>，找記憶體洩漏用 <code>inuse_space</code>。</strong> 這兩者常常指向完全不同的地方。</p>
 <h3 id="執行期統計">執行期統計<a class="headerlink" href="#執行期統計" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -436,25 +436,26 @@ go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </sp
 <span class="p">}</span>
 
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">printStats</span><span class="p">()</span><span class="w"> </span><span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition warning">
 <p class="admonition-title"><code>ReadMemStats</code> 會 STW</p>
 <p>它需要停止整個世界來取得一致的快照。<strong>不要在高頻迴圈裡呼叫。</strong> 每幾秒一次做監控是可以的。</p>
 <p>Go 1.16 起有更輕量的 <code>runtime/metrics</code> 套件，提供不需要 STW 的取樣式指標，適合高頻收集：</p>
-<p>```go
-import "runtime/metrics"</p>
-<p>samples := []metrics.Sample{
-    {Name: "/gc/heap/allocs:bytes"},
-    {Name: "/sched/goroutines:goroutines"},
-}
-metrics.Read(samples)
-```</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="s">&quot;runtime/metrics&quot;</span>
+
+<span class="nx">samples</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="nx">metrics</span><span class="p">.</span><span class="nx">Sample</span><span class="p">{</span>
+<span class="w">    </span><span class="p">{</span><span class="nx">Name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;/gc/heap/allocs:bytes&quot;</span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="nx">Name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;/sched/goroutines:goroutines&quot;</span><span class="p">},</span>
+<span class="p">}</span>
+<span class="nx">metrics</span><span class="p">.</span><span class="nx">Read</span><span class="p">(</span><span class="nx">samples</span><span class="p">)</span>
+</pre></div>
+
 </div>
 <hr />
 <h2 id="syncpool"><code>sync.Pool</code><a class="headerlink" href="#syncpool" title="Permanent link">#</a></h2>
 <p>物件重用池，用來降低高頻配置的 GC 壓力。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;bytes&quot;</span>
@@ -493,16 +494,16 @@ metrics.Read(samples)
 <span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">render</span><span class="p">(</span><span class="s">&quot;world&quot;</span><span class="p">))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="內部結構">內部結構<a class="headerlink" href="#內部結構" title="Permanent link">#</a></h3>
 <p><code>sync.Pool</code> 為每個 P 維護一個私有槽加一個共享佇列：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>每個 P:
+<div class="hl" data-lang="text"><pre><span></span>每個 P:
     private  一個物件，只有這個 P 能存取（無鎖、最快）
     shared   雙端佇列
              ├─ 本 P 從「頭部」推入與取出（LIFO，快取熱）
              └─ 其他 P 從「尾部」竊取（避免衝突）
-</code></pre></div>
+</pre></div>
 
 <p><code>Get()</code> 的順序：私有槽 → 本 P 的 shared 頭部 → 竊取其他 P 的 shared 尾部 → victim cache → 呼叫 <code>New</code>。</p>
 <h3 id="gc-會清空-pool">GC 會清空 Pool<a class="headerlink" href="#gc-會清空-pool" title="Permanent link">#</a></h3>
@@ -524,40 +525,43 @@ metrics.Read(samples)
 </ul>
 <div class="admonition danger">
 <p class="admonition-title">Pool 裡的物件大小要一致</p>
-<p>```go
-// ✗ 危險：偶爾一個超大 buffer 會永遠佔著記憶體
-buf := bufPool.Get().(*bytes.Buffer)
-buf.Write(hugePayload) // 長到 100 MB
-buf.Reset()            // Reset 只把 len 設 0，cap 還是 100 MB
-bufPool.Put(buf)       // 這個 100 MB 的 buffer 進了池子</p>
-<p>// ✓ 加上大小上限
-const maxBufSize = 64 &lt;&lt; 10
-if buf.Cap() &lt;= maxBufSize {
-    buf.Reset()
-    bufPool.Put(buf)
-}
-// 太大的就讓 GC 收走
-```</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 危險：偶爾一個超大 buffer 會永遠佔著記憶體</span>
+<span class="nx">buf</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">bufPool</span><span class="p">.</span><span class="nx">Get</span><span class="p">().(</span><span class="o">*</span><span class="nx">bytes</span><span class="p">.</span><span class="nx">Buffer</span><span class="p">)</span>
+<span class="nx">buf</span><span class="p">.</span><span class="nx">Write</span><span class="p">(</span><span class="nx">hugePayload</span><span class="p">)</span><span class="w"> </span><span class="c1">// 長到 100 MB</span>
+<span class="nx">buf</span><span class="p">.</span><span class="nx">Reset</span><span class="p">()</span><span class="w">            </span><span class="c1">// Reset 只把 len 設 0，cap 還是 100 MB</span>
+<span class="nx">bufPool</span><span class="p">.</span><span class="nx">Put</span><span class="p">(</span><span class="nx">buf</span><span class="p">)</span><span class="w">       </span><span class="c1">// 這個 100 MB 的 buffer 進了池子</span>
+
+<span class="c1">// ✓ 加上大小上限</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">maxBufSize</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">64</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">10</span>
+<span class="k">if</span><span class="w"> </span><span class="nx">buf</span><span class="p">.</span><span class="nx">Cap</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="nx">maxBufSize</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">buf</span><span class="p">.</span><span class="nx">Reset</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">bufPool</span><span class="p">.</span><span class="nx">Put</span><span class="p">(</span><span class="nx">buf</span><span class="p">)</span>
+<span class="p">}</span>
+<span class="c1">// 太大的就讓 GC 收走</span>
+</pre></div>
+
 <p>這是 <code>sync.Pool</code> 最常見的誤用。標準庫的 <code>fmt</code> 套件內部就有這個上限檢查。</p>
 </div>
 <div class="admonition danger">
 <p class="admonition-title">務必重置狀態</p>
-<p><code>go
-// ✗ 上一次的資料留在裡面 → 資料外洩！
-buf := bufPool.Get().(*bytes.Buffer)
-// 忘記 buf.Reset()
-buf.WriteString(newData)  // 舊資料還在前面</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 上一次的資料留在裡面 → 資料外洩！</span>
+<span class="nx">buf</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">bufPool</span><span class="p">.</span><span class="nx">Get</span><span class="p">().(</span><span class="o">*</span><span class="nx">bytes</span><span class="p">.</span><span class="nx">Buffer</span><span class="p">)</span>
+<span class="c1">// 忘記 buf.Reset()</span>
+<span class="nx">buf</span><span class="p">.</span><span class="nx">WriteString</span><span class="p">(</span><span class="nx">newData</span><span class="p">)</span><span class="w">  </span><span class="c1">// 舊資料還在前面</span>
+</pre></div>
+
 <p>在處理不同使用者請求的服務裡，這種 bug 可能造成<strong>跨使用者的資料外洩</strong>，是嚴重的安全問題。</p>
 <p>保險做法是包一層：</p>
-<p><code>go
-func getBuf() *bytes.Buffer {
-    b := bufPool.Get().(*bytes.Buffer)
-    b.Reset()  // Get 的時候就重置，不依賴 Put 的人記得
-    return b
-}</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">getBuf</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="nx">bytes</span><span class="p">.</span><span class="nx">Buffer</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">bufPool</span><span class="p">.</span><span class="nx">Get</span><span class="p">().(</span><span class="o">*</span><span class="nx">bytes</span><span class="p">.</span><span class="nx">Buffer</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">b</span><span class="p">.</span><span class="nx">Reset</span><span class="p">()</span><span class="w">  </span><span class="c1">// Get 的時候就重置，不依賴 Put 的人記得</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">b</span>
+<span class="p">}</span>
+</pre></div>
+
 </div>
 <h3 id="泛型版本">泛型版本<a class="headerlink" href="#泛型版本" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -606,7 +610,7 @@ func getBuf() *bytes.Buffer {
 <span class="w">    </span><span class="nx">r2</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">pool</span><span class="p">.</span><span class="nx">Get</span><span class="p">()</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;重用後: ID=%q len=%d\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r2</span><span class="p">.</span><span class="nx">ID</span><span class="p">,</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">r2</span><span class="p">.</span><span class="nx">Body</span><span class="p">))</span><span class="w"> </span><span class="c1">// ID=&quot;&quot; len=0</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>型別安全，而且把 <code>Reset</code> 的責任移到 <code>Get</code> 這一側，不會忘記。</p>
 <hr />

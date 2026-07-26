@@ -114,7 +114,7 @@
 <li><strong><code>defer</code> 的參數在 <code>defer</code> 陳述式執行的當下就求值，不是等到真正呼叫時。</strong></li>
 </ol>
 <p>第二條是關鍵。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -124,17 +124,17 @@
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;函式本體結束&quot;</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>函式本體結束
+<div class="hl" data-lang="text"><pre><span></span>函式本體結束
 defer: 2
 defer: 1
 defer: 0
-</code></pre></div>
+</pre></div>
 
 <p><code>i</code> 的值在每次 <code>defer</code> 陳述式執行時就被複製進去了。LIFO 順序讓輸出倒過來。</p>
 <h3 id="對照閉包捕捉的是變數">對照：閉包捕捉的是變數<a class="headerlink" href="#對照閉包捕捉的是變數" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -147,12 +147,12 @@ defer: 0
 <span class="w">    </span><span class="nx">x</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">99</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;修改後 x =&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">x</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>修改後 x = 99
+<div class="hl" data-lang="text"><pre><span></span>修改後 x = 99
 ② 閉包捕捉: 99
 ① 參數求值: 1
-</code></pre></div>
+</pre></div>
 
 <p><strong>要延後求值就用閉包，要當下求值就直接傳參數。</strong> 這是刻意的設計，兩種都有用。</p>
 <hr />
@@ -196,7 +196,7 @@ defer: 0
 <p>現在 <code>defer</code> 在絕大多數情況下幾乎免費。<strong>不要為了效能而避免使用 <code>defer</code></strong>，除非你已經量測證明它是瓶頸。</p>
 </div>
 <h3 id="驗證走了哪條路">驗證走了哪條路<a class="headerlink" href="#驗證走了哪條路" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;sync&quot;</span>
 
@@ -220,19 +220,19 @@ defer: 0
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">fast</span><span class="p">()</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-d=defer&quot;</span><span class="w"> </span>./main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-d=defer&quot;</span><span class="w"> </span>./main.go
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>./main.go:10:2: open-coded defer
+<div class="hl" data-lang="text"><pre><span></span>./main.go:10:2: open-coded defer
 ./main.go:18:3: heap-allocated defer
-</code></pre></div>
+</pre></div>
 
 <p><code>-d=defer</code> 會直接告訴你每個 <code>defer</code> 用了哪條路徑。</p>
 <hr />
 <h2 id="迴圈中的-defer兩個問題">迴圈中的 defer：兩個問題<a class="headerlink" href="#迴圈中的-defer兩個問題" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;os&quot;</span>
 
@@ -249,11 +249,11 @@ defer: 0
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>如果 <code>paths</code> 有 10000 個檔案，這個函式會<strong>同時開著 10000 個檔案描述子</strong>直到結束，很可能撞到 <code>ulimit</code>。</p>
 <p><strong>解法一：包一層函式</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">processGood</span><span class="p">(</span><span class="nx">paths</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">processGood</span><span class="p">(</span><span class="nx">paths</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">paths</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">processOne</span><span class="p">(</span><span class="nx">p</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
 <span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
@@ -272,10 +272,10 @@ defer: 0
 <span class="w">    </span><span class="c1">// ... 處理 f ...</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>解法二：用匿名函式</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">processInline</span><span class="p">(</span><span class="nx">paths</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">processInline</span><span class="p">(</span><span class="nx">paths</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">paths</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="kt">error</span><span class="w"> </span><span class="p">{</span>
 <span class="w">            </span><span class="nx">f</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">Open</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span>
@@ -292,13 +292,13 @@ defer: 0
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>解法一更好</strong>——有名字的函式比較好測試也比較好讀。</p>
 <hr />
 <h2 id="defer-與具名回傳值">defer 與具名回傳值<a class="headerlink" href="#defer-與具名回傳值" title="Permanent link">#</a></h2>
 <p>這是 <code>defer</code> 最強大也最容易誤用的能力：<strong><code>defer</code> 可以修改具名回傳值</strong>。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -319,18 +319,18 @@ defer: 0
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">namedReturn</span><span class="p">())</span><span class="w"> </span><span class="c1">// 10</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">anonReturn</span><span class="p">())</span><span class="w">  </span><span class="c1">// 5</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="return-其實是兩步"><code>return</code> 其實是兩步<a class="headerlink" href="#return-其實是兩步" title="Permanent link">#</a></h3>
 <p>理解這個差異的關鍵：<code>return x</code> 在有 <code>defer</code> 的函式裡不是一個原子操作，而是：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>1. 把 x 賦值給回傳值變數（具名的話就是那個變數，匿名的話是編譯器產生的隱藏變數）
+<div class="hl" data-lang="text"><pre><span></span>1. 把 x 賦值給回傳值變數（具名的話就是那個變數，匿名的話是編譯器產生的隱藏變數）
 2. 執行所有 defer
 3. 真正跳回呼叫者
-</code></pre></div>
+</pre></div>
 
 <p>具名回傳值在步驟 2 還能被改到；匿名回傳值的隱藏變數則不在 <code>defer</code> 的作用域裡。</p>
 <h3 id="實用場景一統一包裝錯誤">實用場景一：統一包裝錯誤<a class="headerlink" href="#實用場景一統一包裝錯誤" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;errors&quot;</span>
@@ -353,14 +353,14 @@ defer: 0
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">loadConfig</span><span class="p">(</span><span class="s">&quot;&quot;</span><span class="p">))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>載入設定 &quot;&quot;: 路徑為空
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>載入設定 &quot;&quot;: 路徑為空
+</pre></div>
 
 <p>不用在每個 <code>return</code> 點都寫一次包裝。</p>
 <h3 id="實用場景二把-panic-轉成-error">實用場景二：把 panic 轉成 error<a class="headerlink" href="#實用場景二把-panic-轉成-error" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -385,15 +385,15 @@ defer: 0
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">safeParse</span><span class="p">(</span><span class="s">&quot;a,b,c&quot;</span><span class="p">))</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">safeParse</span><span class="p">(</span><span class="s">&quot;&quot;</span><span class="p">))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>[a b c] &lt;nil&gt;
+<div class="hl" data-lang="text"><pre><span></span>[a b c] &lt;nil&gt;
 [] 解析 panic: 空輸入
-</code></pre></div>
+</pre></div>
 
 <p>這是函式庫邊界常用的模式——內部用 panic 簡化深層遞迴的錯誤傳遞，對外一律回傳 error。標準庫的 <code>encoding/json</code> 內部就是這樣做的。</p>
 <h3 id="實用場景三計時">實用場景三：計時<a class="headerlink" href="#實用場景三計時" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -413,13 +413,13 @@ defer: 0
 <span class="p">}</span>
 
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">slowWork</span><span class="p">()</span><span class="w"> </span><span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>注意 <code>defer timed("slowWork")()</code> 的兩對括號：<code>timed(...)</code> <strong>立刻執行</strong>（記下開始時間），它回傳的函式才是被延後的。</p>
 <hr />
 <h2 id="常見錯誤">常見錯誤<a class="headerlink" href="#常見錯誤" title="Permanent link">#</a></h2>
 <h3 id="1-defer-遇到會-panic-的接收者">① <code>defer</code> 遇到會 panic 的接收者<a class="headerlink" href="#1-defer-遇到會-panic-的接收者" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 如果 Open 失敗，f 是 nil，defer 會 panic</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 如果 Open 失敗，f 是 nil，defer 會 panic</span>
 <span class="nx">f</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">Open</span><span class="p">(</span><span class="nx">path</span><span class="p">)</span>
 <span class="k">defer</span><span class="w"> </span><span class="nx">f</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span>
 <span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
@@ -432,11 +432,11 @@ defer: 0
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
 <span class="p">}</span>
 <span class="k">defer</span><span class="w"> </span><span class="nx">f</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong><code>defer</code> 一定要放在錯誤檢查之後。</strong></p>
 <h3 id="2-忽略-close-的錯誤">② 忽略 <code>Close</code> 的錯誤<a class="headerlink" href="#2-忽略-close-的錯誤" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 寫入檔案時，Close 的錯誤可能代表資料沒有真的落盤</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 寫入檔案時，Close 的錯誤可能代表資料沒有真的落盤</span>
 <span class="k">defer</span><span class="w"> </span><span class="nx">f</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span>
 
 <span class="c1">// ✓ 對寫入的檔案要檢查 Close</span>
@@ -454,11 +454,11 @@ defer: 0
 <span class="w">    </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">f</span><span class="p">.</span><span class="nx">Write</span><span class="p">(</span><span class="nx">data</span><span class="p">)</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>唯讀開啟的檔案可以忽略 <code>Close</code> 錯誤；<strong>寫入的檔案不行</strong>——緩衝區的資料可能在 <code>Close</code> 時才真正寫出，這時候的錯誤是真錯誤。</p>
 <h3 id="3-對-mutex-用錯位置">③ 對 mutex 用錯位置<a class="headerlink" href="#3-對-mutex-用錯位置" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 鎖住的範圍太大：整個函式</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 鎖住的範圍太大：整個函式</span>
 <span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">Cache</span><span class="p">)</span><span class="w"> </span><span class="nx">Get</span><span class="p">(</span><span class="nx">k</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">(</span><span class="nx">V</span><span class="p">,</span><span class="w"> </span><span class="kt">bool</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Lock</span><span class="p">()</span>
 <span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">mu</span><span class="p">.</span><span class="nx">Unlock</span><span class="p">()</span>
@@ -483,22 +483,22 @@ defer: 0
 <span class="w">    </span><span class="nx">expensiveLogging</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">v</span><span class="p">,</span><span class="w"> </span><span class="kc">true</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>defer unlock</code> 很方便，但它會把鎖持有到函式結束。如果函式後半段跟共享狀態無關，就別用 <code>defer</code>。</p>
 <h3 id="4-以為-osexit-會執行-defer">④ 以為 <code>os.Exit</code> 會執行 defer<a class="headerlink" href="#4-以為-osexit-會執行-defer" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;這行不會印出來&quot;</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">os</span><span class="p">.</span><span class="nx">Exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="c1">// 直接結束行程，不執行任何 defer</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>os.Exit</code>、<code>log.Fatal</code>（內部呼叫 <code>os.Exit</code>）、以及 goroutine 被 <code>runtime.Goexit</code> 以外的方式終止，都不會執行 <code>defer</code>。</p>
 <p>這也是為什麼<strong>函式庫裡不該用 <code>log.Fatal</code></strong>——它會讓呼叫端的所有清理邏輯失效。</p>
 <hr />
 <h2 id="defer-與-goroutine"><code>defer</code> 與 goroutine<a class="headerlink" href="#defer-與-goroutine" title="Permanent link">#</a></h2>
 <p>每個 goroutine 有自己的 <code>_defer</code> 鏈結串列（<code>g._defer</code>）。goroutine 結束時會執行它自己的 <code>defer</code>，但<strong>不會</strong>執行建立它的那個 goroutine 的 <code>defer</code>。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -520,7 +520,7 @@ defer: 0
 <span class="w">    </span><span class="nx">wg</span><span class="p">.</span><span class="nx">Wait</span><span class="p">()</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;全部結束&quot;</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>defer wg.Done()</code> 是最標準的用法——確保不管 goroutine 怎麼結束（正常回傳或 panic），計數都會遞減。<strong>沒有它，一次 panic 就會讓 <code>wg.Wait()</code> 永遠卡住。</strong></p>
 <hr />

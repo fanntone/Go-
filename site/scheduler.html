@@ -216,7 +216,7 @@
 <hr />
 <h2 id="排程迴圈">排程迴圈<a class="headerlink" href="#排程迴圈" title="Permanent link">#</a></h2>
 <p>每個 M 的主迴圈（<code>runtime.schedule</code>）：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>schedule():
+<div class="hl" data-lang="text"><pre><span></span>schedule():
     ① 每 61 次排程，強制從全域佇列拿一個 G
        （避免全域佇列裡的 G 被本地佇列餓死）
 
@@ -233,7 +233,7 @@
          f. 都沒有 → 把 P 還回去，M 進入休眠
 
     ⑤ execute(g)：切換到那個 goroutine 執行
-</code></pre></div>
+</pre></div>
 
 <h3 id="為什麼是-61">為什麼是 61<a class="headerlink" href="#為什麼是-61" title="Permanent link">#</a></h3>
 <p>第 ① 步的「每 61 次」是一個經驗常數。理由：</p>
@@ -244,15 +244,15 @@
 <p>61 是質數，可以避免跟其他週期性行為（例如 GC 週期、計時器週期）產生共振。這是排程器設計裡常見的手法。</p>
 <h3 id="runnext-的作用"><code>runnext</code> 的作用<a class="headerlink" href="#runnext-的作用" title="Permanent link">#</a></h3>
 <p>當一個 goroutine 喚醒另一個（例如 channel 交遞），被喚醒的那個會被放進 <code>runnext</code> 而非佇列尾端。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">ch</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="nx">v</span><span class="w">  </span><span class="c1">// 喚醒等待的接收者 → 放進 runnext</span>
-</code></pre></div>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">ch</span><span class="w"> </span><span class="o">&lt;-</span><span class="w"> </span><span class="nx">v</span><span class="w">  </span><span class="c1">// 喚醒等待的接收者 → 放進 runnext</span>
+</pre></div>
 
 <p>理由是<strong>快取局部性</strong>：剛被喚醒的 goroutine 要處理的資料，很可能還在 CPU 快取裡。立刻執行它比排到隊尾更有效率。</p>
 <p>這也讓「乒乓式」的 goroutine 通訊（A 送給 B，B 處理完送回 A）非常快。</p>
 <hr />
 <h2 id="工作竊取">工作竊取<a class="headerlink" href="#工作竊取" title="Permanent link">#</a></h2>
 <p>當一個 P 的本地佇列空了，它不會閒著——會去偷別人的。</p>
-<div class="hl" data-lang="text"><pre><span></span><code>for i := 0; i &lt; 4; i++ {          // 最多 4 輪
+<div class="hl" data-lang="text"><pre><span></span>for i := 0; i &lt; 4; i++ {          // 最多 4 輪
     for enum := randomOrder() {   // 隨機順序走訪所有 P
         if 目標 P 有 G {
             偷走它佇列裡「一半」的 G
@@ -260,7 +260,7 @@
         }
     }
 }
-</code></pre></div>
+</pre></div>
 
 <p>三個細節：</p>
 <ol>
@@ -281,7 +281,7 @@
 <hr />
 <h2 id="搶佔">搶佔<a class="headerlink" href="#搶佔" title="Permanent link">#</a></h2>
 <p>早期的 Go 是<strong>合作式</strong>排程：goroutine 只在特定的「安全點」（函式呼叫、channel 操作、系統呼叫）才會讓出 CPU。這有個致命問題：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -300,7 +300,7 @@
 <span class="w">    </span><span class="nx">time</span><span class="p">.</span><span class="nx">Sleep</span><span class="p">(</span><span class="mi">10</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Millisecond</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;我印得出來嗎？&quot;</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition version">
 <p class="admonition-title">Go 1.14：非同步搶佔</p>
@@ -332,8 +332,8 @@
 </table>
 <p>非同步搶佔並非隨時可行——runtime 必須確定當下的暫存器狀態是「可安全掃描」的（GC 需要知道哪些暫存器裝著指標）。做不到時會退回等待安全點。</p>
 <h3 id="觀察搶佔">觀察搶佔<a class="headerlink" href="#觀察搶佔" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">asyncpreemptoff</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">asyncpreemptoff</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
+</pre></div>
 
 <p>關掉非同步搶佔後，上面那個空迴圈的例子又會卡死。這可以用來驗證某個問題是否與搶佔有關。</p>
 <hr />
@@ -348,8 +348,8 @@
 <p>這表示 <code>go.uber.org/automaxprocs</code> 在 Go 1.25+ 已不再必要（前提是 <code>go.mod</code> 宣告了 <code>go 1.25</code> 以上）。</p>
 </div>
 <h3 id="什麼時候該手動調整">什麼時候該手動調整<a class="headerlink" href="#什麼時候該手動調整" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">runtime</span><span class="p">.</span><span class="nx">GOMAXPROCS</span><span class="p">(</span><span class="nx">n</span><span class="p">)</span><span class="w"> </span><span class="c1">// 或設定環境變數 GOMAXPROCS=n</span>
-</code></pre></div>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GOMAXPROCS</span><span class="p">(</span><span class="nx">n</span><span class="p">)</span><span class="w"> </span><span class="c1">// 或設定環境變數 GOMAXPROCS=n</span>
+</pre></div>
 
 <table>
 <thead>
@@ -393,11 +393,11 @@
 <hr />
 <h2 id="觀察排程器">觀察排程器<a class="headerlink" href="#觀察排程器" title="Permanent link">#</a></h2>
 <h3 id="godebugschedtrace"><code>GODEBUG=schedtrace</code><a class="headerlink" href="#godebugschedtrace" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">schedtrace</span><span class="o">=</span><span class="m">1000</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GODEBUG</span><span class="o">=</span><span class="nv">schedtrace</span><span class="o">=</span><span class="m">1000</span><span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>main.go
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>SCHED 1005ms: gomaxprocs=8 idleprocs=5 threads=9 spinningthreads=1 needspinning=0 idlethreads=3 runqueue=2 [0 3 0 1 0 0 0 0]
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>SCHED 1005ms: gomaxprocs=8 idleprocs=5 threads=9 spinningthreads=1 needspinning=0 idlethreads=3 runqueue=2 [0 3 0 1 0 0 0 0]
+</pre></div>
 
 <table>
 <thead>
@@ -442,13 +442,13 @@
 </table>
 <h3 id="go-tool-trace"><code>go tool trace</code><a class="headerlink" href="#go-tool-trace" title="Permanent link">#</a></h3>
 <p>比 <code>schedtrace</code> 更精細，能看到時間軸：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">f</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">Create</span><span class="p">(</span><span class="s">&quot;trace.out&quot;</span><span class="p">)</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">f</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">Create</span><span class="p">(</span><span class="s">&quot;trace.out&quot;</span><span class="p">)</span>
 <span class="nx">trace</span><span class="p">.</span><span class="nx">Start</span><span class="p">(</span><span class="nx">f</span><span class="p">)</span>
 <span class="k">defer</span><span class="w"> </span><span class="nx">trace</span><span class="p">.</span><span class="nx">Stop</span><span class="p">()</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>trace<span class="w"> </span>trace.out
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>trace<span class="w"> </span>trace.out
+</pre></div>
 
 <p>重點看兩個檢視：</p>
 <ul>
@@ -456,7 +456,7 @@
 <li><strong>Goroutine analysis</strong> —— 每個 goroutine 的時間分佈。「等同步」佔大宗代表鎖或 channel 設計有問題。</li>
 </ul>
 <h3 id="runtimenumgoroutine"><code>runtime.NumGoroutine()</code><a class="headerlink" href="#runtimenumgoroutine" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;log/slog&quot;</span>
@@ -481,7 +481,7 @@
 <span class="w">    </span><span class="k">go</span><span class="w"> </span><span class="nx">monitor</span><span class="p">(</span><span class="mi">5</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
 <span class="w">    </span><span class="k">select</span><span class="w"> </span><span class="p">{}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>把 goroutine 數量做成指標推到監控系統</strong>，這是最便宜也最有效的洩漏預警。正常服務的 goroutine 數應該隨負載波動但保持穩定；單調成長就是洩漏。</p>
 <hr />

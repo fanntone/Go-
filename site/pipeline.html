@@ -110,11 +110,11 @@
   <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>編譯器</p><h1><span class='h1num'>1.1</span>編譯流程總覽</h1><p class='lede'>從 go build 到可執行檔，編譯器內部的六個階段各自負責什麼，以及怎麼把每個階段的中間產物 dump 出來看。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="go-build-只是個總指揮"><code>go build</code> 只是個總指揮<a class="headerlink" href="#go-build-只是個總指揮" title="Permanent link">#</a></h2>
 <p>輸入 <code>go build</code> 的時候，<code>go</code> 這個指令本身不做編譯。它負責解析模組相依、決定編譯順序、管理建置快取，然後對每個套件呼叫真正的編譯器 <code>cmd/compile</code>，最後呼叫連結器 <code>cmd/link</code>。</p>
 <p>想看它到底跑了哪些指令，加上 <code>-x</code>：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-x<span class="w"> </span>-o<span class="w"> </span>hello.exe<span class="w"> </span>./main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-x<span class="w"> </span>-o<span class="w"> </span>hello.exe<span class="w"> </span>./main.go
+</pre></div>
 
 <p>輸出會很長，但骨幹只有三步：</p>
-<div class="hl" data-lang="text"><pre><span></span><code># 1. 編譯：把 .go 檔編成目標檔 _pkg_.a
+<div class="hl" data-lang="text"><pre><span></span># 1. 編譯：把 .go 檔編成目標檔 _pkg_.a
 &quot;C:\\Program Files\\Go\\pkg\\tool\\windows_amd64\\compile.exe&quot; -o $WORK\b001\_pkg_.a -p main ... ./main.go
 
 # 2. 打包相依資訊
@@ -122,7 +122,7 @@
 
 # 3. 連結：把所有 .a 與 runtime 合成執行檔
 &quot;...\\link.exe&quot; -o $WORK\b001\exe\a.out.exe -importcfg $WORK\b001\importcfg.link ... $WORK\b001\_pkg_.a
-</code></pre></div>
+</pre></div>
 
 <div class="admonition tip">
 <p class="admonition-title">建置快取</p>
@@ -199,8 +199,8 @@
 <hr />
 <h2 id="一個套件一個編譯單位">一個套件一個編譯單位<a class="headerlink" href="#一個套件一個編譯單位" title="Permanent link">#</a></h2>
 <p>Go 的編譯單位是<strong>套件（package）</strong>，不是檔案。<code>cmd/compile</code> 一次收下整個套件的所有 <code>.go</code> 檔：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-p<span class="w"> </span>mypkg<span class="w"> </span>a.go<span class="w"> </span>b.go<span class="w"> </span>c.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-p<span class="w"> </span>mypkg<span class="w"> </span>a.go<span class="w"> </span>b.go<span class="w"> </span>c.go
+</pre></div>
 
 <p>這帶來幾個直接後果：</p>
 <ol>
@@ -213,7 +213,7 @@
 <hr />
 <h2 id="把中間產物-dump-出來">把中間產物 dump 出來<a class="headerlink" href="#把中間產物-dump-出來" title="Permanent link">#</a></h2>
 <p>紙上談兵沒有意義。下面五個指令讓你親眼看到每個階段的產物。準備一份範例：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -228,16 +228,16 @@
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">sum</span><span class="p">([]</span><span class="kt">int</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">}))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="1-看語法樹">① 看語法樹<a class="headerlink" href="#1-看語法樹" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-W<span class="w"> </span>main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-W<span class="w"> </span>main.go
+</pre></div>
 
 <p><code>-W</code> 會印出 walk <strong>之前</strong>的 IR 樹；<code>-w</code> 印出 walk <strong>之後</strong>的。對照這兩者，就能看到語法糖被展開的過程（下一節與 <a href="for-range.html">for 與 range</a> 會詳談）。</p>
 <h3 id="2-看型別檢查結果">② 看型別檢查結果<a class="headerlink" href="#2-看型別檢查結果" title="Permanent link">#</a></h3>
 <p>型別檢查沒有直接的 dump 旗標，但可以用標準庫的 <code>go/types</code>（與編譯器的 <code>types2</code> 是同一套演算法的兩份實作）自己跑一遍：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -282,44 +282,45 @@
 <span class="w">        </span><span class="p">}</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>sum      func(nums []int) int
+<div class="hl" data-lang="text"><pre><span></span>sum      func(nums []int) int
 nums     []int
 total    int
 n        int
-</code></pre></div>
+</pre></div>
 
 <p>注意 <code>total</code> 被推導成 <code>int</code>，<code>n</code> 也是 —— 這些型別在原始碼裡都沒寫出來，是型別檢查器推導出來的。</p>
 <h3 id="3-看-ssa-的每一個-pass最強的一招">③ 看 SSA 的每一個 pass（最強的一招）<a class="headerlink" href="#3-看-ssa-的每一個-pass最強的一招" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GOSSAFUNC</span><span class="o">=</span>sum<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>nul<span class="w"> </span>./main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GOSSAFUNC</span><span class="o">=</span>sum<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>nul<span class="w"> </span>./main.go
+</pre></div>
 
 <p>這會在目前目錄產生一份 <strong><code>ssa.html</code></strong>。打開它，你會看到一個橫向的表格，每一欄是一個 SSA pass 的結果，從最初的 IR 一路到最終的機器指令。點任何一個值，會把它在所有 pass 中的對應高亮起來。</p>
 <p>這是理解「最佳化到底做了什麼」最直觀的工具。例如你會看到 <code>range</code> 迴圈的邊界檢查（bounds check）在 <code>prove</code> 這個 pass 被消除掉。</p>
 <div class="admonition tip">
 <p class="admonition-title">Windows 上的寫法</p>
 <p>PowerShell 沒有 <code>VAR=x cmd</code> 的語法，要分兩行：</p>
-<p><code>text
-$env:GOSSAFUNC = "sum"
-go build -o nul .\main.go</code></p>
+<div class="hl" data-lang="text"><pre><span></span>$env:GOSSAFUNC = &quot;sum&quot;
+go build -o nul .\main.go
+</pre></div>
+
 <p>用完記得 <code>Remove-Item Env:GOSSAFUNC</code>，否則之後每次編譯都會產生 ssa.html。</p>
 </div>
 <h3 id="4-看最終機器碼">④ 看最終機器碼<a class="headerlink" href="#4-看最終機器碼" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-S<span class="w"> </span>main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-S<span class="w"> </span>main.go
+</pre></div>
 
 <p>或反組譯已編好的執行檔：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>app.exe<span class="w"> </span>.<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>go<span class="w"> </span>tool<span class="w"> </span>objdump<span class="w"> </span>-s<span class="w"> </span><span class="s2">&quot;main.sum&quot;</span><span class="w"> </span>app.exe
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>app.exe<span class="w"> </span>.<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>go<span class="w"> </span>tool<span class="w"> </span>objdump<span class="w"> </span>-s<span class="w"> </span><span class="s2">&quot;main.sum&quot;</span><span class="w"> </span>app.exe
+</pre></div>
 
 <h3 id="5-看連結器留下了什麼">⑤ 看連結器留下了什麼<a class="headerlink" href="#5-看連結器留下了什麼" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>nm<span class="w"> </span>app.exe
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>nm<span class="w"> </span>app.exe
+</pre></div>
 
 <p>會列出所有符號。你可以驗證「死碼消除」確實發生了 —— 沒被用到的匯出函式不會出現在清單裡。</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>nm<span class="w"> </span>app.exe<span class="w"> </span><span class="p">|</span><span class="w"> </span>findstr<span class="w"> </span><span class="s2">&quot;runtime.gcStart&quot;</span>
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>nm<span class="w"> </span>app.exe<span class="w"> </span><span class="p">|</span><span class="w"> </span>findstr<span class="w"> </span><span class="s2">&quot;runtime.gcStart&quot;</span>
+</pre></div>
 
 <hr />
 <h2 id="為什麼-go-編譯這麼快">為什麼 Go 編譯這麼快<a class="headerlink" href="#為什麼-go-編譯這麼快" title="Permanent link">#</a></h2>

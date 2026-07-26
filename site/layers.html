@@ -411,7 +411,7 @@
 <li><strong>平行（parallelism）</strong>：程式的<strong>執行方式</strong>。多個工作在同一瞬間真的同時在跑，需要多顆 CPU 核心。</li>
 </ul>
 <p>Go 提供的是並行的<strong>語言結構</strong>（goroutine 與 channel），至於能不能平行執行，取決於 <code>GOMAXPROCS</code> 與機器上有幾顆核心。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -423,7 +423,7 @@
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;邏輯 CPU 數：&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">NumCPU</span><span class="p">())</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;GOMAXPROCS：&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">runtime</span><span class="p">.</span><span class="nx">GOMAXPROCS</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span><span class="w"> </span><span class="c1">// 傳 0 表示只查詢不修改</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition version">
 <p class="admonition-title">Go 1.25 起：GOMAXPROCS 會看容器限制</p>

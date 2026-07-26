@@ -109,7 +109,7 @@
 </nav></aside>
   <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>標準函式庫與進階主題</p><h1><span class='h1num'>7.3</span>database/sql</h1><p class='lede'>驅動介面與連線池的運作、prepared statement 的隱藏成本、NULL 處理，以及那些忘記 Close 就會出事的地方。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="一層抽象不是-orm">一層抽象，不是 ORM<a class="headerlink" href="#一層抽象不是-orm" title="Permanent link">#</a></h2>
 <p><code>database/sql</code> 不是 ORM，它是<strong>驅動介面 + 連線池</strong>。它本身不知道 SQL 語法、不做物件映射、也不管方言差異。</p>
-<div class="hl" data-lang="text"><pre><span></span><code>你的程式碼
+<div class="hl" data-lang="text"><pre><span></span>你的程式碼
     ↓
 database/sql（連線池、交易管理、掃描）
     ↓
@@ -118,25 +118,25 @@ database/sql/driver（驅動介面）
 具體驅動（pgx / mysql / sqlite3 …）
     ↓
 資料庫
-</code></pre></div>
+</pre></div>
 
 <p>驅動用匿名 import 註冊自己：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;database/sql&quot;</span>
 <span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="s">&quot;github.com/jackc/pgx/v5/stdlib&quot;</span><span class="w"> </span><span class="c1">// 執行它的 init()，呼叫 sql.Register(&quot;pgx&quot;, ...)</span>
 <span class="p">)</span>
 
 <span class="nx">db</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">sql</span><span class="p">.</span><span class="nx">Open</span><span class="p">(</span><span class="s">&quot;pgx&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">dsn</span><span class="p">)</span>
-</code></pre></div>
+</pre></div>
 
 <hr />
 <h2 id="sqldb-是連線池不是連線"><code>sql.DB</code> 是連線池，不是連線<a class="headerlink" href="#sqldb-是連線池不是連線" title="Permanent link">#</a></h2>
 <p>這是最常見的誤解。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">db</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">sql</span><span class="p">.</span><span class="nx">Open</span><span class="p">(</span><span class="s">&quot;pgx&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">dsn</span><span class="p">)</span>
-</code></pre></div>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">db</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">sql</span><span class="p">.</span><span class="nx">Open</span><span class="p">(</span><span class="s">&quot;pgx&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">dsn</span><span class="p">)</span>
+</pre></div>
 
 <p><strong><code>sql.Open</code> 不會連線到資料庫。</strong> 它只是建立一個 <code>sql.DB</code> 物件並驗證驅動名稱。真正的連線在第一次執行查詢時才建立。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;context&quot;</span>
@@ -163,15 +163,15 @@ database/sql/driver（驅動介面）
 
 <span class="w">    </span><span class="nx">log</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;連線正常&quot;</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>sql.DB</code> <strong>是並行安全的，而且應該在整個程式中共用一份</strong>。不要每個請求都 <code>sql.Open</code>。</p>
 <h3 id="連線池設定">連線池設定<a class="headerlink" href="#連線池設定" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">db</span><span class="p">.</span><span class="nx">SetMaxOpenConns</span><span class="p">(</span><span class="mi">25</span><span class="p">)</span><span class="w">                  </span><span class="c1">// 同時開啟的連線上限（含使用中與閒置）</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">db</span><span class="p">.</span><span class="nx">SetMaxOpenConns</span><span class="p">(</span><span class="mi">25</span><span class="p">)</span><span class="w">                  </span><span class="c1">// 同時開啟的連線上限（含使用中與閒置）</span>
 <span class="nx">db</span><span class="p">.</span><span class="nx">SetMaxIdleConns</span><span class="p">(</span><span class="mi">25</span><span class="p">)</span><span class="w">                  </span><span class="c1">// 保留的閒置連線數</span>
 <span class="nx">db</span><span class="p">.</span><span class="nx">SetConnMaxLifetime</span><span class="p">(</span><span class="mi">5</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Minute</span><span class="p">)</span><span class="w">  </span><span class="c1">// 連線最長存活時間</span>
 <span class="nx">db</span><span class="p">.</span><span class="nx">SetConnMaxIdleTime</span><span class="p">(</span><span class="mi">1</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Minute</span><span class="p">)</span><span class="w">  </span><span class="c1">// 連線閒置多久後關閉</span>
-</code></pre></div>
+</pre></div>
 
 <figure class="diagram"><svg viewBox="0 0 700 270" role="img" aria-label="database/sql 連線池的運作"><rect class="d-box-a" x="15" y="14" width="200" height="120" rx="6"/><text class="d-t-b d-mid" x="115" y="36">使用中 in-use</text><rect class="d-box-o" x="30" y="46" width="170" height="24" rx="3"/><text class="d-t-s d-mid" x="115" y="63">conn 1 — 執行查詢</text><rect class="d-box-o" x="30" y="74" width="170" height="24" rx="3"/><text class="d-t-s d-mid" x="115" y="91">conn 2 — 交易中</text><text class="d-t-s d-mid" x="115" y="120">Rows 沒關就一直算「使用中」</text><rect class="d-box-w" x="245" y="14" width="200" height="120" rx="6"/><text class="d-t-b d-mid" x="345" y="36">閒置 idle</text><rect class="d-box" x="260" y="46" width="170" height="24" rx="3"/><text class="d-t-s d-mid" x="345" y="63">conn 3</text><rect class="d-box" x="260" y="74" width="170" height="24" rx="3"/><text class="d-t-s d-mid" x="345" y="91">conn 4</text><text class="d-t-s d-mid" x="345" y="120">受 MaxIdleConns 限制</text><rect class="d-box-d" x="475" y="14" width="210" height="120" rx="6"/><text class="d-t-b d-mid" x="580" y="36">等待中 waiting</text><rect class="d-box" x="490" y="46" width="180" height="24" rx="3"/><text class="d-t-s d-mid" x="580" y="63">goroutine A 排隊</text><rect class="d-box" x="490" y="74" width="180" height="24" rx="3"/><text class="d-t-s d-mid" x="580" y="91">goroutine B 排隊</text><text class="d-t-s d-mid" x="580" y="120">達到 MaxOpenConns 時</text><path class="d-line-a" d="M245 60 L219 60" marker-end="url(#ar23)"/><text class="d-t-a d-mid" x="232" y="152">取用</text><path class="d-line-a" d="M215 100 L241 100" marker-end="url(#ar23)"/><text class="d-t-a d-mid" x="228" y="172">歸還</text><defs><marker id="ar23" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--accent)"/></marker></defs><line class="d-dash" x1="15" y1="192" x2="685" y2="212"/><text class="d-t-s" x="15" y="234">db.Stats() 可以取得這些數字。WaitCount 與 WaitDuration 持續成長 = 池子太小或查詢太慢。</text><text class="d-t-s" x="15" y="256">MaxIdleConns 應該設成跟 MaxOpenConns 一樣，否則高峰過後連線會被反覆關閉與重建。</text></svg><figcaption><b>連線池的三種狀態。</b>常見的錯誤設定是 <code>MaxOpenConns=100</code> 但 <code>MaxIdleConns</code> 維持預設的 2——流量下降時 98 條連線被關閉，下一波流量來又要全部重建。</figcaption></figure>
 
@@ -218,7 +218,7 @@ database/sql/driver（驅動介面）
 <p>設一個小於資料庫端 <code>idle_timeout</code> 的值。</p>
 </div>
 <h3 id="監控連線池">監控連線池<a class="headerlink" href="#監控連線池" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;database/sql&quot;</span>
@@ -240,7 +240,7 @@ database/sql/driver（驅動介面）
 <span class="w">        </span><span class="p">)</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>要盯的兩個指標：</strong></p>
 <ul>
@@ -249,7 +249,7 @@ database/sql/driver（驅動介面）
 </ul>
 <hr />
 <h2 id="四種查詢方法">四種查詢方法<a class="headerlink" href="#四種查詢方法" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;context&quot;</span>
@@ -320,7 +320,7 @@ database/sql/driver（驅動介面）
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition danger">
 <p class="admonition-title">三個必做的事</p>
@@ -335,11 +335,11 @@ database/sql/driver（驅動介面）
 <hr />
 <h2 id="null-處理">NULL 處理<a class="headerlink" href="#null-處理" title="Permanent link">#</a></h2>
 <p>Go 的基本型別不能表示 NULL。掃描一個 NULL 到 <code>string</code> 會出錯：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>sql: Scan error on column index 2, name &quot;email&quot;: converting NULL to string is unsupported
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>sql: Scan error on column index 2, name &quot;email&quot;: converting NULL to string is unsupported
+</pre></div>
 
 <h3 id="三種解法">三種解法<a class="headerlink" href="#三種解法" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;database/sql&quot;</span>
@@ -373,26 +373,27 @@ database/sql/driver（驅動介面）
 <span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;age:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">u</span><span class="p">.</span><span class="nx">Age</span><span class="p">.</span><span class="nx">V</span><span class="p">)</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition version">
 <p class="admonition-title">Go 1.22：泛型的 <code>sql.Null[T]</code></p>
 <p>以前要為每種型別記一個名字：<code>NullString</code>、<code>NullInt64</code>、<code>NullFloat64</code>、<code>NullBool</code>、<code>NullTime</code>、<code>NullInt32</code>、<code>NullInt16</code>、<code>NullByte</code>。</p>
 <p>Go 1.22 加入泛型版本：</p>
-<p><code>go
-var v sql.Null[time.Time]
-var n sql.Null[int]
-var s sql.Null[MyCustomType] // 任何實作了 Scanner/Valuer 的型別都行</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">var</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="nx">sql</span><span class="p">.</span><span class="nx">Null</span><span class="p">[</span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="p">]</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">n</span><span class="w"> </span><span class="nx">sql</span><span class="p">.</span><span class="nx">Null</span><span class="p">[</span><span class="kt">int</span><span class="p">]</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">s</span><span class="w"> </span><span class="nx">sql</span><span class="p">.</span><span class="nx">Null</span><span class="p">[</span><span class="nx">MyCustomType</span><span class="p">]</span><span class="w"> </span><span class="c1">// 任何實作了 Scanner/Valuer 的型別都行</span>
+</pre></div>
+
 <p>新程式碼建議用這個。</p>
 </div>
 <p><strong>解法四：在 SQL 層處理。</strong> 通常最乾淨：</p>
-<div class="hl" data-lang="sql"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="k">COALESCE</span><span class="p">(</span><span class="n">email</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">email</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">users</span>
-</code></pre></div>
+<div class="hl" data-lang="sql"><pre><span></span><span class="k">SELECT</span><span class="w"> </span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="k">COALESCE</span><span class="p">(</span><span class="n">email</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">email</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">users</span>
+</pre></div>
 
 <p>如果「空字串」與「NULL」在你的領域模型裡沒有差別，這樣可以讓 Go 端的程式碼簡單很多。</p>
 <hr />
 <h2 id="prepared-statement-的隱藏成本">Prepared Statement 的隱藏成本<a class="headerlink" href="#prepared-statement-的隱藏成本" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">stmt</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">PrepareContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="s">`SELECT name FROM users WHERE id = $1`</span><span class="p">)</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">stmt</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">PrepareContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="s">`SELECT name FROM users WHERE id = $1`</span><span class="p">)</span>
 <span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
 <span class="p">}</span>
@@ -404,7 +405,7 @@ var s sql.Null[MyCustomType] // 任何實作了 Scanner/Valuer 的型別都行</
 <span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="一個容易忽略的行為">一個容易忽略的行為<a class="headerlink" href="#一個容易忽略的行為" title="Permanent link">#</a></h3>
 <p><code>db.Prepare</code> 回傳的 <code>*sql.Stmt</code> 是<strong>綁定到連線池而非單一連線</strong>的。當你在不同連線上使用它時，<code>database/sql</code> 會<strong>在每條連線上各自準備一次</strong>。</p>
@@ -415,14 +416,15 @@ var s sql.Null[MyCustomType] // 任何實作了 Scanner/Valuer 的型別都行</
 </ul>
 <div class="admonition warning">
 <p class="admonition-title">單次查詢不要用 Prepare</p>
-<p>```go
-// ✗ 三次來回：Prepare → Execute → Close
-stmt, _ := db.Prepare(query)
-defer stmt.Close()
-stmt.QueryRow(arg).Scan(&amp;v)</p>
-<p>// ✓ 一次來回（多數驅動支援）
-db.QueryRow(query, arg).Scan(&amp;v)
-```</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 三次來回：Prepare → Execute → Close</span>
+<span class="nx">stmt</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">db</span><span class="p">.</span><span class="nx">Prepare</span><span class="p">(</span><span class="nx">query</span><span class="p">)</span>
+<span class="k">defer</span><span class="w"> </span><span class="nx">stmt</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span>
+<span class="nx">stmt</span><span class="p">.</span><span class="nx">QueryRow</span><span class="p">(</span><span class="nx">arg</span><span class="p">).</span><span class="nx">Scan</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">v</span><span class="p">)</span>
+
+<span class="c1">// ✓ 一次來回（多數驅動支援）</span>
+<span class="nx">db</span><span class="p">.</span><span class="nx">QueryRow</span><span class="p">(</span><span class="nx">query</span><span class="p">,</span><span class="w"> </span><span class="nx">arg</span><span class="p">).</span><span class="nx">Scan</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">v</span><span class="p">)</span>
+</pre></div>
+
 <p><strong>直接用 <code>db.Query</code>／<code>db.Exec</code> 傳參數，一樣有 SQL 注入防護。</strong> <code>database/sql</code> 內部會處理參數綁定。</p>
 <p>只有在<strong>同一個 statement 要執行很多次</strong>（例如批次匯入）時，明確 <code>Prepare</code> 才划算。</p>
 </div>
@@ -433,7 +435,7 @@ db.QueryRow(query, arg).Scan(&amp;v)
 </div>
 <hr />
 <h2 id="交易">交易<a class="headerlink" href="#交易" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;context&quot;</span>
@@ -486,7 +488,7 @@ db.QueryRow(query, arg).Scan(&amp;v)
 
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="c1">// defer 會執行 Commit</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>三個要點：</p>
 <ol>
@@ -496,17 +498,18 @@ db.QueryRow(query, arg).Scan(&amp;v)
 </ol>
 <div class="admonition danger">
 <p class="admonition-title">交易中不要做外部呼叫</p>
-<p><code>go
-// ✗ HTTP 呼叫可能要好幾秒，這段時間連線與資料庫的鎖都被佔著
-tx.Exec(`UPDATE orders SET status = 'paid' WHERE id = $1`, id)
-callPaymentAPI()   // ← 危險
-tx.Commit()</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ HTTP 呼叫可能要好幾秒，這段時間連線與資料庫的鎖都被佔著</span>
+<span class="nx">tx</span><span class="p">.</span><span class="nx">Exec</span><span class="p">(</span><span class="s">`UPDATE orders SET status = &#39;paid&#39; WHERE id = $1`</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="p">)</span>
+<span class="nx">callPaymentAPI</span><span class="p">()</span><span class="w">   </span><span class="c1">// ← 危險</span>
+<span class="nx">tx</span><span class="p">.</span><span class="nx">Commit</span><span class="p">()</span>
+</pre></div>
+
 <p>交易應該只包含資料庫操作，而且越短越好。外部呼叫放到交易外面，用冪等性或 saga 模式處理一致性。</p>
 </div>
 <hr />
 <h2 id="批次操作">批次操作<a class="headerlink" href="#批次操作" title="Permanent link">#</a></h2>
 <p>一列一列 insert 非常慢——每次都是一輪網路來回。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;context&quot;</span>
@@ -549,39 +552,40 @@ tx.Commit()</code></p>
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition warning">
 <p class="admonition-title">參數數量有上限</p>
 <p>PostgreSQL 的每個查詢最多 <strong>65535</strong> 個參數。上面的例子每列 2 個參數，所以單批最多約 32767 列。批次大小要依欄位數量調整。</p>
 <p>PostgreSQL 上，<strong><code>COPY</code> 協定比批次 INSERT 快一個數量級</strong>。<code>pgx</code> 提供 <code>CopyFrom</code>：</p>
-<p><code>go
-conn.CopyFrom(ctx,
-    pgx.Identifier{"users"},
-    []string{"name", "email"},
-    pgx.CopyFromSlice(len(rows), func(i int) ([]any, error) {
-        return []any{rows[i].Name, rows[i].Email}, nil
-    }),
-)</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">conn</span><span class="p">.</span><span class="nx">CopyFrom</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span>
+<span class="w">    </span><span class="nx">pgx</span><span class="p">.</span><span class="nx">Identifier</span><span class="p">{</span><span class="s">&quot;users&quot;</span><span class="p">},</span>
+<span class="w">    </span><span class="p">[]</span><span class="kt">string</span><span class="p">{</span><span class="s">&quot;name&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;email&quot;</span><span class="p">},</span>
+<span class="w">    </span><span class="nx">pgx</span><span class="p">.</span><span class="nx">CopyFromSlice</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="nx">rows</span><span class="p">),</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">i</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="kt">any</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="p">[]</span><span class="kt">any</span><span class="p">{</span><span class="nx">rows</span><span class="p">[</span><span class="nx">i</span><span class="p">].</span><span class="nx">Name</span><span class="p">,</span><span class="w"> </span><span class="nx">rows</span><span class="p">[</span><span class="nx">i</span><span class="p">].</span><span class="nx">Email</span><span class="p">},</span><span class="w"> </span><span class="kc">nil</span>
+<span class="w">    </span><span class="p">}),</span>
+<span class="p">)</span>
+</pre></div>
+
 </div>
 <hr />
 <h2 id="sql-注入">SQL 注入<a class="headerlink" href="#sql-注入" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 字串拼接 —— 絕對不要</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 字串拼接 —— 絕對不要</span>
 <span class="nx">query</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="s">&quot;SELECT * FROM users WHERE name = &#39;&quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nx">name</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot;&#39;&quot;</span>
 
 <span class="c1">// ✓ 參數化查詢</span>
 <span class="nx">db</span><span class="p">.</span><span class="nx">Query</span><span class="p">(</span><span class="s">&quot;SELECT * FROM users WHERE name = $1&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">name</span><span class="p">)</span>
-</code></pre></div>
+</pre></div>
 
 <p>參數化查詢是<strong>唯一</strong>可靠的防護。它不是「跳脫特殊字元」，而是把查詢與資料<strong>分開傳送</strong>給資料庫——資料永遠不會被當成 SQL 解析。</p>
 <h3 id="動態欄位名怎麼辦">動態欄位名怎麼辦<a class="headerlink" href="#動態欄位名怎麼辦" title="Permanent link">#</a></h3>
 <p>參數只能用於<strong>值</strong>，不能用於欄位名或表名：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 不能這樣</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 不能這樣</span>
 <span class="nx">db</span><span class="p">.</span><span class="nx">Query</span><span class="p">(</span><span class="s">&quot;SELECT * FROM users ORDER BY $1&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">column</span><span class="p">)</span>
-</code></pre></div>
+</pre></div>
 
 <p>必須用白名單：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -604,7 +608,7 @@ conn.CopyFrom(ctx,
 
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Sprintf</span><span class="p">(</span><span class="s">&quot;SELECT id, name FROM users ORDER BY %s %s&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">col</span><span class="p">,</span><span class="w"> </span><span class="nx">order</span><span class="p">),</span><span class="w"> </span><span class="kc">nil</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>白名單，不是黑名單。</strong> 只允許你明確列出的值。</p>
 <hr />
@@ -647,14 +651,14 @@ conn.CopyFrom(ctx,
 </tbody>
 </table>
 <p><strong>個人建議</strong>：<code>sqlc</code> 是目前最好的平衡點——你寫 SQL，它產生型別安全的 Go 函式，沒有反射、沒有 DSL 要學、編譯期就能抓到欄位錯誤。</p>
-<div class="hl" data-lang="sql"><pre><span></span><code><span class="c1">-- query.sql</span>
+<div class="hl" data-lang="sql"><pre><span></span><span class="c1">-- query.sql</span>
 <span class="c1">-- name: GetUser :one</span>
 <span class="k">SELECT</span><span class="w"> </span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">email</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">users</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="mi">1</span><span class="p">;</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// sqlc 產生的程式碼</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// sqlc 產生的程式碼</span>
 <span class="nx">user</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">queries</span><span class="p">.</span><span class="nx">GetUser</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="mi">42</span><span class="p">)</span><span class="w"> </span><span class="c1">// 型別完全正確</span>
-</code></pre></div>
+</pre></div>
 
 <hr />
 <h2 id="檢查清單">檢查清單<a class="headerlink" href="#檢查清單" title="Permanent link">#</a></h2>

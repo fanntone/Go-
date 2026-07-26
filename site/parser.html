@@ -152,7 +152,7 @@
 <li><code>make</code>、<code>new</code>、<code>len</code>、<code>cap</code>、<code>append</code>、<code>copy</code>、<code>delete</code>、<code>panic</code>、<code>recover</code> —— <strong>內建函式</strong>，也不是關鍵字。</li>
 </ul>
 <p>自己驗證一下：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -162,17 +162,17 @@
 <span class="w">    </span><span class="nx">len</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">42</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nx">len</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>我不是布林值 42
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>我不是布林值 42
+</pre></div>
 
 <div class="admonition warning">
 <p class="admonition-title">能做不代表該做</p>
 <p>上面的程式碼會通過編譯，但 <code>go vet</code> 不會警告，而後面任何想用真正 <code>len()</code> 的程式碼都會爆炸。這只是用來說明「關鍵字」與「預先宣告識別字」的差別。</p>
 </div>
 <p>用標準庫的 scanner 自己跑一次，看得最清楚：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -197,9 +197,9 @@
 <span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%-12s %-10s %q\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">fset</span><span class="p">.</span><span class="nx">Position</span><span class="p">(</span><span class="nx">pos</span><span class="p">),</span><span class="w"> </span><span class="nx">tok</span><span class="p">,</span><span class="w"> </span><span class="nx">lit</span><span class="p">)</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>demo.go:1:1   IDENT      &quot;total&quot;
+<div class="hl" data-lang="text"><pre><span></span>demo.go:1:1   IDENT      &quot;total&quot;
 demo.go:1:7   :=         &quot;&quot;
 demo.go:1:10  INT        &quot;0&quot;
 demo.go:1:11  ;          &quot;\n&quot;
@@ -218,7 +218,7 @@ demo.go:3:18  IDENT      &quot;n&quot;
 demo.go:3:19  ;          &quot;\n&quot;
 demo.go:4:1   }          &quot;&quot;
 demo.go:4:2   ;          &quot;\n&quot;
-</code></pre></div>
+</pre></div>
 
 <p>看到那些 <code>;</code> 了嗎？原始碼裡一個分號都沒有。</p>
 <hr />
@@ -234,7 +234,7 @@ demo.go:4:2   ;          &quot;\n&quot;
 </ul>
 <p><strong>規則二：</strong> 為了讓一行的陳述式能寫在同一行，在 <code>)</code> 或 <code>}</code> 之前可以省略分號。</p>
 <p>這兩條規則造成了 Go 最著名的一個「不可協商」：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✓ 正確</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✓ 正確</span>
 <span class="kd">func</span><span class="w"> </span><span class="nx">good</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;hi&quot;</span><span class="p">)</span>
 <span class="p">}</span>
@@ -244,25 +244,25 @@ demo.go:4:2   ;          &quot;\n&quot;
 <span class="p">{</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;hi&quot;</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>第二種寫法為什麼壞掉？因為 <code>func bad()</code> 這一行的最後一個 token 是 <code>)</code>，符合規則一，scanner 會插入分號變成 <code>func bad();</code> —— 一個沒有函式本體的宣告。下一行的 <code>{</code> 就變成孤兒了。</p>
 <p>同樣的道理也適用於：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 這樣寫，return 後面會被插分號，變成回傳零值</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 這樣寫，return 後面會被插分號，變成回傳零值</span>
 <span class="kd">func</span><span class="w"> </span><span class="nx">broken</span><span class="p">()</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">return</span>
 <span class="w">        </span><span class="mi">42</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>以及跨行的複合字面值必須留下逗號：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✓ 最後一個元素後面的逗號不能省</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✓ 最後一個元素後面的逗號不能省</span>
 <span class="nx">nums</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">{</span>
 <span class="w">    </span><span class="mi">1</span><span class="p">,</span>
 <span class="w">    </span><span class="mi">2</span><span class="p">,</span>
 <span class="w">    </span><span class="mi">3</span><span class="p">,</span><span class="w">   </span><span class="c1">// ← 這個逗號是必要的</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>3</code> 後面如果沒有逗號，scanner 會依規則一插入分號（<code>3</code> 是字面值），而 <code>{...}</code> 裡不能出現分號。</p>
 <div class="admonition note">
@@ -272,7 +272,7 @@ demo.go:4:2   ;          &quot;\n&quot;
 <hr />
 <h2 id="語法分析從-ebnf-到樹">語法分析：從 EBNF 到樹<a class="headerlink" href="#語法分析從-ebnf-到樹" title="Permanent link">#</a></h2>
 <p>Go 的文法用 <strong>EBNF</strong> 描述。例如陳述式的定義大致是：</p>
-<div class="hl" data-lang="ebnf"><pre><span></span><code><span class="k">Statement </span><span class="o">=</span>
+<div class="hl" data-lang="ebnf"><pre><span></span><span class="k">Statement </span><span class="o">=</span>
     <span class="k">Declaration </span><span class="p">|</span> <span class="k">LabeledStmt </span><span class="p">|</span> <span class="k">SimpleStmt </span><span class="p">|</span>
     <span class="k">GoStmt </span><span class="p">|</span> <span class="k">ReturnStmt </span><span class="p">|</span> <span class="k">BreakStmt </span><span class="p">|</span> <span class="k">ContinueStmt </span><span class="p">|</span> <span class="k">GotoStmt </span><span class="p">|</span>
     <span class="k">FallthroughStmt </span><span class="p">|</span> <span class="k">Block </span><span class="p">|</span> <span class="k">IfStmt </span><span class="p">|</span> <span class="k">SwitchStmt </span><span class="p">|</span> <span class="k">SelectStmt </span><span class="p">|</span>
@@ -280,7 +280,7 @@ demo.go:4:2   ;          &quot;\n&quot;
 
 <span class="k">IfStmt </span><span class="o">=</span> <span class="s2">&quot;if&quot;</span> <span class="p">[</span> <span class="k">SimpleStmt </span><span class="s2">&quot;;&quot;</span> <span class="p">]</span> <span class="k">Expression Block</span>
          <span class="p">[</span> <span class="s2">&quot;else&quot;</span> <span class="p">(</span> <span class="k">IfStmt </span><span class="p">|</span> <span class="k">Block </span><span class="p">)</span> <span class="p">]</span> <span class="p">.</span>
-</code></pre></div>
+</pre></div>
 
 <p>Go 的 parser 是<strong>手寫的遞迴下降（recursive descent）剖析器</strong>，不是 yacc/bison 這類工具產生的。</p>
 <div class="admonition version">
@@ -290,7 +290,7 @@ demo.go:4:2   ;          &quot;\n&quot;
 </div>
 <p>遞迴下降的意思是：文法裡每一條產生式，對應剖析器裡一個函式。看到 <code>if</code> 就呼叫 <code>parseIfStmt()</code>，它內部再呼叫 <code>parseExpr()</code> 與 <code>parseBlock()</code>，如此遞迴下去。</p>
 <h3 id="看看樹長什麼樣">看看樹長什麼樣<a class="headerlink" href="#看看樹長什麼樣" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;go/ast&quot;</span>
@@ -315,10 +315,10 @@ demo.go:4:2   ;          &quot;\n&quot;
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="nx">ast</span><span class="p">.</span><span class="nx">Print</span><span class="p">(</span><span class="nx">fset</span><span class="p">,</span><span class="w"> </span><span class="nx">f</span><span class="p">.</span><span class="nx">Decls</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>輸出（大幅節錄，保留骨架）：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>*ast.FuncDecl {
+<div class="hl" data-lang="text"><pre><span></span>*ast.FuncDecl {
     Name: *ast.Ident { Name: &quot;abs&quot; }
     Type: *ast.FuncType {
         Params:  *ast.FieldList { ... x int ... }
@@ -336,7 +336,7 @@ demo.go:4:2   ;          &quot;\n&quot;
         }
     }
 }
-</code></pre></div>
+</pre></div>
 
 <p>注意這棵樹裡<strong>完全沒有型別資訊</strong>。<code>x</code> 只是一個名字，parser 不知道它是 <code>int</code>；<code>x &lt; 0</code> 只是一個二元運算式，parser 不知道 <code>&lt;</code> 對這兩個運算元合不合法。這些是下一階段的工作。</p>
 <div class="admonition tip">
@@ -348,26 +348,26 @@ demo.go:4:2   ;          &quot;\n&quot;
 <h2 id="語法設計如何服務編譯速度">語法設計如何服務編譯速度<a class="headerlink" href="#語法設計如何服務編譯速度" title="Permanent link">#</a></h2>
 <p>Go 的一些「奇怪」語法選擇，回頭看都跟剖析效率有關。</p>
 <h3 id="型別寫在名字後面">型別寫在名字後面<a class="headerlink" href="#型別寫在名字後面" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">var</span><span class="w"> </span><span class="nx">x</span><span class="w"> </span><span class="kt">int</span><span class="w">              </span><span class="c1">// Go</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">var</span><span class="w"> </span><span class="nx">x</span><span class="w"> </span><span class="kt">int</span><span class="w">              </span><span class="c1">// Go</span>
 <span class="kt">int</span><span class="w"> </span><span class="nx">x</span><span class="p">;</span><span class="w">                 </span><span class="c1">// C</span>
-</code></pre></div>
+</pre></div>
 
 <p>C 的宣告語法出了名地難剖析，因為 <code>a * b;</code> 可能是「宣告一個指向 b 的指標」也可能是「a 乘以 b」，要看 <code>a</code> 是不是型別名——但那是<strong>語意</strong>資訊，剖析器不該需要。這就是有名的 <strong>lexer hack</strong>。</p>
 <p>Go 把型別放後面，<code>var</code> / <code>func</code> / <code>type</code> 這些關鍵字一出現就知道接下來要剖析什麼，剖析器不需要查符號表。</p>
 <h3 id="複合字面值的歧義與-if-的限制">複合字面值的歧義與 <code>if</code> 的限制<a class="headerlink" href="#複合字面值的歧義與-if-的限制" title="Permanent link">#</a></h3>
 <p>這條規則常讓人踩坑：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 編譯錯誤</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 編譯錯誤</span>
 <span class="k">if</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nx">Point</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">}</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// ...</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>因為剖析 <code>if</code> 的條件式時，遇到 <code>{</code> 剖析器無法判斷這是「複合字面值的開頭」還是「if 主體的開頭」。Go 的解法是明確規定：在 <code>if</code>、<code>for</code>、<code>switch</code> 的條件位置，複合字面值必須加括號：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✓ 正確</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✓ 正確</span>
 <span class="k">if</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="p">(</span><span class="nx">Point</span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">})</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// ...</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="沒有前向宣告但也沒有循環">沒有前向宣告，但也沒有循環<a class="headerlink" href="#沒有前向宣告但也沒有循環" title="Permanent link">#</a></h3>
 <p>同一個套件內的所有檔案一起剖析，所以順序無所謂；套件之間禁止循環，所以相依圖是 DAG。這兩條加起來，讓「先剖析誰」永遠有明確答案。</p>

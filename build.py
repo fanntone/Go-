@@ -24,6 +24,12 @@ from pathlib import Path
 
 import markdown
 import yaml
+from markdown.extensions import Extension
+from markdown.preprocessors import Preprocessor
+from pygments import highlight as pyg_highlight
+from pygments.formatters import HtmlFormatter
+from pygments.lexers import TextLexer, get_lexer_by_name
+from pygments.util import ClassNotFound
 
 ROOT = Path(__file__).parent
 CONTENT = ROOT / "content"
@@ -32,7 +38,79 @@ OUT = ROOT / "site"
 
 FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 TAG_RE = re.compile(r"<[^>]+>")
-FENCE_RE = re.compile(r"^```(\w*)\s*$", re.MULTILINE)
+
+
+FENCE_OPEN = re.compile(r"^(?P<indent>[ \t]*)(?P<ticks>`{3,}|~{3,})[ \t]*(?P<lang>[\w+#-]*)[ \t]*$")
+
+_FORMATTER = HtmlFormatter(cssclass="hl", nowrap=False)
+_DIV_OPEN = re.compile(r'^<div class="hl">')
+
+
+class IndentedFencePreprocessor(Preprocessor):
+    """支援縮排的程式碼圍欄。
+
+    python-markdown 內建的 fenced_code 是 preprocessor，正則錨在行首且不允許
+    前置空白，所以 admonition（!!! 區塊）內縮排 4 格的圍欄完全不會被辨識 ——
+    ``` 會原樣印出來、程式碼被擠成一個段落。
+
+    這個版本以「行」為單位掃描，接受任意縮排：把內容依開頭圍欄的縮排量 dedent、
+    交給 Pygments 上色，再把結果存進 htmlStash，並在原縮排位置放回 placeholder，
+    讓 admonition / list 等 block processor 仍能正確把它收進自己的範圍內。
+    """
+
+    def run(self, lines: list[str]) -> list[str]:
+        out: list[str] = []
+        i = 0
+
+        while i < len(lines):
+            m = FENCE_OPEN.match(lines[i])
+            if not m:
+                out.append(lines[i])
+                i += 1
+                continue
+
+            indent, ticks, lang = m.group("indent"), m.group("ticks"), m.group("lang")
+
+            # 找對應的結束圍欄（同種符號、長度不短於開頭，縮排寬鬆比對）
+            j = i + 1
+            while j < len(lines):
+                s = lines[j].strip()
+                if s.startswith(ticks[0] * len(ticks)) and set(s) == {ticks[0]}:
+                    break
+                j += 1
+
+            if j >= len(lines):          # 沒有結束圍欄，原樣保留
+                out.append(lines[i])
+                i += 1
+                continue
+
+            body = "\n".join(
+                ln[len(indent):] if ln.startswith(indent) else ln.lstrip()
+                for ln in lines[i + 1:j]
+            )
+
+            out.append(indent + self.md.htmlStash.store(render_code(body, lang)))
+            i = j + 1
+
+        return out
+
+
+class IndentedFenceExtension(Extension):
+    def extendMarkdown(self, md):
+        # 25 是內建 fenced_code 的優先度；normalize_whitespace 是 30，要排在它後面
+        md.preprocessors.register(IndentedFencePreprocessor(md), "indented_fence", 26)
+
+
+def render_code(body: str, lang: str) -> str:
+    """用 Pygments 上色，並把語言標到外層 div 供前端顯示標籤。"""
+    try:
+        lexer = get_lexer_by_name(lang) if lang else TextLexer()
+    except ClassNotFound:
+        lexer = TextLexer()
+
+    out = pyg_highlight(body, lexer, _FORMATTER)
+    attr = f'<div class="hl" data-lang="{html.escape(lang, quote=True)}">'
+    return _DIV_OPEN.sub(lambda _: attr, out, count=1)
 
 
 def slugify(value: str, separator: str = "-") -> str:
@@ -45,26 +123,6 @@ def slugify(value: str, separator: str = "-") -> str:
     value = re.sub(r"[^\w\s-]", "", value, flags=re.UNICODE)   # \w 在 Unicode 模式下含 CJK
     value = re.sub(r"[\s_" + re.escape(separator) + r"]+", separator, value, flags=re.UNICODE)
     return value.strip(separator)
-
-
-def fence_langs(src: str) -> list[str]:
-    """依序取出 markdown 中每個 ``` 圍欄區塊的語言（開頭的那一行）。"""
-    langs, opened = [], False
-    for m in FENCE_RE.finditer(src):
-        if not opened:
-            langs.append(m.group(1))
-        opened = not opened
-    return langs
-
-
-def tag_code_langs(body: str, langs: list[str]) -> str:
-    """把語言標到 codehilite 產生的 <div class="hl"> 上，供前端顯示語言標籤。"""
-    it = iter(langs)
-
-    def sub(_m):
-        return f'<div class="hl" data-lang="{next(it, "")}">'
-
-    return re.sub(r'<div class="hl">', sub, body)
 
 
 @dataclass
@@ -92,8 +150,7 @@ def read_pages() -> tuple[list[Page], dict]:
     book = yaml.safe_load((CONTENT / "_book.yml").read_text(encoding="utf-8"))
     md = markdown.Markdown(
         extensions=[
-            "fenced_code",
-            "codehilite",
+            IndentedFenceExtension(),
             "tables",
             "toc",
             "attr_list",
@@ -103,7 +160,6 @@ def read_pages() -> tuple[list[Page], dict]:
             "footnotes",
         ],
         extension_configs={
-            "codehilite": {"guess_lang": False, "css_class": "hl", "linenums": False},
             "toc": {"permalink": "#", "toc_depth": "2-3", "slugify": slugify},
         },
     )
@@ -117,7 +173,15 @@ def read_pages() -> tuple[list[Page], dict]:
         meta = yaml.safe_load(m.group(1)) or {}
         src = raw[m.end():]
         md.reset()
-        body = tag_code_langs(md.convert(src), fence_langs(src))
+        body = md.convert(src)
+        # 防護：圍欄若沒被解析，``` 會原樣出現在輸出裡（縮排圍欄曾經整批失效過）
+        stray = body.count("```")
+        if stray:
+            raise SystemExit(
+                f"{path.name}: 輸出中殘留 {stray} 個未解析的 ``` 圍欄標記，"
+                f"請檢查該檔的程式碼區塊。"
+            )
+
         pages.append(
             Page(
                 slug=meta.get("slug", path.stem),

@@ -109,7 +109,7 @@
 </nav></aside>
   <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>標準函式庫與進階主題</p><h1><span class='h1num'>7.2</span>net/http</h1><p class='lede'>伺服器的每連線一 goroutine 模型、ServeMux 的路由（含 1.22 的新語法）、Transport 的連線池，以及必設的逾時。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="伺服器每連線一個-goroutine">伺服器：每連線一個 goroutine<a class="headerlink" href="#伺服器每連線一個-goroutine" title="Permanent link">#</a></h2>
 <p><code>net/http</code> 的伺服器模型非常簡單直白：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>ListenAndServe():
+<div class="hl" data-lang="text"><pre><span></span>ListenAndServe():
     ln := net.Listen(&quot;tcp&quot;, addr)
     for {
         conn := ln.Accept()
@@ -123,7 +123,7 @@ serve(conn):
         if 不能 keep-alive { break }
     }
     conn.Close()
-</code></pre></div>
+</pre></div>
 
 <p>在其他語言裡，「每連線一執行緒」是眾所周知的反模式（C10K 問題）。在 Go 裡它可行，因為：</p>
 <ol>
@@ -138,17 +138,18 @@ serve(conn):
 - 讀寫緩衝區（<code>bufio.Reader</code> 4 KB + <code>bufio.Writer</code> 4 KB）
 - <code>http.Request</code> 與相關結構</p>
 <p><strong>實務上每條閒置連線約 10–30 KB。</strong> 十萬條連線就是 1–3 GB。高連線數的服務仍然需要限流：</p>
-<p>```go
-import "golang.org/x/net/netutil"</p>
-<p>ln, _ := net.Listen("tcp", ":8080")
-ln = netutil.LimitListener(ln, 10000) // 超過就不 accept
-srv.Serve(ln)
-```</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="s">&quot;golang.org/x/net/netutil&quot;</span>
+
+<span class="nx">ln</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">net</span><span class="p">.</span><span class="nx">Listen</span><span class="p">(</span><span class="s">&quot;tcp&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;:8080&quot;</span><span class="p">)</span>
+<span class="nx">ln</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">netutil</span><span class="p">.</span><span class="nx">LimitListener</span><span class="p">(</span><span class="nx">ln</span><span class="p">,</span><span class="w"> </span><span class="mi">10000</span><span class="p">)</span><span class="w"> </span><span class="c1">// 超過就不 accept</span>
+<span class="nx">srv</span><span class="p">.</span><span class="nx">Serve</span><span class="p">(</span><span class="nx">ln</span><span class="p">)</span>
+</pre></div>
+
 </div>
 <hr />
 <h2 id="逾時唯一最重要的設定">逾時：唯一最重要的設定<a class="headerlink" href="#逾時唯一最重要的設定" title="Permanent link">#</a></h2>
 <p><strong>預設的 <code>http.Server</code> 沒有任何逾時。</strong> 這是 Go 標準庫少數會讓人踩雷的預設值。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;net/http&quot;</span>
@@ -180,7 +181,7 @@ srv.Serve(ln)
 
 <span class="w">    </span><span class="nx">srv</span><span class="p">.</span><span class="nx">ListenAndServe</span><span class="p">()</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <figure class="diagram"><svg viewBox="0 0 700 250" role="img" aria-label="HTTP 伺服器各項逾時涵蓋的階段"><text class="d-t-b" x="15" y="20">一次請求的生命週期</text><rect class="d-box" x="15" y="32" width="120" height="32" rx="4"/><text class="d-t-s d-mid" x="75" y="52">建立連線</text><rect class="d-box-d" x="135" y="32" width="130" height="32" rx="4"/><text class="d-t-s d-mid" x="200" y="52">讀取標頭</text><rect class="d-box-w" x="265" y="32" width="130" height="32" rx="4"/><text class="d-t-s d-mid" x="330" y="52">讀取 body</text><rect class="d-box-a" x="395" y="32" width="150" height="32" rx="4"/><text class="d-t-s d-mid" x="470" y="52">handler 執行</text><rect class="d-box-o" x="545" y="32" width="140" height="32" rx="4"/><text class="d-t-s d-mid" x="615" y="52">寫出回應</text><line class="d-line-a" x1="135" y1="80" x2="265" y2="80"/><text class="d-t-a" x="140" y="98">ReadHeaderTimeout</text><line class="d-line-a" x1="135" y1="116" x2="395" y2="116"/><text class="d-t-a" x="140" y="134">ReadTimeout（含標頭與 body）</text><line class="d-line-a" x1="265" y1="152" x2="685" y2="152"/><text class="d-t-a" x="270" y="170">WriteTimeout（從讀完標頭算起，涵蓋 handler 與寫出）</text><line class="d-dash" x1="15" y1="188" x2="685" y2="188"/><text class="d-t-s" x="15" y="210">IdleTimeout：keep-alive 連線在兩次請求之間可以閒置多久。沒設的話會沿用 ReadTimeout。</text><text class="d-t-s" x="15" y="232">注意 WriteTimeout 涵蓋 handler 的執行時間 —— 慢的 handler 會讓回應被截斷，而且客戶端只看到連線中斷。</text></svg><figcaption><b>四種逾時的涵蓋範圍。</b><code>ReadHeaderTimeout</code> 最關鍵：沒有它，攻擊者用極慢的速度送標頭就能無限期佔住一個 goroutine 與一條連線（Slowloris 攻擊）。</figcaption></figure>
 
@@ -188,20 +189,22 @@ srv.Serve(ln)
 <p class="admonition-title"><code>WriteTimeout</code> 與長時間的 handler</p>
 <p><code>WriteTimeout</code> 包含 handler 的執行時間。如果你有需要跑 5 分鐘的 handler（大檔案下載、SSE、長輪詢），設 30 秒的 <code>WriteTimeout</code> 會讓它被截斷。</p>
 <p>對這類 endpoint 的解法：</p>
-<p>```go
-// 方法一：整個伺服器不設 WriteTimeout，改在每個 handler 用 context 控制
-srv := &amp;http.Server{
-    ReadHeaderTimeout: 5 * time.Second,
-    // 不設 WriteTimeout
-}</p>
-<p>func normalHandler(w http.ResponseWriter, r <em>http.Request) {
-    ctx, cancel := context.WithTimeout(r.Context(), 30</em>time.Second)
-    defer cancel()
-    doWork(ctx)
-}</p>
-<p>// 方法二：用 http.TimeoutHandler 包裝需要限制的路由
-mux.Handle("/api/", http.TimeoutHandler(apiHandler, 30*time.Second, "timeout"))
-```</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// 方法一：整個伺服器不設 WriteTimeout，改在每個 handler 用 context 控制</span>
+<span class="nx">srv</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Server</span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ReadHeaderTimeout</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span>
+<span class="w">    </span><span class="c1">// 不設 WriteTimeout</span>
+<span class="p">}</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">normalHandler</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">cancel</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">WithTimeout</span><span class="p">(</span><span class="nx">r</span><span class="p">.</span><span class="nx">Context</span><span class="p">(),</span><span class="w"> </span><span class="mi">30</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">)</span>
+<span class="w">    </span><span class="k">defer</span><span class="w"> </span><span class="nx">cancel</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">doWork</span><span class="p">(</span><span class="nx">ctx</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="c1">// 方法二：用 http.TimeoutHandler 包裝需要限制的路由</span>
+<span class="nx">mux</span><span class="p">.</span><span class="nx">Handle</span><span class="p">(</span><span class="s">&quot;/api/&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">TimeoutHandler</span><span class="p">(</span><span class="nx">apiHandler</span><span class="p">,</span><span class="w"> </span><span class="mi">30</span><span class="o">*</span><span class="nx">time</span><span class="p">.</span><span class="nx">Second</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;timeout&quot;</span><span class="p">))</span>
+</pre></div>
+
 </div>
 <hr />
 <h2 id="servemux-的路由">ServeMux 的路由<a class="headerlink" href="#servemux-的路由" title="Permanent link">#</a></h2>
@@ -210,7 +213,7 @@ mux.Handle("/api/", http.TimeoutHandler(apiHandler, 30*time.Second, "timeout"))
 <p>這是標準庫路由多年來最大的一次升級。Go 1.22 之前，<code>http.ServeMux</code> 只支援前綴比對，沒有方法區分、沒有路徑參數——所以幾乎每個專案都要引入 <code>chi</code>、<code>gorilla/mux</code> 之類的第三方路由器。</p>
 <p>Go 1.22 起，標準庫就夠用了。</p>
 </div>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;fmt&quot;</span>
@@ -251,7 +254,7 @@ mux.Handle("/api/", http.TimeoutHandler(apiHandler, 30*time.Second, "timeout"))
 
 <span class="w">    </span><span class="nx">http</span><span class="p">.</span><span class="nx">ListenAndServe</span><span class="p">(</span><span class="s">&quot;:8080&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">mux</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="模式語法">模式語法<a class="headerlink" href="#模式語法" title="Permanent link">#</a></h3>
 <table>
@@ -294,10 +297,10 @@ mux.Handle("/api/", http.TimeoutHandler(apiHandler, 30*time.Second, "timeout"))
 </table>
 <h3 id="優先順序規則">優先順序規則<a class="headerlink" href="#優先順序規則" title="Permanent link">#</a></h3>
 <p><strong>最具體的模式勝出</strong>，跟註冊順序無關：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>/users/{id}/posts   比  /users/{id}/   更具體  → 前者勝
+<div class="hl" data-lang="text"><pre><span></span>/users/{id}/posts   比  /users/{id}/   更具體  → 前者勝
 GET /users/{id}     比  /users/{id}    更具體  → 前者勝
 /users/admin        比  /users/{id}    更具體  → 前者勝
-</code></pre></div>
+</pre></div>
 
 <p>如果兩個模式互相衝突（誰也不比誰具體），<code>ServeMux</code> 會在註冊時 <strong>panic</strong>——在啟動時就發現問題，而不是執行期才出現奇怪的行為。</p>
 <div class="admonition tip">
@@ -314,7 +317,7 @@ GET /users/{id}     比  /users/{id}    更具體  → 前者勝
 <hr />
 <h2 id="中介層">中介層<a class="headerlink" href="#中介層" title="Permanent link">#</a></h2>
 <p>Go 沒有內建的中介層機制，但 <code>http.Handler</code> 介面讓它變得非常自然：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;log/slog&quot;</span>
@@ -381,24 +384,26 @@ GET /users/{id}     比  /users/{id}    更具體  → 前者勝
 <span class="w">    </span><span class="nx">handler</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">Chain</span><span class="p">(</span><span class="nx">Logging</span><span class="p">)(</span><span class="nx">mux</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">http</span><span class="p">.</span><span class="nx">ListenAndServe</span><span class="p">(</span><span class="s">&quot;:8080&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">handler</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition danger">
 <p class="admonition-title">包裝 ResponseWriter 會弄丟可選介面</p>
 <p><code>http.ResponseWriter</code> 的實作還會滿足 <code>http.Flusher</code>、<code>http.Hijacker</code>、<code>io.ReaderFrom</code> 等介面。你的 <code>statusWriter</code> 只嵌入了 <code>ResponseWriter</code>，這些額外介面就消失了——SSE（需要 <code>Flush</code>）、WebSocket 升級（需要 <code>Hijack</code>）都會壞掉。</p>
 <p><strong>解法：用 <code>http.NewResponseController</code>（Go 1.20+）。</strong></p>
-<p><code>go
-rc := http.NewResponseController(w)
-rc.Flush()                                   // 會穿透包裝層找到真正的 Flusher
-rc.SetWriteDeadline(time.Now().Add(time.Minute))</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">rc</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">NewResponseController</span><span class="p">(</span><span class="nx">w</span><span class="p">)</span>
+<span class="nx">rc</span><span class="p">.</span><span class="nx">Flush</span><span class="p">()</span><span class="w">                                   </span><span class="c1">// 會穿透包裝層找到真正的 Flusher</span>
+<span class="nx">rc</span><span class="p">.</span><span class="nx">SetWriteDeadline</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Now</span><span class="p">().</span><span class="nx">Add</span><span class="p">(</span><span class="nx">time</span><span class="p">.</span><span class="nx">Minute</span><span class="p">))</span>
+</pre></div>
+
 <p>它會沿著 <code>Unwrap() http.ResponseWriter</code> 方法鏈往下找。所以你的包裝型別應該提供：</p>
-<p><code>go
-func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="o">*</span><span class="nx">statusWriter</span><span class="p">)</span><span class="w"> </span><span class="nx">Unwrap</span><span class="p">()</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nx">w</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="w"> </span><span class="p">}</span>
+</pre></div>
+
 </div>
 <hr />
 <h2 id="客戶端transport-與連線池">客戶端：Transport 與連線池<a class="headerlink" href="#客戶端transport-與連線池" title="Permanent link">#</a></h2>
 <p><code>http.Client</code> 是薄薄一層，真正做事的是 <code>http.Transport</code>——它管理連線池、TLS 握手、HTTP/2 升級。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;net&quot;</span>
@@ -427,21 +432,21 @@ func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }<
 <span class="w">        </span><span class="nx">ForceAttemptHTTP2</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
 <span class="w">    </span><span class="p">},</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="兩個最常見的效能問題">兩個最常見的效能問題<a class="headerlink" href="#兩個最常見的效能問題" title="Permanent link">#</a></h3>
 <p><strong>① <code>MaxIdleConnsPerHost</code> 預設只有 2</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// 預設值</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// 預設值</span>
 <span class="nx">DefaultMaxIdleConnsPerHost</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">2</span>
-</code></pre></div>
+</pre></div>
 
 <p>如果你的服務高頻呼叫同一個下游 API，只有 2 條連線能被重用，其餘的每次都要重新建立（TCP 三次握手 + TLS 握手）。<strong>這是 Go 微服務最常見的效能陷阱之一。</strong></p>
 <p>呼叫同一個後端時，把它調到跟你的並行度相當：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">MaxIdleConnsPerHost</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span>
-</code></pre></div>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">MaxIdleConnsPerHost</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span>
+</pre></div>
 
 <p><strong>② 每次請求都建立新的 Client 或 Transport</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 每次都新的 Transport → 連線池完全沒作用，還會累積 TIME_WAIT</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 每次都新的 Transport → 連線池完全沒作用，還會累積 TIME_WAIT</span>
 <span class="kd">func</span><span class="w"> </span><span class="nx">fetch</span><span class="p">(</span><span class="nx">url</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">client</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Client</span><span class="p">{</span><span class="nx">Transport</span><span class="p">:</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Transport</span><span class="p">{}}</span>
 <span class="w">    </span><span class="nx">client</span><span class="p">.</span><span class="nx">Get</span><span class="p">(</span><span class="nx">url</span><span class="p">)</span>
@@ -449,25 +454,26 @@ func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }<
 
 <span class="c1">// ✓ 全域共用一個</span>
 <span class="kd">var</span><span class="w"> </span><span class="nx">client</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Client</span><span class="p">{</span><span class="w"> </span><span class="cm">/* ... */</span><span class="w"> </span><span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>http.Client</code> 與 <code>http.Transport</code> 都是<strong>並行安全</strong>的，設計上就是要被共用。</p>
 <div class="admonition danger">
 <p class="admonition-title">必須讀完並關閉 response body</p>
-<p>```go
-resp, err := client.Get(url)
-if err != nil {
-    return err
-}
-defer resp.Body.Close()</p>
-<p>// 就算不需要內容，也要讀完
-io.Copy(io.Discard, resp.Body)
-```</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">resp</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">client</span><span class="p">.</span><span class="nx">Get</span><span class="p">(</span><span class="nx">url</span><span class="p">)</span>
+<span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">err</span>
+<span class="p">}</span>
+<span class="k">defer</span><span class="w"> </span><span class="nx">resp</span><span class="p">.</span><span class="nx">Body</span><span class="p">.</span><span class="nx">Close</span><span class="p">()</span>
+
+<span class="c1">// 就算不需要內容，也要讀完</span>
+<span class="nx">io</span><span class="p">.</span><span class="nx">Copy</span><span class="p">(</span><span class="nx">io</span><span class="p">.</span><span class="nx">Discard</span><span class="p">,</span><span class="w"> </span><span class="nx">resp</span><span class="p">.</span><span class="nx">Body</span><span class="p">)</span>
+</pre></div>
+
 <p><strong>只 <code>Close</code> 而不讀完，連線不會回到池子裡</strong>——它會被直接關掉。在高頻呼叫下，這等於連線池完全失效，而且會累積大量 TIME_WAIT 狀態的連線，可能耗盡本地埠號。</p>
 <p>這是 Go 客戶端程式碼最常見的 bug。</p>
 </div>
 <h3 id="一定要傳-context">一定要傳 context<a class="headerlink" href="#一定要傳-context" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">fetch</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">url</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">fetch</span><span class="p">(</span><span class="nx">ctx</span><span class="w"> </span><span class="nx">context</span><span class="p">.</span><span class="nx">Context</span><span class="p">,</span><span class="w"> </span><span class="nx">url</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="p">([]</span><span class="kt">byte</span><span class="p">,</span><span class="w"> </span><span class="kt">error</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">req</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">NewRequestWithContext</span><span class="p">(</span><span class="nx">ctx</span><span class="p">,</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">MethodGet</span><span class="p">,</span><span class="w"> </span><span class="nx">url</span><span class="p">,</span><span class="w"> </span><span class="kc">nil</span><span class="p">)</span>
 <span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span>
@@ -486,12 +492,12 @@ io.Copy(io.Discard, resp.Body)
 
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">io</span><span class="p">.</span><span class="nx">ReadAll</span><span class="p">(</span><span class="nx">io</span><span class="p">.</span><span class="nx">LimitReader</span><span class="p">(</span><span class="nx">resp</span><span class="p">.</span><span class="nx">Body</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span><span class="o">&lt;&lt;</span><span class="mi">20</span><span class="p">))</span><span class="w"> </span><span class="c1">// 限制大小，防惡意的巨大回應</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>三個重點：<code>NewRequestWithContext</code> 讓請求可被取消、非 2xx 也要讀完 body、用 <code>io.LimitReader</code> 防止記憶體被打爆。</p>
 <hr />
 <h2 id="優雅關閉">優雅關閉<a class="headerlink" href="#優雅關閉" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;context&quot;</span>
@@ -543,7 +549,7 @@ io.Copy(io.Discard, resp.Body)
 
 <span class="w">    </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Info</span><span class="p">(</span><span class="s">&quot;已關閉&quot;</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>Shutdown</code> 做的事：</p>
 <ol>
@@ -559,15 +565,15 @@ io.Copy(io.Discard, resp.Body)
 <hr />
 <h2 id="http2-與-http3">HTTP/2 與 HTTP/3<a class="headerlink" href="#http2-與-http3" title="Permanent link">#</a></h2>
 <p><strong>HTTP/2 是預設開啟的</strong>（僅限 HTTPS）。<code>net/http</code> 會在 TLS 握手時透過 ALPN 協商，成功就自動用 HTTP/2。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// 想關掉 HTTP/2</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// 想關掉 HTTP/2</span>
 <span class="nx">tr</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">http</span><span class="p">.</span><span class="nx">Transport</span><span class="p">{</span>
 <span class="w">    </span><span class="nx">TLSNextProto</span><span class="p">:</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kd">func</span><span class="p">(</span><span class="kt">string</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="nx">tls</span><span class="p">.</span><span class="nx">Conn</span><span class="p">)</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">RoundTripper</span><span class="p">{},</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>觀察實際使用的版本：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">resp</span><span class="p">.</span><span class="nx">Proto</span><span class="p">)</span><span class="w"> </span><span class="c1">// HTTP/2.0 或 HTTP/1.1</span>
-</code></pre></div>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">resp</span><span class="p">.</span><span class="nx">Proto</span><span class="p">)</span><span class="w"> </span><span class="c1">// HTTP/2.0 或 HTTP/1.1</span>
+</pre></div>
 
 <p><strong>HTTP/3（QUIC）目前不在標準庫裡</strong>，需要用 <code>github.com/quic-go/quic-go</code>。</p>
 <hr />

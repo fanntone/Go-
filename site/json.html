@@ -110,38 +110,39 @@
   <main id="main"><header class='page-head'><p class='crumb'><a href='index.html'>Go 底層原理筆記</a><span>/</span>標準函式庫與進階主題</p><h1><span class='h1num'>7.1</span>encoding/json</h1><p class='lede'>反射驅動的編解碼與型別快取、struct tag 的完整語意、串流處理，以及實驗中的 json/v2。</p><p class='verified'>對照版本 · Go 1.26</p></header><article class='prose'><h2 id="編解碼的兩條路徑">編解碼的兩條路徑<a class="headerlink" href="#編解碼的兩條路徑" title="Permanent link">#</a></h2>
 <p><code>encoding/json</code> 的核心是<strong>反射 + 型別快取</strong>。</p>
 <h3 id="編碼">編碼<a class="headerlink" href="#編碼" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="text"><pre><span></span><code>json.Marshal(v):
+<div class="hl" data-lang="text"><pre><span></span>json.Marshal(v):
     ① 取得 v 的 reflect.Type
     ② 查快取：這個型別的「編碼器函式」建好了嗎？
        沒有 → 走訪所有欄位、解析 tag、產生一個編碼器閉包、存進快取
     ③ 執行編碼器，把結果寫進一個從 sync.Pool 取來的 buffer
     ④ 複製一份回傳（因為 buffer 要還給 pool）
-</code></pre></div>
+</pre></div>
 
 <p><strong>型別分析只做一次</strong>。第一次編碼某個型別比較慢，之後就快得多。這是所有反射型函式庫的標準做法（見 <a href="reflect.html#怎麼降低成本">反射</a>）。</p>
 <h3 id="解碼">解碼<a class="headerlink" href="#解碼" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="text"><pre><span></span><code>json.Unmarshal(data, &amp;v):
+<div class="hl" data-lang="text"><pre><span></span>json.Unmarshal(data, &amp;v):
     ① 掃描 JSON 語法，驗證格式
     ② 依 v 的型別逐欄位填入
     ③ 欄位名稱比對：先試精確比對，再試「忽略大小寫」比對
-</code></pre></div>
+</pre></div>
 
 <div class="admonition warning">
 <p class="admonition-title">欄位比對會忽略大小寫</p>
-<p><code>``go
-type User struct {
-    Name string</code>json:"name"`
-}</p>
-<p>// 這三個都會填進 Name
-json.Unmarshal([]byte(<code>{"name":"a"}</code>), &amp;u)
-json.Unmarshal([]byte(<code>{"Name":"b"}</code>), &amp;u)
-json.Unmarshal([]byte(<code>{"NAME":"c"}</code>), &amp;u)
-```</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">User</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:&quot;name&quot;`</span>
+<span class="p">}</span>
+
+<span class="c1">// 這三個都會填進 Name</span>
+<span class="nx">json</span><span class="p">.</span><span class="nx">Unmarshal</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="s">`{&quot;name&quot;:&quot;a&quot;}`</span><span class="p">),</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">u</span><span class="p">)</span>
+<span class="nx">json</span><span class="p">.</span><span class="nx">Unmarshal</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="s">`{&quot;Name&quot;:&quot;b&quot;}`</span><span class="p">),</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">u</span><span class="p">)</span>
+<span class="nx">json</span><span class="p">.</span><span class="nx">Unmarshal</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="s">`{&quot;NAME&quot;:&quot;c&quot;}`</span><span class="p">),</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">u</span><span class="p">)</span>
+</pre></div>
+
 <p>這是 v1 的既定行為，為了相容性不能改。如果你需要嚴格比對，只能自己寫 <code>UnmarshalJSON</code>，或改用 v2（見文末）。</p>
 </div>
 <hr />
 <h2 id="struct-tag-完整語意">struct tag 完整語意<a class="headerlink" href="#struct-tag-完整語意" title="Permanent link">#</a></h2>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
@@ -174,16 +175,16 @@ json.Unmarshal([]byte(<code>{"NAME":"c"}</code>), &amp;u)
 <span class="w">    </span><span class="nx">b</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">MarshalIndent</span><span class="p">(</span><span class="nx">p</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;  &quot;</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>{
+<div class="hl" data-lang="text"><pre><span></span>{
   &quot;id&quot;: 1,
   &quot;name&quot;: &quot;咖啡豆&quot;,
   &quot;price&quot;: &quot;450.5&quot;,
   &quot;-&quot;: &quot;破折號欄位&quot;,
   &quot;Legacy&quot;: &quot;&quot;
 }
-</code></pre></div>
+</pre></div>
 
 <table>
 <thead>
@@ -221,7 +222,7 @@ json.Unmarshal([]byte(<code>{"NAME":"c"}</code>), &amp;u)
 </table>
 <h3 id="omitempty-的陷阱"><code>omitempty</code> 的陷阱<a class="headerlink" href="#omitempty-的陷阱" title="Permanent link">#</a></h3>
 <p><strong><code>omitempty</code> 判斷的是 Go 的「零值」，不是「語意上的空」。</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
@@ -241,14 +242,14 @@ json.Unmarshal([]byte(<code>{"NAME":"c"}</code>), &amp;u)
 <span class="w">    </span><span class="nx">b</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Marshal</span><span class="p">(</span><span class="nx">Settings</span><span class="p">{})</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>{&quot;nested&quot;:{&quot;X&quot;:0}}
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>{&quot;nested&quot;:{&quot;X&quot;:0}}
+</pre></div>
 
 <p><code>false</code>、<code>0</code>、<code>""</code>、<code>nil</code> slice 全部被省略——<strong>即使你是刻意要傳 <code>false</code></strong>。而空 struct 反而不會被省略（<code>omitempty</code> 對 struct 無效）。</p>
 <p><strong>解法：用指標區分「未設定」與「設定為零值」。</strong></p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
@@ -272,17 +273,18 @@ json.Unmarshal([]byte(<code>{"NAME":"c"}</code>), &amp;u)
 <span class="w">    </span><span class="nx">b2</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Marshal</span><span class="p">(</span><span class="nx">Settings</span><span class="p">{})</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">string</span><span class="p">(</span><span class="nx">b2</span><span class="p">))</span><span class="w"> </span><span class="c1">// {}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition version">
 <p class="admonition-title">Go 1.24：<code>omitzero</code></p>
 <p>Go 1.24 加入 <code>omitzero</code>，語意更清楚：<strong>只在值等於該型別的零值時省略</strong>，而且對 struct 有效、對 <code>time.Time</code> 這種有 <code>IsZero()</code> 方法的型別會呼叫它。</p>
-<p><code>go
-type Event struct {
-    Name string    `json:"name"`
-    At   time.Time `json:"at,omitzero"`   // 零時間會被省略
-    Meta Metadata  `json:"meta,omitzero"` // 零值 struct 會被省略
-}</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">Event</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">Name</span><span class="w"> </span><span class="kt">string</span><span class="w">    </span><span class="s">`json:&quot;name&quot;`</span>
+<span class="w">    </span><span class="nx">At</span><span class="w">   </span><span class="nx">time</span><span class="p">.</span><span class="nx">Time</span><span class="w"> </span><span class="s">`json:&quot;at,omitzero&quot;`</span><span class="w">   </span><span class="c1">// 零時間會被省略</span>
+<span class="w">    </span><span class="nx">Meta</span><span class="w"> </span><span class="nx">Metadata</span><span class="w">  </span><span class="s">`json:&quot;meta,omitzero&quot;`</span><span class="w"> </span><span class="c1">// 零值 struct 會被省略</span>
+<span class="p">}</span>
+</pre></div>
+
 <p><code>omitempty</code> 對 <code>time.Time</code> 完全無效（<code>time.Time</code> 是 struct，永遠不是「empty」），所以以前必須用 <code>*time.Time</code>。<code>omitzero</code> 解決了這個長年的痛點。</p>
 </div>
 <hr />
@@ -324,41 +326,44 @@ type Event struct {
 </table>
 <div class="admonition danger">
 <p class="admonition-title">數字一律變成 float64</p>
-<p><code>go
-var v any
-json.Unmarshal([]byte(`{"id": 9007199254740993}`), &amp;v)
-m := v.(map[string]any)
-fmt.Printf("%.0f\n", m["id"]) // 9007199254740992 ← 精度掉了！</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">var</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="kt">any</span>
+<span class="nx">json</span><span class="p">.</span><span class="nx">Unmarshal</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="s">`{&quot;id&quot;: 9007199254740993}`</span><span class="p">),</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">v</span><span class="p">)</span>
+<span class="nx">m</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">v</span><span class="p">.(</span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">any</span><span class="p">)</span>
+<span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%.0f\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">m</span><span class="p">[</span><span class="s">&quot;id&quot;</span><span class="p">])</span><span class="w"> </span><span class="c1">// 9007199254740992 ← 精度掉了！</span>
+</pre></div>
+
 <p><code>float64</code> 只能精確表示 2⁵³ 以內的整數。超過的大整數（例如雪花演算法產生的 ID、某些資料庫的 bigint）會被靜默截斷。</p>
 <p><strong>解法一：解碼到具體型別。</strong></p>
-<p><code>go
-type Resp struct{ ID int64 `json:"id"` }</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">Resp</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">ID</span><span class="w"> </span><span class="kt">int64</span><span class="w"> </span><span class="s">`json:&quot;id&quot;`</span><span class="w"> </span><span class="p">}</span>
+</pre></div>
+
 <p><strong>解法二：用 <code>Decoder.UseNumber()</code>。</strong></p>
-<p>```go
-package main</p>
-<p>import (
-    "encoding/json"
-    "fmt"
-    "strings"
-)</p>
-<p>func main() {
-    dec := json.NewDecoder(strings.NewReader(<code>{"id": 9007199254740993}</code>))
-    dec.UseNumber()</p>
-<div class="hl" data-lang="go"><pre><span></span><code>var v map[string]any
-dec.Decode(&amp;v)
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
-n := v[&quot;id&quot;].(json.Number)
-i, _ := n.Int64()
-fmt.Println(i) // 9007199254740993 ← 精確
-</code></pre></div>
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;strings&quot;</span>
+<span class="p">)</span>
 
-<p>}
-```</p>
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">dec</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">NewDecoder</span><span class="p">(</span><span class="nx">strings</span><span class="p">.</span><span class="nx">NewReader</span><span class="p">(</span><span class="s">`{&quot;id&quot;: 9007199254740993}`</span><span class="p">))</span>
+<span class="w">    </span><span class="nx">dec</span><span class="p">.</span><span class="nx">UseNumber</span><span class="p">()</span>
+
+<span class="w">    </span><span class="kd">var</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="kt">string</span><span class="p">]</span><span class="kt">any</span>
+<span class="w">    </span><span class="nx">dec</span><span class="p">.</span><span class="nx">Decode</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">v</span><span class="p">)</span>
+
+<span class="w">    </span><span class="nx">n</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">v</span><span class="p">[</span><span class="s">&quot;id&quot;</span><span class="p">].(</span><span class="nx">json</span><span class="p">.</span><span class="nx">Number</span><span class="p">)</span>
+<span class="w">    </span><span class="nx">i</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">n</span><span class="p">.</span><span class="nx">Int64</span><span class="p">()</span>
+<span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">i</span><span class="p">)</span><span class="w"> </span><span class="c1">// 9007199254740993 ← 精確</span>
+<span class="p">}</span>
+</pre></div>
+
 </div>
 <hr />
 <h2 id="自訂編解碼">自訂編解碼<a class="headerlink" href="#自訂編解碼" title="Permanent link">#</a></h2>
 <p>實作 <code>json.Marshaler</code> 與 <code>json.Unmarshaler</code> 介面：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
@@ -415,7 +420,7 @@ fmt.Println(i) // 9007199254740993 ← 精確
 <span class="w">    </span><span class="nx">json</span><span class="p">.</span><span class="nx">Unmarshal</span><span class="p">([]</span><span class="nb">byte</span><span class="p">(</span><span class="s">`{&quot;title&quot;:&quot;審核&quot;,&quot;status&quot;:&quot;closed&quot;}`</span><span class="p">),</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">t</span><span class="p">)</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%+v\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">t</span><span class="p">)</span><span class="w"> </span><span class="c1">// {Title:審核 Status:2}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition warning">
 <p class="admonition-title"><code>MarshalJSON</code> 用值接收者、<code>UnmarshalJSON</code> 用指標接收者</p>
@@ -428,7 +433,7 @@ fmt.Println(i) // 9007199254740993 ← 精確
 </div>
 <h3 id="避免無窮遞迴">避免無窮遞迴<a class="headerlink" href="#避免無窮遞迴" title="Permanent link">#</a></h3>
 <p>在自訂方法裡直接 <code>json.Marshal(自己)</code> 會無窮遞迴。用型別別名切斷：</p>
-<div class="hl" data-lang="text"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
@@ -457,16 +462,16 @@ fmt.Println(i) // 9007199254740993 ← 精確
 <span class="w">    </span><span class="nx">b</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Marshal</span><span class="p">(</span><span class="nx">Event</span><span class="p">{</span><span class="nx">Name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;deploy&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">At</span><span class="p">:</span><span class="w"> </span><span class="nx">time</span><span class="p">.</span><span class="nx">Unix</span><span class="p">(</span><span class="mi">1700000000</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">).</span><span class="nx">UTC</span><span class="p">()})</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nb">string</span><span class="p">(</span><span class="nx">b</span><span class="p">))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="go"><pre><span></span><code>{&quot;name&quot;:&quot;deploy&quot;,&quot;at&quot;:&quot;2023-11-14T22:13:20Z&quot;,&quot;at_unix&quot;:1700000000}
-</code></pre></div>
+<div class="hl" data-lang="text"><pre><span></span>{&quot;name&quot;:&quot;deploy&quot;,&quot;at&quot;:&quot;2023-11-14T22:13:20Z&quot;,&quot;at_unix&quot;:1700000000}
+</pre></div>
 
 <p><code>type alias Event</code> 建立一個新的具名型別，它繼承欄位但<strong>不繼承方法</strong>——這正是我們要的。</p>
 <hr />
 <h2 id="串流處理">串流處理<a class="headerlink" href="#串流處理" title="Permanent link">#</a></h2>
 <p><code>Marshal</code>／<code>Unmarshal</code> 會把整份資料放在記憶體裡。處理大檔案或網路串流時用 <code>Encoder</code>／<code>Decoder</code>。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
@@ -498,10 +503,10 @@ fmt.Println(i) // 9007199254740993 ← 精確
 <span class="w">        </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%+v\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="p">)</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="逐項處理大型陣列">逐項處理大型陣列<a class="headerlink" href="#逐項處理大型陣列" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
@@ -529,19 +534,19 @@ fmt.Println(i) // 9007199254740993 ← 精確
 <span class="w">    </span><span class="c1">// 讀掉結尾的 &#39;]&#39;</span>
 <span class="w">    </span><span class="nx">dec</span><span class="p">.</span><span class="nx">Token</span><span class="p">()</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>即使陣列有一百萬個元素，記憶體用量也只跟單一元素的大小相關。</p>
 <h3 id="嚴格模式">嚴格模式<a class="headerlink" href="#嚴格模式" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">dec</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">NewDecoder</span><span class="p">(</span><span class="nx">r</span><span class="p">)</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">dec</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">NewDecoder</span><span class="p">(</span><span class="nx">r</span><span class="p">)</span>
 <span class="nx">dec</span><span class="p">.</span><span class="nx">DisallowUnknownFields</span><span class="p">()</span><span class="w"> </span><span class="c1">// 遇到未知欄位就報錯</span>
-</code></pre></div>
+</pre></div>
 
 <p>處理設定檔時很有用——使用者打錯欄位名時會得到明確的錯誤，而不是被靜默忽略。</p>
 <hr />
 <h2 id="效能">效能<a class="headerlink" href="#效能" title="Permanent link">#</a></h2>
 <h3 id="基準對照">基準對照<a class="headerlink" href="#基準對照" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;encoding/json&quot;</span>
@@ -580,7 +585,7 @@ fmt.Println(i) // 9007199254740993 ← 精確
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;Marshal:  &quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r1</span><span class="p">,</span><span class="w"> </span><span class="nx">r1</span><span class="p">.</span><span class="nx">MemString</span><span class="p">())</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;Unmarshal:&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">r2</span><span class="p">,</span><span class="w"> </span><span class="nx">r2</span><span class="p">.</span><span class="nx">MemString</span><span class="p">())</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="優化技巧">優化技巧<a class="headerlink" href="#優化技巧" title="Permanent link">#</a></h3>
 <table>
@@ -613,27 +618,26 @@ fmt.Println(i) // 9007199254740993 ← 精確
 </tr>
 </tbody>
 </table>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="c1">// ✗ 多一次完整的複製</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// ✗ 多一次完整的複製</span>
 <span class="nx">b</span><span class="p">,</span><span class="w"> </span><span class="nx">_</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">Marshal</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
 <span class="nx">w</span><span class="p">.</span><span class="nx">Write</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span>
 
 <span class="c1">// ✓ 直接寫出</span>
 <span class="nx">json</span><span class="p">.</span><span class="nx">NewEncoder</span><span class="p">(</span><span class="nx">w</span><span class="p">).</span><span class="nx">Encode</span><span class="p">(</span><span class="nx">v</span><span class="p">)</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition tip">
 <p class="admonition-title">HTTP handler 的正確寫法</p>
-<p>```go
-func handler(w http.ResponseWriter, r *http.Request) {
-    w.Header().Set("Content-Type", "application/json")</p>
-<div class="hl" data-lang=""><pre><span></span><code>if err := json.NewEncoder(w).Encode(resp); err != nil {
-    // 注意：此時 header 已經送出，無法再改 status code
-    slog.Error(&quot;encode failed&quot;, &quot;err&quot;, err)
-}
-</code></pre></div>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">handler</span><span class="p">(</span><span class="nx">w</span><span class="w"> </span><span class="nx">http</span><span class="p">.</span><span class="nx">ResponseWriter</span><span class="p">,</span><span class="w"> </span><span class="nx">r</span><span class="w"> </span><span class="o">*</span><span class="nx">http</span><span class="p">.</span><span class="nx">Request</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">w</span><span class="p">.</span><span class="nx">Header</span><span class="p">().</span><span class="nx">Set</span><span class="p">(</span><span class="s">&quot;Content-Type&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;application/json&quot;</span><span class="p">)</span>
 
-<p>}
-```</p>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">json</span><span class="p">.</span><span class="nx">NewEncoder</span><span class="p">(</span><span class="nx">w</span><span class="p">).</span><span class="nx">Encode</span><span class="p">(</span><span class="nx">resp</span><span class="p">);</span><span class="w"> </span><span class="nx">err</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="c1">// 注意：此時 header 已經送出，無法再改 status code</span>
+<span class="w">        </span><span class="nx">slog</span><span class="p">.</span><span class="nx">Error</span><span class="p">(</span><span class="s">&quot;encode failed&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;err&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">err</span><span class="p">)</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
 <p><code>Encode</code> 會自動在結尾加上換行符號，這是它跟 <code>Marshal</code> 的一個小差異。</p>
 </div>
 <hr />
@@ -642,8 +646,9 @@ func handler(w http.ResponseWriter, r *http.Request) {
 <p class="admonition-title">Go 1.25 實驗性引入，Go 1.26 仍需 GOEXPERIMENT</p>
 <p>v1 的 <code>encoding/json</code> 有一些無法在相容性承諾下修正的設計問題。Go 團隊在 Go 1.25 引入了實驗性的 <code>encoding/json/v2</code> 與底層的 <code>encoding/json/jsontext</code>。</p>
 <p><strong>Go 1.26 的狀態</strong>：仍然需要明確啟用：</p>
-<p><code>bash
-GOEXPERIMENT=jsonv2 go build ./...</code></p>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GOEXPERIMENT</span><span class="o">=</span>jsonv2<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>./...
+</pre></div>
+
 <p>啟用後，<code>encoding/json</code>（v1）會改由 v2 實作，但保持 v1 的行為語意；同時 <code>encoding/json/v2</code> 可以直接 import。</p>
 <p><strong>預計 Go 1.27 成為預設</strong>，屆時改用 <code>GOEXPERIMENT=nojsonv2</code> 才能切回舊實作。</p>
 <p>因為它還在演進中，<strong>正式環境暫時不建議使用</strong>。以下只列出設計方向。</p>
@@ -691,7 +696,7 @@ GOEXPERIMENT=jsonv2 go build ./...</code></p>
 </tr>
 </tbody>
 </table>
-<div class="hl" data-lang=""><pre><span></span><code><span class="c1">// v2 的選項式 API 概念（實驗中，API 可能改變）</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="c1">// v2 的選項式 API 概念（實驗中，API 可能改變）</span>
 <span class="kn">import</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="s">&quot;encoding/json/v2&quot;</span>
 <span class="w">    </span><span class="s">&quot;encoding/json/jsontext&quot;</span>
@@ -701,7 +706,7 @@ GOEXPERIMENT=jsonv2 go build ./...</code></p>
 <span class="w">    </span><span class="nx">jsontext</span><span class="p">.</span><span class="nx">WithIndent</span><span class="p">(</span><span class="s">&quot;  &quot;</span><span class="p">),</span>
 <span class="w">    </span><span class="nx">json</span><span class="p">.</span><span class="nx">FormatNilSliceAsEmpty</span><span class="p">(</span><span class="kc">true</span><span class="p">),</span>
 <span class="p">)</span>
-</code></pre></div>
+</pre></div>
 
 <p><strong>現階段的建議</strong>：知道它的存在，追蹤它的進展，但正式專案繼續用 v1。等它成為預設（Go 1.27）而且生態成熟後再遷移。</p>
 <hr />

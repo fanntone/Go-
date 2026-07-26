@@ -195,8 +195,9 @@
 <div class="admonition tip">
 <p class="admonition-title">親眼看到改寫</p>
 <p><code>-W</code> 印出 walk 之前的 IR，<code>-w</code> 印出之後的。對照兩者最有教育意義：</p>
-<p><code>bash
-go tool compile -w main.go</code></p>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-w<span class="w"> </span>main.go
+</pre></div>
+
 <p>你會直接看到 <code>append</code> 消失、<code>runtime.growslice</code> 出現。</p>
 </div>
 <p>這張表值得記住。之後每一章討論某個特性的成本時，起點都是「它被改寫成哪個 runtime 呼叫」。<strong>Go 沒有魔法，只有你看不見的函式呼叫。</strong></p>
@@ -205,40 +206,40 @@ go tool compile -w main.go</code></p>
 <p>walk 之後，IR 被轉成 <strong>SSA（Static Single Assignment，靜態單賦值）</strong> 形式。這是現代編譯器後端的通用中間表示，LLVM、V8、HotSpot 都用它。</p>
 <p>SSA 只有一條核心規則：<strong>每個變數只被賦值一次</strong>。</p>
 <p>看一段普通程式碼：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">x</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">1</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">x</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">1</span>
 <span class="nx">x</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">2</span>
 <span class="nx">x</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">3</span>
 <span class="nx">y</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span>
-</code></pre></div>
+</pre></div>
 
 <p>轉成 SSA 後，每次賦值都變成一個新變數：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>x₁ = 1
+<div class="hl" data-lang="text"><pre><span></span>x₁ = 1
 x₂ = x₁ + 2
 x₃ = x₂ * 3
 y₁ = x₃ + 1
-</code></pre></div>
+</pre></div>
 
 <h3 id="為什麼這個限制有用">為什麼這個限制有用<a class="headerlink" href="#為什麼這個限制有用" title="Permanent link">#</a></h3>
 <p>因為它讓「這個值從哪來」變成<strong>一眼可見</strong>的事實。</p>
 <p>在原本的形式裡，要知道 <code>y := x + 1</code> 裡的 <code>x</code> 是哪個值，編譯器得往回掃描找最後一次賦值，而且遇到分支就要考慮所有可能路徑。在 SSA 裡，<code>x₃</code> 就是 <code>x₃</code>，定義只有一個地方。這叫 <strong>def-use 鏈明確化</strong>，幾乎所有資料流最佳化都因此變簡單。</p>
 <h3 id="分支怎麼辦φ-函式">分支怎麼辦：φ 函式<a class="headerlink" href="#分支怎麼辦φ-函式" title="Permanent link">#</a></h3>
 <p>問題來了。如果值來自不同分支呢？</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">var</span><span class="w"> </span><span class="nx">x</span><span class="w"> </span><span class="kt">int</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">var</span><span class="w"> </span><span class="nx">x</span><span class="w"> </span><span class="kt">int</span>
 <span class="k">if</span><span class="w"> </span><span class="nx">cond</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">x</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">1</span>
 <span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">x</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">2</span>
 <span class="p">}</span>
 <span class="nx">use</span><span class="p">(</span><span class="nx">x</span><span class="p">)</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>use(x)</code> 裡的 <code>x</code> 可能是 <code>x₁</code> 也可能是 <code>x₂</code>。SSA 用一個虛構的 <strong>φ（phi）函式</strong>表示「依控制流選擇」：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>b1: if cond → b2 else b3
+<div class="hl" data-lang="text"><pre><span></span>b1: if cond → b2 else b3
 b2: x₁ = 1;  goto b4
 b3: x₂ = 2;  goto b4
 b4: x₃ = φ(x₁, x₂)
     use(x₃)
-</code></pre></div>
+</pre></div>
 
 <p>φ 函式不對應任何真實指令。它只是編譯器的記帳方式，在最後產生機器碼時會被拆解成暫存器搬移或直接靠暫存器配置消解掉。</p>
 <figure class="diagram"><svg viewBox="0 0 700 300" role="img" aria-label="SSA 控制流圖與 phi 函式"><rect class="d-box" x="270" y="14" width="160" height="46" rx="6"/><text class="d-t-m d-mid" x="350" y="34">b1</text><text class="d-t-m d-mid" x="350" y="52">If cond → b2, b3</text><path class="d-line" d="M300 60 L200 92" marker-end="url(#ar6)"/><text class="d-t-s" x="222" y="80">true</text><path class="d-line" d="M400 60 L500 92" marker-end="url(#ar6)"/><text class="d-t-s" x="450" y="80">false</text><rect class="d-box-o" x="110" y="96" width="170" height="46" rx="6"/><text class="d-t-m d-mid" x="195" y="116">b2</text><text class="d-t-m d-mid" x="195" y="134">x₁ = Const64 [1]</text><rect class="d-box-o" x="420" y="96" width="170" height="46" rx="6"/><text class="d-t-m d-mid" x="505" y="116">b3</text><text class="d-t-m d-mid" x="505" y="134">x₂ = Const64 [2]</text><path class="d-line" d="M195 142 L300 178" marker-end="url(#ar6)"/><path class="d-line" d="M505 142 L400 178" marker-end="url(#ar6)"/><rect class="d-box-a" x="250" y="182" width="200" height="64" rx="6"/><text class="d-t-m d-mid" x="350" y="203">b4</text><text class="d-t-m d-mid" x="350" y="222">x₃ = Phi(x₁, x₂)</text><text class="d-t-m d-mid" x="350" y="240">use(x₃)</text><defs><marker id="ar6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--line-strong)"/></marker></defs><text class="d-t-s" x="15" y="280">φ 函式的引數順序對應前驅區塊的順序：第一個來自 b2、第二個來自 b3。</text></svg><figcaption><b>控制流圖（CFG）與 φ 函式。</b>程式被切成「基本區塊」——內部沒有分支、只從頭進從尾出的指令序列。SSA 建立在 CFG 之上，φ 函式擺在區塊開頭，表示這個值依「從哪個前驅進來」而定。</figcaption></figure>
@@ -247,26 +248,26 @@ b4: x₃ = φ(x₁, x₂)
 <h2 id="ssa-上的最佳化">SSA 上的最佳化<a class="headerlink" href="#ssa-上的最佳化" title="Permanent link">#</a></h2>
 <p>Go 編譯器在 SSA 形式上跑數十個 <strong>pass</strong>，每個 pass 做一件小事，串起來效果顯著。以下挑幾個最有感的。</p>
 <h3 id="常數傳播與摺疊">常數傳播與摺疊<a class="headerlink" href="#常數傳播與摺疊" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">f</span><span class="p">()</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">f</span><span class="p">()</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">3</span>
 <span class="w">    </span><span class="nx">b</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">4</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">a</span><span class="o">*</span><span class="nx">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nx">b</span><span class="o">*</span><span class="nx">b</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>整個函式會被摺成 <code>return 25</code>。連乘法都不會執行。</p>
 <h3 id="死碼消除dce">死碼消除（DCE）<a class="headerlink" href="#死碼消除dce" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">g</span><span class="p">(</span><span class="nx">x</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">g</span><span class="p">(</span><span class="nx">x</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">y</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">expensive</span><span class="p">()</span><span class="w"> </span><span class="c1">// 若 y 沒被用到，且 expensive 沒有副作用 → 整個呼叫被刪</span>
 <span class="w">    </span><span class="nx">_</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">y</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>注意「沒有副作用」這個前提。編譯器要能證明呼叫是純函式才敢刪，否則保留。</p>
 <h3 id="邊界檢查消除bce">邊界檢查消除（BCE）<a class="headerlink" href="#邊界檢查消除bce" title="Permanent link">#</a></h3>
 <p>Go 對每次 slice 索引都會插入邊界檢查，這是記憶體安全的基礎。但很多檢查在編譯期就能證明是多餘的，<code>prove</code> 這個 pass 負責找出來。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kd">func</span><span class="w"> </span><span class="nx">sum</span><span class="p">(</span><span class="nx">s</span><span class="w"> </span><span class="p">[]</span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">total</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">0</span>
@@ -275,15 +276,15 @@ b4: x₃ = φ(x₁, x₂)
 <span class="w">    </span><span class="p">}</span>
 <span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nx">total</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>驗證方式：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-d=ssa/check_bce/debug=1&quot;</span><span class="w"> </span>./main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-d=ssa/check_bce/debug=1&quot;</span><span class="w"> </span>./main.go
+</pre></div>
 
 <p>沒有輸出就代表所有檢查都被消除了。有輸出的話會標出哪一行還留著檢查。</p>
 <p><strong>幫助編譯器消除檢查的技巧</strong> —— 在迴圈前加一行看似多餘的斷言：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">func</span><span class="w"> </span><span class="nx">scale</span><span class="p">(</span><span class="nx">dst</span><span class="p">,</span><span class="w"> </span><span class="nx">src</span><span class="w"> </span><span class="p">[]</span><span class="kt">float64</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">func</span><span class="w"> </span><span class="nx">scale</span><span class="p">(</span><span class="nx">dst</span><span class="p">,</span><span class="w"> </span><span class="nx">src</span><span class="w"> </span><span class="p">[]</span><span class="kt">float64</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">dst</span><span class="p">)</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="nx">src</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">        </span><span class="nb">panic</span><span class="p">(</span><span class="s">&quot;dst too short&quot;</span><span class="p">)</span>
 <span class="w">    </span><span class="p">}</span>
@@ -292,23 +293,24 @@ b4: x₃ = φ(x₁, x₂)
 <span class="w">        </span><span class="nx">dst</span><span class="p">[</span><span class="nx">i</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">v</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="c1">// dst[i] 的檢查可以被消除</span>
 <span class="w">    </span><span class="p">}</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="去虛擬化devirtualization">去虛擬化（devirtualization）<a class="headerlink" href="#去虛擬化devirtualization" title="Permanent link">#</a></h3>
 <p>介面方法呼叫需要透過 itab 間接跳轉，無法內聯。如果編譯器能證明介面裡裝的一定是某個具體型別，就可以改成直接呼叫：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">var</span><span class="w"> </span><span class="nx">w</span><span class="w"> </span><span class="nx">io</span><span class="p">.</span><span class="nx">Writer</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">Stdout</span><span class="w"> </span><span class="c1">// 編譯器知道具體型別</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">var</span><span class="w"> </span><span class="nx">w</span><span class="w"> </span><span class="nx">io</span><span class="p">.</span><span class="nx">Writer</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">os</span><span class="p">.</span><span class="nx">Stdout</span><span class="w"> </span><span class="c1">// 編譯器知道具體型別</span>
 <span class="nx">w</span><span class="p">.</span><span class="nx">Write</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span><span class="w">                  </span><span class="c1">// 可以去虛擬化成 (*os.File).Write</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition version">
 <p class="admonition-title">PGO 引導的去虛擬化：Go 1.21 起</p>
 <p>大部分情況下編譯器<strong>無法</strong>靜態證明介面裡是什麼。Go 1.21 起，如果你提供剖析檔（profile），編譯器可以看到「這個呼叫點 95% 的時候都是 <code>*os.File</code>」，於是產生：</p>
-<p><code>text
-if 具體型別 == *os.File {
+<div class="hl" data-lang="text"><pre><span></span>if 具體型別 == *os.File {
     直接呼叫（可內聯）
 } else {
     走原本的介面分派
-}</code></p>
+}
+</pre></div>
+
 <p>這叫<strong>推測式去虛擬化</strong>。Go 1.24 起這個最佳化也支援介面方法以外的間接函式呼叫。</p>
 </div>
 <h3 id="其他重要的-pass">其他重要的 pass<a class="headerlink" href="#其他重要的-pass" title="Permanent link">#</a></h3>
@@ -357,7 +359,7 @@ if 具體型別 == *os.File {
 <hr />
 <h2 id="用-gossafunc-看整個過程">用 <code>GOSSAFUNC</code> 看整個過程<a class="headerlink" href="#用-gossafunc-看整個過程" title="Permanent link">#</a></h2>
 <p>這是本節最值得動手做的實驗。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kd">func</span><span class="w"> </span><span class="nx">clamp</span><span class="p">(</span><span class="nx">x</span><span class="p">,</span><span class="w"> </span><span class="nx">lo</span><span class="p">,</span><span class="w"> </span><span class="nx">hi</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">x</span><span class="w"> </span><span class="p">&lt;</span><span class="w"> </span><span class="nx">lo</span><span class="w"> </span><span class="p">{</span>
@@ -372,17 +374,17 @@ if 具體型別 == *os.File {
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nb">println</span><span class="p">(</span><span class="nx">clamp</span><span class="p">(</span><span class="mi">15</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span><span class="p">))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>PowerShell：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>$env:GOSSAFUNC = &quot;clamp&quot;
+<div class="hl" data-lang="text"><pre><span></span>$env:GOSSAFUNC = &quot;clamp&quot;
 go build -o nul .\main.go
 Remove-Item Env:GOSSAFUNC
-</code></pre></div>
+</pre></div>
 
 <p>Bash：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GOSSAFUNC</span><span class="o">=</span>clamp<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>./main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GOSSAFUNC</span><span class="o">=</span>clamp<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>./main.go
+</pre></div>
 
 <p>打開產生的 <code>ssa.html</code>，你會看到：</p>
 <ol>

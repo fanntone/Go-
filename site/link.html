@@ -111,9 +111,9 @@
 <p>Go 的組合語言不是 Intel 語法也不是 AT&amp;T 語法，而是繼承自 <strong>Plan 9</strong> 作業系統的一種<strong>半抽象組合語言</strong>。理解它的關鍵是：<strong>它不是 CPU 的真實指令集，而是一層薄薄的抽象</strong>。</p>
 <h3 id="三個要記住的差異">三個要記住的差異<a class="headerlink" href="#三個要記住的差異" title="Permanent link">#</a></h3>
 <p><strong>① 運算元順序是「來源，目的」</strong></p>
-<div class="hl" data-lang="text"><pre><span></span><code>MOVQ AX, BX      // Plan 9：把 AX 搬到 BX
+<div class="hl" data-lang="text"><pre><span></span>MOVQ AX, BX      // Plan 9：把 AX 搬到 BX
 mov  rbx, rax    // Intel 語法：把 rax 搬到 rbx（順序相反！）
-</code></pre></div>
+</pre></div>
 
 <p><strong>② 暫存器沒有前綴，而且有虛擬暫存器</strong></p>
 <p>除了 <code>AX</code>、<code>BX</code>、<code>SP</code> 這些真實暫存器，Plan 9 還有四個<strong>虛擬暫存器</strong>：</p>
@@ -146,7 +146,7 @@ mov  rbx, rax    // Intel 語法：把 rax 搬到 rbx（順序相反！）
 <p><strong>③ 指令後綴標示運算元大小</strong></p>
 <p><code>MOVB</code>（1 位元組）、<code>MOVW</code>（2）、<code>MOVL</code>（4）、<code>MOVQ</code>（8）。</p>
 <h3 id="讀一段實際輸出">讀一段實際輸出<a class="headerlink" href="#讀一段實際輸出" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kd">type</span><span class="w"> </span><span class="nx">Point</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">X</span><span class="p">,</span><span class="w"> </span><span class="nx">Y</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}</span>
 
@@ -157,18 +157,18 @@ mov  rbx, rax    // Intel 語法：把 rax 搬到 rbx（順序相反！）
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nb">println</span><span class="p">(</span><span class="nx">Dist2</span><span class="p">(</span><span class="nx">Point</span><span class="p">{</span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">}))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-S<span class="w"> </span>-l<span class="w"> </span>main.go
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>compile<span class="w"> </span>-S<span class="w"> </span>-l<span class="w"> </span>main.go
+</pre></div>
 
-<div class="hl" data-lang="text"><pre><span></span><code>main.Dist2 STEXT nosplit size=17 args=0x10 locals=0x0 funcid=0x0 align=0x0
+<div class="hl" data-lang="text"><pre><span></span>main.Dist2 STEXT nosplit size=17 args=0x10 locals=0x0 funcid=0x0 align=0x0
     0x0000 00000 (main.go:5)    TEXT    main.Dist2(SB), NOSPLIT|ABIInternal, $0-16
     0x0000 00000 (main.go:6)    IMULQ   AX, AX
     0x0004 00004 (main.go:6)    IMULQ   BX, BX
     0x0008 00008 (main.go:6)    LEAQ    (BX)(AX*1), AX
     0x000c 00012 (main.go:6)    RET
-</code></pre></div>
+</pre></div>
 
 <p>逐項拆解 <code>TEXT</code> 那一行：</p>
 <table>
@@ -246,7 +246,7 @@ mov  rbx, rax    // Intel 語法：把 rax 搬到 rbx（順序相反！）
 <h3 id="連結器做的四件事">連結器做的四件事<a class="headerlink" href="#連結器做的四件事" title="Permanent link">#</a></h3>
 <p><strong>① 符號解析。</strong> 每個 <code>.a</code> 檔裡有「我定義了哪些符號」與「我需要哪些符號」。連結器把它們對起來，填入真實位址。找不到就是 <code>undefined: xxx</code>。</p>
 <p><strong>② 死碼消除。</strong> 從進入點（<code>runtime.rt0_go</code>）開始做可達性分析，沒被引用到的函式與資料整個丟掉。這是 Go 執行檔沒有比實際更大的原因。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -257,11 +257,11 @@ mov  rbx, rax    // Intel 語法：把 rax 搬到 rbx（順序相反！）
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">&quot;hi&quot;</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>app.exe<span class="w"> </span>.<span class="w"> </span>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>app.exe<span class="w"> </span>.<span class="w"> </span>
 go<span class="w"> </span>tool<span class="w"> </span>nm<span class="w"> </span>app.exe<span class="w"> </span><span class="p">|</span><span class="w"> </span>findstr<span class="w"> </span><span class="s2">&quot;neverCalled&quot;</span>
-</code></pre></div>
+</pre></div>
 
 <p>沒有輸出——<code>neverCalled</code> 被刪掉了。</p>
 <div class="admonition warning">
@@ -308,9 +308,9 @@ go<span class="w"> </span>tool<span class="w"> </span>nm<span class="w"> </span>
 <h3 id="執行檔為什麼這麼大">執行檔為什麼這麼大<a class="headerlink" href="#執行檔為什麼這麼大" title="Permanent link">#</a></h3>
 <p>一支只印 hello world 的 Go 程式，編出來大約 1.5–2 MB。原因是<strong>靜態連結</strong>：runtime（排程器、GC、記憶體配置器）全部包進去了，還有上面那些中繼資料表。</p>
 <p>想瘦身：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="c1"># 去掉除錯資訊與符號表，通常能少 25–30%</span>
+<div class="hl" data-lang="bash"><pre><span></span><span class="c1"># 去掉除錯資訊與符號表，通常能少 25–30%</span>
 go<span class="w"> </span>build<span class="w"> </span>-ldflags<span class="o">=</span><span class="s2">&quot;-s -w&quot;</span><span class="w"> </span>-o<span class="w"> </span>app.exe<span class="w"> </span>.
-</code></pre></div>
+</pre></div>
 
 <table>
 <thead>
@@ -339,8 +339,8 @@ go<span class="w"> </span>build<span class="w"> </span>-ldflags<span class="o">=
 </div>
 <p>再進一步可以用 <code>upx</code> 之類的壓縮器，但那會拖慢啟動並可能觸發防毒軟體誤判，一般不建議。</p>
 <h3 id="看看誰佔了空間">看看誰佔了空間<a class="headerlink" href="#看看誰佔了空間" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>nm<span class="w"> </span>-size<span class="w"> </span>-sort<span class="w"> </span>size<span class="w"> </span>app.exe
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>nm<span class="w"> </span>-size<span class="w"> </span>-sort<span class="w"> </span>size<span class="w"> </span>app.exe
+</pre></div>
 
 <p>或用社群工具 <code>go-size-analyzer</code> / <code>goweight</code> 分析各套件的貢獻。常見的肥胖來源：</p>
 <ul>
@@ -353,7 +353,7 @@ go<span class="w"> </span>build<span class="w"> </span>-ldflags<span class="o">=
 <h2 id="常用的連結器旗標">常用的連結器旗標<a class="headerlink" href="#常用的連結器旗標" title="Permanent link">#</a></h2>
 <h3 id="注入版本資訊">注入版本資訊<a class="headerlink" href="#注入版本資訊" title="Permanent link">#</a></h3>
 <p>這是最實用的一招。用 <code>-X</code> 在建置時設定字串變數：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -366,33 +366,35 @@ go<span class="w"> </span>build<span class="w"> </span>-ldflags<span class="o">=
 <span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;version=%s commit=%s built=%s\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">version</span><span class="p">,</span><span class="w"> </span><span class="nx">commit</span><span class="p">,</span><span class="w"> </span><span class="nx">buildTime</span><span class="p">)</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-ldflags<span class="o">=</span><span class="s2">&quot;-X main.version=1.2.3 -X main.commit=</span><span class="k">$(</span>git<span class="w"> </span>rev-parse<span class="w"> </span>--short<span class="w"> </span>HEAD<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>-o<span class="w"> </span>app.exe<span class="w"> </span>.
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-ldflags<span class="o">=</span><span class="s2">&quot;-X main.version=1.2.3 -X main.commit=</span><span class="k">$(</span>git<span class="w"> </span>rev-parse<span class="w"> </span>--short<span class="w"> </span>HEAD<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>-o<span class="w"> </span>app.exe<span class="w"> </span>.
+</pre></div>
 
 <p>限制：只能設定 <strong><code>string</code> 型別的套件層變數</strong>，而且該變數不能是常數、不能已經有非空的初始值（有初始值的話會被覆蓋，但不保證）。</p>
 <div class="admonition tip">
 <p class="admonition-title">Go 1.18 起有內建的版本資訊</p>
 <p>如果你只是想知道 commit hash，不必自己注入。Go 會自動把 VCS 資訊嵌入執行檔：</p>
-<p>```go
-package main</p>
-<p>import (
-    "fmt"
-    "runtime/debug"
-)</p>
-<p>func main() {
-    info, ok := debug.ReadBuildInfo()
-    if !ok {
-        return
-    }
-    for _, s := range info.Settings {
-        if s.Key == "vcs.revision" || s.Key == "vcs.time" || s.Key == "vcs.modified" {
-            fmt.Printf("%s = %s\n", s.Key, s.Value)
-        }
-    }
-}
-```</p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="s">&quot;fmt&quot;</span>
+<span class="w">    </span><span class="s">&quot;runtime/debug&quot;</span>
+<span class="p">)</span>
+
+<span class="kd">func</span><span class="w"> </span><span class="nx">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nx">info</span><span class="p">,</span><span class="w"> </span><span class="nx">ok</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">debug</span><span class="p">.</span><span class="nx">ReadBuildInfo</span><span class="p">()</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">!</span><span class="nx">ok</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">return</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">info</span><span class="p">.</span><span class="nx">Settings</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">Key</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;vcs.revision&quot;</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">Key</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;vcs.time&quot;</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">Key</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;vcs.modified&quot;</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Printf</span><span class="p">(</span><span class="s">&quot;%s = %s\n&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">Key</span><span class="p">,</span><span class="w"> </span><span class="nx">s</span><span class="p">.</span><span class="nx">Value</span><span class="p">)</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
 <p>也可以在命令列查：<code>go version -m app.exe</code></p>
 </div>
 <h3 id="其他常用旗標">其他常用旗標<a class="headerlink" href="#其他常用旗標" title="Permanent link">#</a></h3>
@@ -433,27 +435,28 @@ package main</p>
 <hr />
 <h2 id="交叉編譯">交叉編譯<a class="headerlink" href="#交叉編譯" title="Permanent link">#</a></h2>
 <p>Go 最受歡迎的特性之一。只要不用 cgo，換兩個環境變數就能編出其他平台的執行檔：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code><span class="nv">GOOS</span><span class="o">=</span>linux<span class="w"> </span><span class="nv">GOARCH</span><span class="o">=</span>amd64<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>app-linux<span class="w"> </span>.
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">GOOS</span><span class="o">=</span>linux<span class="w"> </span><span class="nv">GOARCH</span><span class="o">=</span>amd64<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>app-linux<span class="w"> </span>.
 <span class="nv">GOOS</span><span class="o">=</span>darwin<span class="w"> </span><span class="nv">GOARCH</span><span class="o">=</span>arm64<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>app-mac<span class="w"> </span>.
 <span class="nv">GOOS</span><span class="o">=</span>windows<span class="w"> </span><span class="nv">GOARCH</span><span class="o">=</span>amd64<span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>-o<span class="w"> </span>app.exe<span class="w"> </span>.
-</code></pre></div>
+</pre></div>
 
 <p>PowerShell：</p>
-<div class="hl" data-lang="text"><pre><span></span><code>$env:GOOS = &quot;linux&quot;; $env:GOARCH = &quot;amd64&quot;
+<div class="hl" data-lang="text"><pre><span></span>$env:GOOS = &quot;linux&quot;; $env:GOARCH = &quot;amd64&quot;
 go build -o app-linux .
 Remove-Item Env:GOOS, Env:GOARCH
-</code></pre></div>
+</pre></div>
 
 <p>看看支援哪些組合：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>dist<span class="w"> </span>list
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>dist<span class="w"> </span>list
+</pre></div>
 
 <div class="admonition danger">
 <p class="admonition-title">cgo 會毀掉交叉編譯</p>
 <p>只要你的相依樹裡有任何一個套件用了 cgo（常見的是 <code>mattn/go-sqlite3</code>、部分影像處理套件、某些 DNS 解析路徑），交叉編譯就需要目標平台的 C 交叉編譯工具鏈，難度陡增。</p>
 <p>純 Go 的專案請保持 <code>CGO_ENABLED=0</code>，並在 CI 裡強制檢查：</p>
-<p><code>bash
-CGO_ENABLED=0 go build ./...</code></p>
+<div class="hl" data-lang="bash"><pre><span></span><span class="nv">CGO_ENABLED</span><span class="o">=</span><span class="m">0</span><span class="w"> </span>go<span class="w"> </span>build<span class="w"> </span>./...
+</pre></div>
+
 <p>這也順帶讓執行檔完全靜態連結，可以放進 <code>FROM scratch</code> 的容器映像。</p>
 </div>
 <hr />

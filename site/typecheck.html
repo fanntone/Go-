@@ -124,7 +124,7 @@
 <h2 id="型別身分兩個型別什麼時候相同">型別身分：兩個型別什麼時候「相同」<a class="headerlink" href="#型別身分兩個型別什麼時候相同" title="Permanent link">#</a></h2>
 <p>這是 Go 型別系統的核心規則，也是很多困惑的來源。</p>
 <h3 id="具名型別defined-type永遠自成一格">具名型別（defined type）永遠自成一格<a class="headerlink" href="#具名型別defined-type永遠自成一格" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -141,31 +141,32 @@
 <span class="w">    </span><span class="c1">// ✓ 必須明確轉換</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nx">Celsius</span><span class="p">(</span><span class="nx">f</span><span class="p">))</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>Celsius</code> 與 <code>Fahrenheit</code> 底層都是 <code>float64</code>，但它們是三個<strong>不同</strong>的型別。用 <code>type X Y</code> 宣告出來的叫<strong>具名型別</strong>，它跟 <code>Y</code> 不相同。</p>
 <p>這正是它的價值：溫度單位、使用者 ID 與訂單 ID、公尺與英尺，用具名型別包起來，型別檢查器就會幫你擋掉混用。</p>
 <h3 id="型別別名alias則是同一個型別">型別別名（alias）則是同一個型別<a class="headerlink" href="#型別別名alias則是同一個型別" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">type</span><span class="w"> </span><span class="nx">Meters</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kt">float64</span><span class="w">   </span><span class="c1">// 注意有等號：這是別名</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">Meters</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kt">float64</span><span class="w">   </span><span class="c1">// 注意有等號：這是別名</span>
 
 <span class="kd">var</span><span class="w"> </span><span class="nx">m</span><span class="w"> </span><span class="nx">Meters</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mf">3.5</span>
 <span class="kd">var</span><span class="w"> </span><span class="nx">f</span><span class="w"> </span><span class="kt">float64</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">m</span><span class="w">       </span><span class="c1">// ✓ 合法，它們是同一個型別</span>
-</code></pre></div>
+</pre></div>
 
 <p><code>type X = Y</code> 宣告的是<strong>別名</strong>，<code>X</code> 跟 <code>Y</code> 就是同一個型別，只是換個名字叫。別名的主要用途是<strong>漸進式重構</strong>：把型別搬到新套件時，在舊位置留一個別名，讓既有程式碼不用一次全改。</p>
 <p><code>byte</code> 就是 <code>uint8</code> 的別名，<code>rune</code> 就是 <code>int32</code> 的別名 —— 它們不是獨立型別。</p>
 <div class="admonition version">
 <p class="admonition-title">Go 1.24：泛型型別別名</p>
 <p>Go 1.24 之前，型別別名不能有型別參數。Go 1.24 開始可以：</p>
-<p><code>go
-type Set[T comparable] = map[T]struct{}</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">Set</span><span class="p">[</span><span class="nx">T</span><span class="w"> </span><span class="kt">comparable</span><span class="p">]</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kd">map</span><span class="p">[</span><span class="nx">T</span><span class="p">]</span><span class="kd">struct</span><span class="p">{}</span>
+</pre></div>
+
 <p>這在包裝泛型容器、簡化冗長的型別簽章時很有用。</p>
 </div>
 <h3 id="未具名型別看結構">未具名型別看結構<a class="headerlink" href="#未具名型別看結構" title="Permanent link">#</a></h3>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">X</span><span class="p">,</span><span class="w"> </span><span class="nx">Y</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">}</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">a</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">X</span><span class="p">,</span><span class="w"> </span><span class="nx">Y</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">}</span>
 <span class="kd">var</span><span class="w"> </span><span class="nx">b</span><span class="w"> </span><span class="kd">struct</span><span class="p">{</span><span class="w"> </span><span class="nx">X</span><span class="p">,</span><span class="w"> </span><span class="nx">Y</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">}</span>
 <span class="nx">b</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">a</span><span class="w">          </span><span class="c1">// ✓ 合法：兩個未具名 struct 型別結構相同</span>
-</code></pre></div>
+</pre></div>
 
 <p>未具名的複合型別（<code>[]int</code>、<code>map[string]int</code>、<code>struct{...}</code>、<code>func(int) error</code>）只要結構完全一致就是同一型別。struct 的欄位名稱、型別、順序、標籤（tag）都要相同。</p>
 <hr />
@@ -191,7 +192,7 @@ type Set[T comparable] = map[T]struct{}</code></p>
 </tbody>
 </table>
 <p>換句話說：<strong>指標的方法集比值的方法集大</strong>。</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -216,7 +217,7 @@ type Set[T comparable] = map[T]struct{}</code></p>
 <span class="w">    </span><span class="nx">i</span><span class="p">.</span><span class="nx">Inc</span><span class="p">()</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">c</span><span class="p">.</span><span class="nx">Value</span><span class="p">())</span><span class="w"> </span><span class="c1">// 2</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <div class="admonition tip">
 <p class="admonition-title">為什麼 <code>c.Inc()</code> 可以直接呼叫，賦值給介面卻不行？</p>
@@ -227,17 +228,18 @@ type Set[T comparable] = map[T]struct{}</code></p>
 <div class="admonition version">
 <p class="admonition-title">Go 1.18：介面可以有型別集</p>
 <p>泛型引入後，介面除了方法之外還能列出<strong>型別集（type set）</strong>：</p>
-<p><code>go
-type Number interface {
-    ~int | ~int8 | ~int16 | ~int32 | ~int64 | ~float32 | ~float64
-}</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">type</span><span class="w"> </span><span class="nx">Number</span><span class="w"> </span><span class="kd">interface</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="o">~</span><span class="kt">int</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="o">~</span><span class="kt">int8</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="o">~</span><span class="kt">int16</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="o">~</span><span class="kt">int32</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="o">~</span><span class="kt">int64</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="o">~</span><span class="kt">float32</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="o">~</span><span class="kt">float64</span>
+<span class="p">}</span>
+</pre></div>
+
 <p><code>~int</code> 表示「底層型別是 int 的所有型別」，所以 <code>type MyInt int</code> 也符合。這種介面<strong>只能當型別約束用</strong>，不能當一般的介面型別（不能宣告 <code>var x Number</code>）。</p>
 <p>這讓「介面」這個詞在 Go 裡有了兩種角色：執行期的動態分派，以及編譯期的型別約束。</p>
 </div>
 <hr />
 <h2 id="型別推導的邊界">型別推導的邊界<a class="headerlink" href="#型別推導的邊界" title="Permanent link">#</a></h2>
 <p>Go 的推導是<strong>局部</strong>的，不像 Haskell 或 ML 那樣做全域的 Hindley-Milner 推導。它只在幾個明確的位置作用：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="nx">x</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">42</span><span class="w">                 </span><span class="c1">// ✓ 從右值推導：int</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="nx">x</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="mi">42</span><span class="w">                 </span><span class="c1">// ✓ 從右值推導：int</span>
 <span class="kd">var</span><span class="w"> </span><span class="nx">y</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">&quot;hi&quot;</span><span class="w">            </span><span class="c1">// ✓ 同上：string</span>
 <span class="kd">const</span><span class="w"> </span><span class="nx">c</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">20</span><span class="w">       </span><span class="c1">// ✓ 無型別常數</span>
 <span class="nx">f</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">a</span><span class="w"> </span><span class="kt">int</span><span class="p">)</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="p">{</span><span class="w">  </span><span class="c1">// ✓ 函式字面值</span>
@@ -246,11 +248,11 @@ type Number interface {
 
 <span class="c1">// ✗ 參數與回傳值一定要明確寫</span>
 <span class="c1">// func double(a) { return a * 2 }</span>
-</code></pre></div>
+</pre></div>
 
 <h3 id="無型別常數一個容易忽略的特性">無型別常數：一個容易忽略的特性<a class="headerlink" href="#無型別常數一個容易忽略的特性" title="Permanent link">#</a></h3>
 <p>Go 的常數在被賦予型別之前是<strong>無型別（untyped）</strong>的，而且精度是任意的：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -263,24 +265,25 @@ type Number interface {
 <span class="w">    </span><span class="c1">// ✗ 編譯錯誤：constant overflows int</span>
 <span class="w">    </span><span class="c1">// var x int = big</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>無型別常數會在<strong>使用的位置</strong>才轉成具體型別，這讓下面這種寫法自然成立：</p>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kd">const</span><span class="w"> </span><span class="nx">ratio</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mf">0.5</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">const</span><span class="w"> </span><span class="nx">ratio</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mf">0.5</span>
 
 <span class="kd">var</span><span class="w"> </span><span class="nx">a</span><span class="w"> </span><span class="kt">float32</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">ratio</span><span class="w">  </span><span class="c1">// ratio 變成 float32</span>
 <span class="kd">var</span><span class="w"> </span><span class="nx">b</span><span class="w"> </span><span class="kt">float64</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">ratio</span><span class="w">  </span><span class="c1">// ratio 變成 float64</span>
 <span class="kd">var</span><span class="w"> </span><span class="nx">c</span><span class="w"> </span><span class="kt">complex128</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nx">ratio</span>
-</code></pre></div>
+</pre></div>
 
 <p>如果 <code>ratio</code> 是 <code>float64</code> 型別的變數，上面第一行就要明確轉換了。</p>
 <div class="admonition warning">
 <p class="admonition-title">整數除法陷阱</p>
 <p>無型別常數的除法規則跟你想的可能不同：</p>
-<p><code>go
-const a = 1 / 2        // 兩個都是無型別整數常數 → 結果是 0
-const b = 1.0 / 2      // 有一個是浮點 → 結果是 0.5
-var c float64 = 1 / 2  // 仍然是 0！除法在轉型前就算完了</code></p>
+<div class="hl" data-lang="go"><pre><span></span><span class="kd">const</span><span class="w"> </span><span class="nx">a</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">2</span><span class="w">        </span><span class="c1">// 兩個都是無型別整數常數 → 結果是 0</span>
+<span class="kd">const</span><span class="w"> </span><span class="nx">b</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mf">1.0</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">2</span><span class="w">      </span><span class="c1">// 有一個是浮點 → 結果是 0.5</span>
+<span class="kd">var</span><span class="w"> </span><span class="nx">c</span><span class="w"> </span><span class="kt">float64</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">2</span><span class="w">  </span><span class="c1">// 仍然是 0！除法在轉型前就算完了</span>
+</pre></div>
+
 </div>
 <hr />
 <h2 id="泛型是怎麼實例化的">泛型是怎麼實例化的<a class="headerlink" href="#泛型是怎麼實例化的" title="Permanent link">#</a></h2>
@@ -299,7 +302,7 @@ var c float64 = 1 / 2  // 仍然是 0！除法在轉型前就算完了</code></p
 <li><code>string</code> 是另一個 shape：16 位元組，前 8 個是指標。</li>
 <li><code>[]T</code> 又是另一個：24 位元組，前 8 個是指標。</li>
 </ul>
-<div class="hl" data-lang="go"><pre><span></span><code><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
+<div class="hl" data-lang="go"><pre><span></span><span class="kn">package</span><span class="w"> </span><span class="nx">main</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="s">&quot;fmt&quot;</span>
 
@@ -315,15 +318,15 @@ var c float64 = 1 / 2  // 仍然是 0！除法在轉型前就算完了</code></p
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">Max</span><span class="p">(</span><span class="mf">2.5</span><span class="p">,</span><span class="w"> </span><span class="mf">1.5</span><span class="p">))</span><span class="w">     </span><span class="c1">// float64</span>
 <span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">Max</span><span class="p">(</span><span class="s">&quot;go&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;rust&quot;</span><span class="p">))</span><span class="w"> </span><span class="c1">// string</span>
 <span class="p">}</span>
-</code></pre></div>
+</pre></div>
 
 <p>編譯器會產生<strong>兩份</strong>實例（不是三份）：<code>int</code> 與 <code>float64</code> 共用一份（同 shape），<code>string</code> 自己一份。可以驗證：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m&quot;</span><span class="w"> </span>.<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>findstr<span class="w"> </span><span class="s2">&quot;instantiat&quot;</span>
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>build<span class="w"> </span>-gcflags<span class="o">=</span><span class="s2">&quot;-m&quot;</span><span class="w"> </span>.<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>findstr<span class="w"> </span><span class="s2">&quot;instantiat&quot;</span>
+</pre></div>
 
 <p>或直接看符號表：</p>
-<div class="hl" data-lang="bash"><pre><span></span><code>go<span class="w"> </span>tool<span class="w"> </span>nm<span class="w"> </span>app.exe<span class="w"> </span><span class="p">|</span><span class="w"> </span>findstr<span class="w"> </span><span class="s2">&quot;Max&quot;</span>
-</code></pre></div>
+<div class="hl" data-lang="bash"><pre><span></span>go<span class="w"> </span>tool<span class="w"> </span>nm<span class="w"> </span>app.exe<span class="w"> </span><span class="p">|</span><span class="w"> </span>findstr<span class="w"> </span><span class="s2">&quot;Max&quot;</span>
+</pre></div>
 
 <h3 id="shape-共用的代價字典">shape 共用的代價：字典<a class="headerlink" href="#shape-共用的代價字典" title="Permanent link">#</a></h3>
 <p>共用程式碼有個問題：<code>int</code> 版本要用整數比較，<code>float64</code> 版本要用浮點比較，但它們是同一份程式碼。編譯器的解法是傳入一個隱藏參數——<strong>字典（dictionary）</strong>，裡面放著這次實例化所需的型別中繼資料、方法位址等。</p>
